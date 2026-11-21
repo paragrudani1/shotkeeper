@@ -307,7 +307,7 @@ enum Fixtures {
 
     static func searchIndexError() -> some View {
         var state = SearchWindowState()
-        let problem = UserFacingError.problem(for: SQLiteError(code: 26, message: "file is not a database"))
+        let problem = UserFacingProblem(message: "the index file is damaged")  // core maps SQLITE_NOTADB to this
         state.fail(IndexUnavailableError(problem: problem), for: state.query)
         return searchView(state, copied: false)
     }
