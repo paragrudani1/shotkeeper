@@ -47,10 +47,10 @@ private struct GeneralSettingsTab: View {
         DraftEditor(coordinator: coordinator) { draft in
             Form {
                 Section("Folders") {
-                    FolderRow(title: "Watched folder", url: draft.watchedFolderOverride,
+                    FolderRow(title: "Watched folder", url: draft.wrappedValue.watchedFolderOverride,
                               placeholder: "macOS screenshot location (\(coordinator.watchedFolder?.path ?? "Desktop"))",
                               set: { draft.wrappedValue.watchedFolderOverride = $0 })
-                    FolderRow(title: "Organized folder", url: draft.organizedFolder, placeholder: "Not set",
+                    FolderRow(title: "Organized folder", url: draft.wrappedValue.organizedFolder, placeholder: "Not set",
                               set: { draft.wrappedValue.organizedFolder = $0 })
                 }
                 Section("What to do with new screenshots") {
