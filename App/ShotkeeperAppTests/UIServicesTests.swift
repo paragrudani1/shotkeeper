@@ -23,7 +23,7 @@ final class GlobalHotKeyTests: XCTestCase {
 @MainActor
 final class SearchPanelTests: XCTestCase {
     func testPanelIsNonActivatingFloatingAndCanTakeKeyboardFocus() {
-        let panel = SearchPanel()
+        let panel = SearchPanel(contentSize: SearchPanel.defaultContentSize)
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
         XCTAssertTrue(panel.canBecomeKey)
         XCTAssertFalse(panel.canBecomeMain)
@@ -32,7 +32,7 @@ final class SearchPanelTests: XCTestCase {
     }
 
     func testEscapeDismisses() {
-        let panel = SearchPanel()
+        let panel = SearchPanel(contentSize: SearchPanel.defaultContentSize)
         var dismissed = 0
         panel.onDismiss = { dismissed += 1 }
         panel.orderFrontRegardless()

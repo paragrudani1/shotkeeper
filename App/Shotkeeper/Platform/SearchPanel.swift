@@ -7,9 +7,13 @@ final class SearchPanel: NSPanel {
     /// Called when the panel hides itself (Esc, or it lost key status).
     var onDismiss: (() -> Void)?
 
+    static let defaultContentSize = NSSize(width: 640, height: 420)
+
     /// Convenience (not designated) so NSWindow's designated/coder initializers stay inherited.
-    convenience init(size: NSSize = NSSize(width: 640, height: 420)) {
-        self.init(contentRect: NSRect(origin: .zero, size: size),
+    /// The label has no default on purpose: `SearchPanel()` would silently pick NSWindow's inherited `init()`
+    /// and skip all of this configuration (that bug shipped in phase 1 and was caught by the tests in CI).
+    convenience init(contentSize: NSSize) {
+        self.init(contentRect: NSRect(origin: .zero, size: contentSize),
                   styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView, .resizable],
                   backing: .buffered, defer: true)
         isFloatingPanel = true
@@ -121,7 +125,7 @@ final class SearchPanelController {
     }
 
     private func makePanel() -> SearchPanel {
-        let panel = SearchPanel()
+        let panel = SearchPanel(contentSize: SearchPanel.defaultContentSize)
         panel.contentView = NSHostingView(rootView: SearchView(model: model, onClose: { [weak panel] in
             panel?.dismiss()
         }))
