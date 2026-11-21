@@ -120,10 +120,10 @@ actor LocalModelRuntime: LocalModelServing {
     }
 
     func isInstalled(_ variant: ModelVariant) -> Bool {
-        let fm = FileManager.default
-        return fm.isExecutableFile(atPath: pathsPlan.serverExecutable)
-            && fm.fileExists(atPath: pathsPlan.localModelDirectory(for: variant)
-                .appendingPathComponent(Self.downloadCompleteMarker).path)
+        let marker = pathsPlan.localModelDirectory(for: variant).appendingPathComponent(Self.downloadCompleteMarker)
+        let hasServer = FileManager.default.isExecutableFile(atPath: pathsPlan.serverExecutable)
+        let hasModel = FileManager.default.fileExists(atPath: marker.path)
+        return hasServer && hasModel
     }
 
     /// Clears a "gave up after repeated crashes" state so the next request starts the server again.
@@ -174,11 +174,13 @@ actor LocalModelRuntime: LocalModelServing {
     }
 
     private func performInstall(_ variant: ModelVariant) async throws {
-        let fm = FileManager.default
-        if !(fm.isExecutableFile(atPath: pathsPlan.serverExecutable) && fm.isExecutableFile(atPath: pathsPlan.hfExecutable)) {
+        // FileManager is not Sendable: no local `fm` captured by `&&`'s autoclosure inside the actor.
+        let hasServer = FileManager.default.isExecutableFile(atPath: pathsPlan.serverExecutable)
+        let hasHF = FileManager.default.isExecutableFile(atPath: pathsPlan.hfExecutable)
+        if !(hasServer && hasHF) {
             setPhase(.installing("Finding Python…"))
             let plan = try await installPlan()
-            try fm.createDirectory(at: plan.runtimeDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: plan.runtimeDirectory, withIntermediateDirectories: true)
             let commands = plan.installCommands
             for (offset, command) in commands.enumerated() {
                 try Task.checkCancellation()
@@ -190,8 +192,8 @@ actor LocalModelRuntime: LocalModelServing {
 
         let directory = pathsPlan.localModelDirectory(for: variant)
         let marker = directory.appendingPathComponent(Self.downloadCompleteMarker)
-        guard !fm.fileExists(atPath: marker.path) else { return }
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         setPhase(.downloading(0))
         let parsed = LockedValue<Double?>(nil)
         let tail = LockedValue("")
