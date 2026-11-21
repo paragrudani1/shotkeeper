@@ -49,11 +49,13 @@ struct MenuViewState {
             status: MenuText.status(queue: coordinator.queueStatus,
                                     watchedFolderName: coordinator.watchedFolder?.lastPathComponent,
                                     indexedCount: coordinator.indexedCount, failure: coordinator.failureText,
-                                    notWatchingReason: coordinator.notWatchingReason, now: now),
+                                    notWatchingReason: coordinator.notWatchingReason,
+                                    skippingForConsent: coordinator.isSkippingForConsent, now: now),
             message: coordinator.lastMessage,
             showsFixSettings: isError,
             // Also after consent while no backend is usable yet (step 3 skipped): setup is where that is fixed.
-            showsFinishSetup: !coordinator.settings.hasSeenPrivacyNotice || coordinator.notWatchingReason != nil,
+            showsFinishSetup: !coordinator.settings.hasSeenPrivacyNotice || coordinator.notWatchingReason != nil
+                || coordinator.isSkippingForConsent,
             download: download,
             recents: coordinator.recentItems,
             now: now,

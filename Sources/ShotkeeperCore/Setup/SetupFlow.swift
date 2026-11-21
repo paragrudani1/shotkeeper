@@ -28,6 +28,9 @@ public struct SetupPrimaryButton: Equatable, Sendable {
     public var title: String
     public var isEnabled: Bool
     public var action: SetupPrimaryAction
+    /// Return presses it. False for step 3's "Skip": Return in a half-filled Account ID field must not skip the
+    /// step (it moves to the next empty field instead), so "Skip" is a plain secondary button there.
+    public var isDefaultAction: Bool = true
 }
 
 /// The local model, as far as step 3 cares.
@@ -75,18 +78,24 @@ public struct SetupFlow: Equatable, Sendable {
     public var inputs: SetupConnectionInputs
     /// Step 4's state.
     public var tryIt: TryItState = .waiting(note: nil)
+    /// When step 4 last opened: only screenshots taken from then on count (`TryIt.apply`).
+    public private(set) var tryItOpenedAt: Date?
     /// Step 5's checkbox: on for a first run; a re-run shows the current setting.
     public var openAtLogin: Bool
     public let cards: SetupCards
 
-    public init(settings: AppSettings, cards: SetupCards, inputs: SetupConnectionInputs = SetupConnectionInputs()) {
+    /// - Parameter loginItemEnabled: the login item's real state (`SMAppService`), shown on a re-run; it wins over
+    ///   the saved setting, which can disagree after the user changed it in System Settings.
+    public init(settings: AppSettings, cards: SetupCards, inputs: SetupConnectionInputs = SetupConnectionInputs(),
+                loginItemEnabled: Bool? = nil) {
         self.cards = cards
         self.inputs = inputs
         let isRerun = settings.hasSeenPrivacyNotice
-        consentChecked = isRerun
-        openAtLogin = isRerun ? settings.launchAtLogin : true
+        // Ticked only when step 2's own consent (Cloudflare) was given before.
+        consentChecked = settings.acceptedUploadDestinations.contains(.cloudflare)
+        openAtLogin = isRerun ? (loginItemEnabled ?? settings.launchAtLogin) : true
         // A re-run preselects what is configured; a first run (or a custom endpoint) the recommendation.
-        if isRerun, let card = cards.card(for: settings.backend), card.isAvailable {
+        if isRerun || settings.backend == .customEndpoint, let card = cards.card(for: settings.backend), card.isAvailable {
             choice = settings.backend
         } else {
             choice = cards.recommended
@@ -103,9 +112,15 @@ public struct SetupFlow: Equatable, Sendable {
         case .privacy:
             return SetupPrimaryButton(title: "I Agree", isEnabled: consentChecked, action: .acceptConsent)
         case .connect:
-            let complete = choice == .clairic ? inputs.clairicComplete : inputs.localComplete
+            let complete: Bool
+            switch choice {
+            case .clairic: complete = inputs.clairicComplete
+            case .localInkling: complete = inputs.localComplete
+            case .customEndpoint: complete = true // keeps the endpoint configured in Settings
+            }
             return complete ? SetupPrimaryButton(title: "Continue", isEnabled: true, action: .saveConnection(choice))
-                            : SetupPrimaryButton(title: "Skip", isEnabled: true, action: .skipConnection)
+                            : SetupPrimaryButton(title: "Skip", isEnabled: true, action: .skipConnection,
+                                                 isDefaultAction: false)
         case .tryIt:
             switch tryIt {
             case .result, .notConnected:
@@ -124,11 +139,14 @@ public struct SetupFlow: Equatable, Sendable {
         return button.isEnabled ? button.action : nil
     }
 
-    /// After the app performed `primaryAction()`. Step 4 always starts waiting again.
-    public mutating func advance() {
+    /// After the app performed `primaryAction()`. Step 4 always starts waiting again, from `now`.
+    public mutating func advance(now: Date = Date()) {
         guard let next = SetupStep(rawValue: step.rawValue + 1) else { return }
         step = next
-        if next == .tryIt { tryIt = .waiting(note: nil) }
+        if next == .tryIt {
+            tryIt = .waiting(note: nil)
+            tryItOpenedAt = now
+        }
     }
 
     /// Back (steps 2–4; Esc). Returns false where there is no Back.
@@ -147,10 +165,12 @@ public struct SetupFlow: Equatable, Sendable {
         return true
     }
 
-    /// ←/→/↑/↓ on the cards: the other available card.
+    /// ←/→/↑/↓ on the cards: the next available card (wrapping).
     @discardableResult
     public mutating func chooseNext() -> Bool {
-        choose(choice == .clairic ? .localInkling : .clairic)
+        let available = cards.all.filter(\.isAvailable).map(\.backend)
+        guard let index = available.firstIndex(of: choice), available.count > 1 else { return false }
+        return choose(available[(index + 1) % available.count])
     }
 }
 
@@ -196,6 +216,8 @@ public struct TryItResult: Equatable, Sendable {
 
 /// Step 4 rules. Pure: the app feeds it the coordinator's pipeline events (the same ones the toast uses).
 public enum TryIt {
+    /// A screenshot taken this long before step 4 opened still counts (macOS writes the file a moment after ⌘⇧4).
+    public static let slack: TimeInterval = 5
     public static let waitingText = "Waiting for a new screenshot…"
     public static let instruction = "Take a screenshot of anything on your screen with ⌘⇧4. Shotkeeper shows you the result here."
     public static let notConnectedText = "Shotkeeper is not connected to a model yet, so it cannot name screenshots. "
@@ -225,11 +247,22 @@ public enum TryIt {
     }
 
     /// The next state after a pipeline event. A shown result stays; events that say nothing about the user's new
-    /// screenshot (already indexed, missing, restored by Undo) change nothing.
-    /// - Parameter entry: the index row at the report's final path (for the tags), if any.
-    public static func apply(_ event: ScreenshotEvent, entry: IndexedScreenshot?, to state: TryItState) -> TryItState {
+    /// screenshot (already indexed, missing, restored by Undo) change nothing, and neither do files taken before
+    /// step 4 opened (a backlog file that happened to finish now is not "the screenshot you just took").
+    /// - Parameters:
+    ///   - entry: the index row at the report's final path (tags; its `capturedAt` dates a processed file).
+    ///   - fileCreatedAt: the file's creation date, for a failed file (it has no finished row).
+    ///   - openedAt: `SetupFlow.tryItOpenedAt`.
+    public static func apply(_ event: ScreenshotEvent, entry: IndexedScreenshot?, fileCreatedAt: Date? = nil,
+                             openedAt: Date?, to state: TryItState) -> TryItState {
         if case .result = state { return state }
         if case .notConnected = state { return state }
+        let takenAt: Date?
+        switch event {
+        case .processed: takenAt = entry?.capturedAt ?? fileCreatedAt
+        case .failed: takenAt = fileCreatedAt
+        }
+        if let openedAt, let takenAt, takenAt < openedAt.addingTimeInterval(-slack) { return state }
         switch event {
         case .failed(_, let problem):
             return .problem("Could not name that screenshot: \(problem.message). Take another one to try again.")
@@ -244,6 +277,9 @@ public enum TryIt {
                 return .problem("That screenshot matches an exclude rule, so Shotkeeper left it alone. Take another one.")
             case .skipped(.paused):
                 return .problem("Shotkeeper is paused, so it left that screenshot alone. Resume it from the menu bar, then take another one.")
+            case .skipped(.awaitingConsent):
+                return .problem("Sending screenshots to this model is not allowed yet, so Shotkeeper left that one alone. "
+                                + "Allow it in Settings → Model, then take another one.")
             case .skipped(.missing), .skipped(.alreadyIndexed), .skipped(.restoredByUndo):
                 return state
             }

@@ -39,6 +39,16 @@ enum LaunchAtLogin {
         if enabled { try register() } else { try unregister() }
     }
 
+    /// Makes the login item match `enabled` without failing on a no-op: registers unless already enabled,
+    /// unregisters only what is registered.
+    static func apply(_ enabled: Bool) throws {
+        switch (enabled, status) {
+        case (true, .enabled), (false, .disabled), (false, .notFound): return
+        case (true, _): try register()
+        case (false, _): try unregister()
+        }
+    }
+
     static func openSystemSettings() {
         SMAppService.openSystemSettingsLoginItems()
     }

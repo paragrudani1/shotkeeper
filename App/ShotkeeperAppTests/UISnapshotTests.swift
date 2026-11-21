@@ -76,6 +76,7 @@ enum UISnapshotCatalog {
             UISnapshot("setup-3-local-downloading") { Fixtures.setup(.connect, choice: .localInkling, phase: .downloading(0.42)) },
             UISnapshot("setup-3-local-32gb") { Fixtures.setup(.connect, choice: .localInkling, memoryGB: 32) },
             UISnapshot("setup-3-8gb") { Fixtures.setup(.connect, memoryGB: 8) },
+            UISnapshot("setup-3-custom-rerun") { Fixtures.setup(.connect, choice: .customEndpoint, backend: .customEndpoint) },
             UISnapshot("setup-4-waiting") { Fixtures.setup(.tryIt) },
             UISnapshot("setup-4-waiting-download") {
                 Fixtures.setup(.tryIt, phase: .downloading(0.42), backend: .localInkling)
@@ -363,11 +364,13 @@ enum Fixtures {
         let settings: AppSettings = {
             var settings = AppSettings()
             settings.backend = backend
+            if backend == .customEndpoint { settings.customEndpointURL = URL(string: "http://gpu-box.lan:8080") }
             return settings
         }()
         return SetupServices(
             physicalMemoryBytes: memoryGB * 1_073_741_824,
-            settings: { settings }, hasSavedToken: { false }, runtimePhase: { phase }, readiness: { .ready },
+            settings: { settings }, hasSavedToken: { false }, credentialsRevision: { 0 }, loginItemEnabled: { nil },
+            runtimePhase: { phase }, readiness: { .ready },
             isPaused: { false }, acceptConsent: {}, saveClairic: { _, _ in }, chooseLocal: { _ in },
             refreshLocal: { _ in }, installLocal: { _ in }, cancelInstall: {},
             testClairic: { _, _ in .success("") }, addEventObserver: { _ in nil }, removeEventObserver: { _ in },

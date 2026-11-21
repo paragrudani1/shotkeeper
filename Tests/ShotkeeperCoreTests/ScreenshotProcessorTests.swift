@@ -20,7 +20,9 @@ final class ScreenshotProcessorTests: XCTestCase {
         index = try ScreenshotIndex.inMemory()
         undoLog = UndoLog(fileURL: dir.url.appendingPathComponent("state/undo.jsonl"))
         writer = RecordingMetadataWriter()
-        settings = Locked(AppSettings())
+        var configured = AppSettings()
+        configured.acceptedUploadDestinations = [.cloudflare] // a user who allowed the default Clairic backend
+        settings = Locked(configured)
     }
 
     override func tearDown() { dir = nil }
@@ -143,6 +145,34 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(analyzer.calls.get.count, 0)
         XCTAssertEqual(read(source), "png bytes")
         XCTAssertEqual(try index.stats().count, 0, "excluded screenshots are not indexed")
+    }
+
+    /// Without consent for the selected backend's destination the file is skipped, not held, so it is never
+    /// uploaded later just because consent arrived after it was queued.
+    func testFilesAreSkippedWhileTheDestinationIsNotAllowed() async throws {
+        let source = try screenshot()
+        let analyzer = StubAnalyzer(analysis(title: "Secret"))
+        settings.mutate { $0.acceptedUploadDestinations = [] }
+        let outcome = try await processor(analyzer).process(source)
+        XCTAssertEqual(outcome, .skipped(.awaitingConsent))
+        XCTAssertEqual(analyzer.calls.get.count, 0)
+        XCTAssertEqual(read(source), "png bytes")
+        XCTAssertEqual(try index.stats().count, 0)
+
+        // Cloudflare consent does not cover a custom endpoint.
+        settings.mutate {
+            $0.acceptedUploadDestinations = [.cloudflare]
+            $0.backend = .customEndpoint
+            $0.customEndpointURL = URL(string: "http://192.168.1.5:8080")
+        }
+        let custom = try await processor(analyzer).process(source)
+        XCTAssertEqual(custom, .skipped(.awaitingConsent))
+
+        // The local model needs no consent.
+        settings.mutate { $0.acceptedUploadDestinations = []; $0.backend = .localInkling }
+        let local = try await processor(analyzer).process(source)
+        guard case .processed = local else { return XCTFail("\(local)") }
+        XCTAssertEqual(analyzer.calls.get.count, 1)
     }
 
     func testAlreadyIndexedIsSkipped() async throws {

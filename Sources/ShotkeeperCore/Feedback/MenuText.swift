@@ -80,13 +80,18 @@ public enum MenuText {
     ///   - failure: a hard failure (index not opened, local server gave up); wins over the queue status.
     ///   - notWatchingReason: set while the folder is not watched because no backend is usable yet
     ///     (`BackendGate.statusReason`); wins over the queue status, which is idle then.
+    ///   - skippingForConsent: watching, but the selected backend's destination is not allowed, so new screenshots
+    ///     are skipped (`SkipReason.awaitingConsent`).
     public static func status(queue: QueueStatus, watchedFolderName: String?, indexedCount: Int?, failure: String? = nil,
-                              notWatchingReason: String? = nil,
+                              notWatchingReason: String? = nil, skippingForConsent: Bool = false,
                               now: Date, time: TimeLabel = TimeLabel()) -> MenuStatusSummary {
         let headline = watchedFolderName.map { "Watching \($0)" } ?? "Watching for screenshots"
         if let failure { return MenuStatusSummary(dot: .red, headline: "Not working", detail: failure) }
         if let notWatchingReason {
             return MenuStatusSummary(dot: .orange, headline: "Not watching yet", detail: notWatchingReason)
+        }
+        if skippingForConsent {
+            return MenuStatusSummary(dot: .orange, headline: headline, detail: skippingForConsentText)
         }
         switch queue {
         case .idle:
@@ -105,6 +110,8 @@ public enum MenuText {
             return MenuStatusSummary(dot: .orange, headline: headline, detail: "Needs attention: \(message)")
         }
     }
+
+    public static let skippingForConsentText = "Skipping new screenshots: sending them is not allowed yet"
 
     /// "Downloading Inkling 2 Mini · 4.1 of 9.1 GB". `fraction` is clamped to 0...1.
     public static func download(fraction: Double, totalGB: Double, modelName: String = "Inkling 2 Mini") -> String {

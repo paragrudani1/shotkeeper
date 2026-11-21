@@ -9,6 +9,10 @@ public enum SkipReason: Equatable, Sendable {
     case alreadyIndexed
     /// The user restored this file's original name with Undo; Shotkeeper leaves it alone from then on.
     case restoredByUndo
+    /// The selected backend sends screenshots off this Mac and the user has not allowed that destination
+    /// (`BackendGate.hasUploadConsent`). Skipped like Pause, not held: a held file would be uploaded the moment
+    /// consent is given, although it was taken before.
+    case awaitingConsent
 }
 
 public enum ProcessingOutcome: Equatable, Sendable {
@@ -129,6 +133,7 @@ public final class ScreenshotProcessor: Sendable {
         case .rule(let rule)?: return .skipped(.excluded(rule))
         case nil: break
         }
+        guard BackendGate.hasUploadConsent(settings) else { return .skipped(.awaitingConsent) }
 
         let rowAtPath = try index.lookup(byPath: url.path)
         if rowAtPath?.restoredByUndo == true { return .skipped(.restoredByUndo) }

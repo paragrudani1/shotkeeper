@@ -114,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openShortcutSettings: { [weak self] in self?.showSettings(tab: .general) },
             close: { [weak self] in self?.windows.close(id: "setup") })
         let model = SetupModel(services: services)
-        windows.show(id: "setup", title: "Set Up Shotkeeper",
+        windows.show(id: "setup", title: SetupView.windowTitle,
                      size: NSSize(width: SetupView.size.width, height: SetupView.size.height), resizable: false) {
             SetupView(model: model)
         }

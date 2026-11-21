@@ -173,6 +173,7 @@ private struct BackendSettingsTab: View {
                     }
                     .pickerStyle(.segmented)
 
+                    UploadConsentRow(coordinator: coordinator)
                     switch draft.wrappedValue.backend {
                     case .clairic:
                         ClairicConfigView(coordinator: coordinator, draft: draft, tokenDraft: $tokenDraft)
@@ -201,6 +202,42 @@ private struct BackendSettingsTab: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(4)
             }
+        }
+    }
+}
+
+/// While the selected backend's destination is not allowed: says so, and asks with a confirmation that names the
+/// destination ("Screenshots will be sent to llm.lan"). Nothing is sent before "Allow" (the processor skips files).
+/// It asks by itself when the backend is switched; a URL being typed only shows the row (no dialog per keystroke).
+private struct UploadConsentRow: View {
+    let coordinator: AppCoordinator
+    @State private var asking = false
+
+    var body: some View {
+        let settings = coordinator.settings
+        // A VStack, not a Group: a Group passes `onChange` to its children, and there are none while allowed.
+        VStack(alignment: .leading, spacing: 0) {
+            if let prompt = BackendGate.consentPrompt(for: settings),
+               let destination = BackendGate.destination(of: settings.backend) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "hand.raised.fill").foregroundStyle(.orange).accessibilityHidden(true)
+                    Text("\(prompt). Nothing is sent until you allow it.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Allow…") { asking = true }
+                }
+                .font(.callout)
+                .confirmationDialog("\(prompt).", isPresented: $asking, titleVisibility: .visible) {
+                    Button("Allow") { coordinator.allowUploads(to: destination) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Shotkeeper sends each new screenshot there to name it. Screenshots taken before you allow it "
+                         + "are left alone.")
+                }
+            }
+        }
+        .onChange(of: settings.backend) { _, _ in
+            if BackendGate.consentPrompt(for: coordinator.settings) != nil { asking = true }
         }
     }
 }

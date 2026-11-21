@@ -115,6 +115,9 @@ final class AppCoordinator {
         isWatching ? nil : BackendGate.statusReason(for: readiness)
     }
 
+    /// Watching, but the selected backend's destination is not allowed: new screenshots are skipped.
+    var isSkippingForConsent: Bool { isWatching && readiness == .needsConsent }
+
     var statusLine: String {
         if let startupError { return "Error: \(startupError)" }
         return StatusText.line(for: queueStatus)
@@ -196,7 +199,8 @@ final class AppCoordinator {
         if new.backend != old.backend || new.clairicAccountID != old.clairicAccountID
             || new.customEndpointURL != old.customEndpointURL || new.customModelName != old.customModelName
             || new.localModelVariantID != old.localModelVariantID
-            || new.hasSeenPrivacyNotice != old.hasSeenPrivacyNotice { // accepting consent un-holds cloud backends
+            || new.acceptedUploadDestinations != old.acceptedUploadDestinations // consent un-holds cloud backends
+            || new.acceptedCustomEndpointHost != old.acceptedCustomEndpointHost {
             rebuildAnalyzer()
             Task { await localRuntime.refresh(for: localVariant) }
             if new.backend != .localInkling, old.backend == .localInkling { Task { await localRuntime.stop() } }
@@ -442,9 +446,35 @@ final class AppCoordinator {
 
     // MARK: Setup helpers
 
-    /// Setup step 2 "I Agree": the only place the upload consent is stored.
+    /// Setup step 2 "I Agree": marks setup's privacy step done and allows the destination its text names, the
+    /// user's Cloudflare account. Nothing else grants `.cloudflare`.
     func acceptUploadConsent() {
-        updateSettings { $0.hasSeenPrivacyNotice = true }
+        updateSettings {
+            $0 = BackendGate.granting(.cloudflare, in: $0)
+            $0.hasSeenPrivacyNotice = true
+        }
+    }
+
+    /// Settings → Model's confirmation "Screenshots will be sent to <host>": allows the custom endpoint's current
+    /// host (a different host later needs a new confirmation).
+    func allowCustomEndpointUploads() {
+        allowUploads(to: .customEndpoint)
+    }
+
+    /// Settings → Model's confirmation (`BackendGate.consentPrompt`) for the selected backend's destination.
+    func allowUploads(to destination: AppSettings.UploadDestination) {
+        updateSettings { $0 = BackendGate.granting(destination, in: $0) }
+    }
+
+    /// Setup step 5 "Finish": saves the choice and applies it to the login item every time, so a login item that
+    /// was removed in System Settings (or never registered) is fixed even when the setting did not change.
+    func setLaunchAtLogin(_ enabled: Bool) {
+        let unchanged = settings.launchAtLogin == enabled
+        updateSettings { $0.launchAtLogin = enabled } // applies it when it changed (and services run)
+        guard unchanged, servicesStarted else { return }
+        do { try LaunchAtLogin.apply(enabled) } catch {
+            lastMessage = "Launch at login: \(error.localizedDescription). Move Shotkeeper to /Applications and try again."
+        }
     }
 
     /// Setup step 3 "Continue" with Clairic: the token goes to the Keychain now (never while typing), then the
@@ -493,9 +523,11 @@ final class AppCoordinator {
                 try? store.setSecret(saved, for: key)
             }
         }
-        // Only a generated image is sent here, never a user file, so the privacy-notice gate does not apply.
+        // Only a generated image is sent here, never a user file, so the consent gate does not apply.
         var candidate = candidate
-        candidate.hasSeenPrivacyNotice = true
+        for destination in AppSettings.UploadDestination.allCases {
+            candidate = BackendGate.granting(destination, in: candidate)
+        }
         let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,
                                             physicalMemoryBytes: physicalMemoryBytes)
         do {

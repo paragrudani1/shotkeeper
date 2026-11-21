@@ -45,8 +45,11 @@ final class SetupModelTests: TempDirectoryTestCase {
         model.pressPrimary()
         XCTAssertFalse(coordinator.settings.hasSeenPrivacyNotice, "Back and Get Started store nothing")
 
+        XCTAssertEqual(coordinator.settings.acceptedUploadDestinations, [])
         model.pressPrimary() // I Agree
         XCTAssertTrue(coordinator.settings.hasSeenPrivacyNotice)
+        XCTAssertEqual(coordinator.settings.acceptedUploadDestinations, [.cloudflare],
+                       "step 2 names Cloudflare, so it allows Cloudflare only (not a custom endpoint)")
         XCTAssertEqual(model.flow.step, .connect)
         model.stop()
     }
@@ -95,11 +98,48 @@ final class SetupModelTests: TempDirectoryTestCase {
         XCTAssertEqual(coordinator.readiness, .needsConsent)
         XCTAssertFalse(coordinator.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
-        XCTAssertEqual(coordinator.notWatchingReason, "Setup is not finished")
+        XCTAssertEqual(coordinator.notWatchingReason, "Not allowed to send screenshots yet")
 
         coordinator.acceptUploadConsent()
         XCTAssertTrue(coordinator.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is CloudflareClairicAnalyzer)
+    }
+
+    /// Review of PR 6: Local first (watching starts), then Clairic before consent. Screenshots taken meanwhile
+    /// are skipped, not held, so "I Agree" does not upload them.
+    func testScreenshotsTakenBeforeConsentAreNeverUploaded() async throws {
+        let coordinator = makeCoordinator()
+        // Written before watching starts, so only the explicit enqueue below hands it to the queue.
+        let shot = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
+            .appendingPathComponent("Screenshot 2026-11-21 at 10.00.00.png")
+        try Data("png".utf8).write(to: shot)
+        coordinator.startServices()
+        defer { coordinator.stopServices() }
+        coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
+        XCTAssertTrue(coordinator.isWatching)
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok")
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        XCTAssertTrue(coordinator.isSkippingForConsent)
+        XCTAssertEqual(MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S").status.detail,
+                       MenuText.skippingForConsentText)
+
+        let queue = try XCTUnwrap(coordinator.queue)
+        var events: [ScreenshotEvent] = []
+        let observer = coordinator.addEventObserver { events.append($0) }
+        defer { coordinator.removeEventObserver(observer) }
+        await queue.enqueue(shot)
+        await queue.waitUntilIdle()
+        for _ in 0..<200 where events.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
+        XCTAssertEqual(report.outcome, .skipped(.awaitingConsent))
+
+        coordinator.acceptUploadConsent()
+        XCTAssertEqual(coordinator.readiness, .ready)
+        await queue.waitUntilIdle()
+        let queued = await queue.queuedCount
+        XCTAssertEqual(queued, 0, "nothing was held for after the consent")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shot.path), "the file keeps its name")
+        XCTAssertNil(coordinator.indexEntry(atPath: shot.standardizedFileURL.path), "never analyzed")
     }
 
     func testLocalNeedsNoUploadConsent() {
@@ -174,6 +214,7 @@ final class SetupModelTests: TempDirectoryTestCase {
                                                                 status: .done))
         coordinator.handle(event)
         guard case .result(let result) = model.current.tryIt else { return XCTFail("\(model.current.tryIt)") }
+        XCTAssertNotNil(model.flow.tryItOpenedAt)
         XCTAssertEqual(result.newName, "Tweet semiconductor flashcards.png")
         XCTAssertEqual(result.hashtags, ["#semiconductor", "#flashcards"])
         XCTAssertEqual(model.current.primary.title, "Continue")
@@ -182,6 +223,96 @@ final class SetupModelTests: TempDirectoryTestCase {
         model.flow.tryIt = .waiting(note: nil)
         coordinator.handle(event)
         XCTAssertEqual(model.flow.tryIt, .waiting(note: nil), "no events after the window closed")
+    }
+
+    func testABacklogFileFinishingInStepFourIsNotShown() throws {
+        let coordinator = makeCoordinator()
+        let model = makeModel(coordinator)
+        coordinator.updateSettings { $0.backend = .localInkling }
+        model.pressPrimary()
+        model.flow.consentChecked = true
+        model.pressPrimary()
+        model.pressPrimary()
+        XCTAssertEqual(model.flow.step, .tryIt)
+        let final = URL(fileURLWithPath: "/d/Old receipt.png")
+        _ = try XCTUnwrap(coordinator.index).save(IndexedScreenshot(
+            path: final.path, originalFilename: "Screenshot 2026-11-01 at 09.00.00.png", contentHash: "old",
+            capturedAt: Date().addingTimeInterval(-3_600), tags: ["receipt"], status: .done))
+        coordinator.handle(.processed(ProcessingReport(
+            originalURL: URL(fileURLWithPath: "/d/Screenshot 2026-11-01 at 09.00.00.png"),
+            outcome: .processed(finalURL: final, renamed: true, moved: false))))
+        XCTAssertEqual(model.current.tryIt, .waiting(note: nil), "taken an hour before step 4 opened")
+        model.stop()
+    }
+
+    func testAStaleTestResultIsDropped() async throws {
+        var services = Fixtures.setupServices()
+        services.testClairic = { _, _ in
+            try? await Task.sleep(for: .milliseconds(100))
+            return .success("")
+        }
+        let model = SetupModel(services: services)
+        model.accountID = "acct"
+        model.tokenDraft = "first"
+        model.runTest()
+        model.tokenDraft = "second" // edited while the test runs
+        XCTAssertEqual(model.test, .idle)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.test, .idle, "the result for the old token is not shown")
+
+        model.runTest()
+        for _ in 0..<100 where model.test == .running { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.test, .succeeded)
+    }
+
+    func testTheKeychainIsReadOncePerCredentialsChange() {
+        var reads = 0
+        var revision = 0
+        var services = Fixtures.setupServices()
+        services.hasSavedToken = { reads += 1; return true }
+        services.credentialsRevision = { revision }
+        let model = SetupModel(services: services)
+        for _ in 0..<5 { _ = model.current }
+        XCTAssertEqual(reads, 1)
+        revision = 1
+        XCTAssertTrue(model.current.inputs.hasSavedToken)
+        XCTAssertEqual(reads, 2)
+    }
+
+    func testCustomEndpointRerunKeepsTheBackend() {
+        let coordinator = makeCoordinator()
+        coordinator.updateSettings {
+            $0.backend = .customEndpoint
+            $0.customEndpointURL = URL(string: "http://gpu-box.lan:8080")
+            $0.customModelName = "m"
+            $0.hasSeenPrivacyNotice = true
+            $0.acceptedUploadDestinations = [.cloudflare]
+        }
+        coordinator.setSecret("tok", for: .cloudflareAPIToken)
+        coordinator.updateSettings { $0.clairicAccountID = "acct" }
+        let model = makeModel(coordinator)
+        XCTAssertEqual(model.flow.choice, .customEndpoint)
+        model.pressPrimary(); model.pressPrimary()
+        XCTAssertEqual(model.current.primary.title, "Continue")
+        model.pressPrimary() // Return on step 3
+        XCTAssertEqual(coordinator.settings.backend, .customEndpoint, "not silently switched to Clairic")
+        model.stop()
+    }
+
+    func testCustomEndpointNeedsItsOwnConsentForItsHost() {
+        let coordinator = makeCoordinator()
+        coordinator.acceptUploadConsent()
+        coordinator.updateSettings {
+            $0.backend = .customEndpoint
+            $0.customEndpointURL = URL(string: "http://gpu-box.lan:8080")
+            $0.customModelName = "m"
+        }
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        XCTAssertEqual(BackendGate.consentPrompt(for: coordinator.settings), "Screenshots will be sent to gpu-box.lan")
+        coordinator.allowCustomEndpointUploads()
+        XCTAssertEqual(coordinator.readiness, .ready)
+        coordinator.updateSettings { $0.customEndpointURL = URL(string: "https://elsewhere.example.com") }
+        XCTAssertEqual(coordinator.readiness, .needsConsent, "another host is asked again")
     }
 
     func testFinishAppliesLoginItemAndCloses() {

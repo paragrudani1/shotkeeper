@@ -11,12 +11,14 @@ public enum BackendReadiness: Equatable, Sendable {
 }
 
 /// The consent gate (CODING_STANDARDS #2): no user screenshot goes to a cloud backend unless the user chose that
-/// backend and accepted its privacy notice. The app's analyzer factory and its folder watcher both ask this.
+/// backend and accepted sending to its destination. The app's analyzer factory, its folder watcher and the
+/// processor (which skips files while consent is missing) all ask this.
 ///
-/// Consent is `AppSettings.hasSeenPrivacyNotice`, set only by setup step 2's "I Agree". Test Connection is not
-/// gated: it sends only a generated image, never a user file.
+/// Consent is per destination (`AppSettings.acceptedUploadDestinations`): `.cloudflare` from setup step 2's
+/// "I Agree" (its text names Cloudflare), `.customEndpoint` from the Settings confirmation that names the host,
+/// and only for that host. Test Connection is not gated: it sends only a generated image, never a user file.
 public enum BackendGate {
-    public static let consentReason = "Finish setup to accept where screenshots are sent (menu → Finish Setup…)"
+    public static let consentReason = "Finish setup to allow where screenshots are sent (or allow it in Settings → Model)"
 
     /// True for backends that send screenshots off this Mac. A custom endpoint counts even when it is on
     /// 127.0.0.1: the app cannot tell where a URL really ends up.
@@ -30,6 +32,54 @@ public enum BackendGate {
     /// - Parameter hasClairicToken: a non-empty Cloudflare API token is in the credential store.
     /// The local backend is ready once chosen: the managed runtime reports "not installed" itself, and nothing
     /// leaves the Mac, so it needs no consent.
+    /// Where `backend` sends screenshots; nil for the local model.
+    public static func destination(of backend: AppSettings.Backend) -> AppSettings.UploadDestination? {
+        switch backend {
+        case .clairic: return .cloudflare
+        case .customEndpoint: return .customEndpoint
+        case .localInkling: return nil
+        }
+    }
+
+    /// The user allowed sending to the selected backend's destination (always true for local). For a custom
+    /// endpoint the allowed host must be the URL's host.
+    public static func hasUploadConsent(_ settings: AppSettings) -> Bool {
+        guard let destination = destination(of: settings.backend) else { return true }
+        guard settings.acceptedUploadDestinations.contains(destination) else { return false }
+        if destination == .customEndpoint {
+            guard let host = AppSettings.normalizedHost(settings.customEndpointURL) else { return false }
+            return settings.acceptedCustomEndpointHost == host
+        }
+        return true
+    }
+
+    /// Returns `settings` with consent for `destination` granted (for a custom endpoint: its current host).
+    public static func granting(_ destination: AppSettings.UploadDestination, in settings: AppSettings) -> AppSettings {
+        var settings = settings
+        switch destination {
+        case .cloudflare:
+            settings.acceptedUploadDestinations.insert(.cloudflare)
+        case .customEndpoint:
+            guard let host = AppSettings.normalizedHost(settings.customEndpointURL) else { return settings }
+            settings.acceptedUploadDestinations.insert(.customEndpoint)
+            settings.acceptedCustomEndpointHost = host
+        }
+        return settings
+    }
+
+    /// The confirmation Settings shows before allowing the selected backend's destination: "Screenshots will be
+    /// sent to llm.lan" / "… to your Cloudflare account". Nil when nothing needs allowing (local, already allowed)
+    /// or there is no host to name yet.
+    public static func consentPrompt(for settings: AppSettings) -> String? {
+        guard let destination = destination(of: settings.backend), !hasUploadConsent(settings) else { return nil }
+        switch destination {
+        case .cloudflare:
+            return "Screenshots will be sent to your Cloudflare account"
+        case .customEndpoint:
+            return AppSettings.normalizedHost(settings.customEndpointURL).map { "Screenshots will be sent to \($0)" }
+        }
+    }
+
     public static func readiness(settings: AppSettings, hasClairicToken: Bool) -> BackendReadiness {
         switch settings.backend {
         case .clairic:
@@ -44,7 +94,7 @@ public enum BackendGate {
         case .localInkling:
             return .ready
         }
-        return settings.hasSeenPrivacyNotice ? .ready : .needsConsent
+        return hasUploadConsent(settings) ? .ready : .needsConsent
     }
 
     /// Whether the app may watch the screenshot folder: only with a usable backend, so nothing is queued (and later
@@ -66,7 +116,7 @@ public enum BackendGate {
     public static func statusReason(for readiness: BackendReadiness) -> String? {
         switch readiness {
         case .ready: return nil
-        case .needsConsent: return "Setup is not finished"
+        case .needsConsent: return "Not allowed to send screenshots yet"
         case .notConfigured(let reason): return reason
         }
     }

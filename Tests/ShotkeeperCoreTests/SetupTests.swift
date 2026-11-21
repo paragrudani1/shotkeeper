@@ -8,6 +8,7 @@ private func clairicSettings(account: String? = "acct", consent: Bool) -> AppSet
     settings.backend = .clairic
     settings.clairicAccountID = account
     settings.hasSeenPrivacyNotice = consent
+    settings.acceptedUploadDestinations = consent ? [.cloudflare] : []
     return settings
 }
 
@@ -28,6 +29,8 @@ final class BackendGateTests: XCTestCase {
         var settings = AppSettings()
         settings.backend = .customEndpoint
         settings.hasSeenPrivacyNotice = true
+        settings.acceptedUploadDestinations = [.cloudflare, .customEndpoint]
+        settings.acceptedCustomEndpointHost = "127.0.0.1"
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false),
                        .notConfigured("Custom endpoint URL is not set"))
         settings.customEndpointURL = URL(string: "ftp://example.com")
@@ -39,9 +42,59 @@ final class BackendGateTests: XCTestCase {
         settings.customModelName = "inkling"
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .ready)
         // Even a 127.0.0.1 URL counts as leaving the Mac: the app cannot tell where it ends up.
-        settings.hasSeenPrivacyNotice = false
-        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .needsConsent)
+        settings.acceptedUploadDestinations = [.cloudflare]
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .needsConsent,
+                       "Cloudflare consent (setup step 2) does not cover a custom endpoint")
         XCTAssertTrue(BackendGate.sendsScreenshotsOffThisMac(.customEndpoint))
+    }
+
+    func testCustomEndpointConsentIsForTheAllowedHostOnly() {
+        var settings = AppSettings()
+        settings.backend = .customEndpoint
+        settings.customEndpointURL = URL(string: "http://LLM.lan:8080/v1")
+        settings.customModelName = "m"
+        XCTAssertFalse(BackendGate.hasUploadConsent(settings))
+        settings = BackendGate.granting(.customEndpoint, in: settings)
+        XCTAssertEqual(settings.acceptedCustomEndpointHost, "llm.lan")
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .ready)
+        XCTAssertFalse(settings.acceptedUploadDestinations.contains(.cloudflare), "allowing one destination grants only it")
+
+        settings.customEndpointURL = URL(string: "https://other.example.com")
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .needsConsent,
+                       "a different host needs a new confirmation")
+        settings.customEndpointURL = URL(string: "http://llm.lan:9999")
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .ready, "same host, other port")
+
+        var noURL = AppSettings()
+        noURL.backend = .customEndpoint
+        XCTAssertEqual(BackendGate.granting(.customEndpoint, in: noURL), noURL, "nothing to allow without a host")
+    }
+
+    func testConsentPromptNamesTheDestination() {
+        var settings = AppSettings()
+        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to your Cloudflare account")
+        settings = BackendGate.granting(.cloudflare, in: settings)
+        XCTAssertNil(BackendGate.consentPrompt(for: settings))
+        settings.backend = .customEndpoint
+        XCTAssertNil(BackendGate.consentPrompt(for: settings), "no host to name yet")
+        settings.customEndpointURL = URL(string: "https://GPU-box.lan:8443/v1")
+        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to gpu-box.lan")
+        settings.backend = .localInkling
+        XCTAssertNil(BackendGate.consentPrompt(for: settings))
+    }
+
+    func testDestinations() {
+        XCTAssertEqual(BackendGate.destination(of: .clairic), .cloudflare)
+        XCTAssertEqual(BackendGate.destination(of: .customEndpoint), .customEndpoint)
+        XCTAssertNil(BackendGate.destination(of: .localInkling))
+        var settings = AppSettings()
+        settings = BackendGate.granting(.cloudflare, in: settings)
+        XCTAssertEqual(settings.acceptedUploadDestinations, [.cloudflare])
+        XCTAssertTrue(BackendGate.hasUploadConsent(settings))
+        // The old flag alone is no consent any more.
+        var flagOnly = AppSettings()
+        flagOnly.hasSeenPrivacyNotice = true
+        XCTAssertFalse(BackendGate.hasUploadConsent(flagOnly))
     }
 
     func testLocalNeedsNoUploadConsent() {
@@ -67,7 +120,7 @@ final class BackendGateTests: XCTestCase {
         XCTAssertEqual(BackendGate.reason(for: .needsConsent), BackendGate.consentReason)
         XCTAssertEqual(BackendGate.reason(for: .notConfigured("x")), "x")
         XCTAssertNil(BackendGate.statusReason(for: .ready))
-        XCTAssertEqual(BackendGate.statusReason(for: .needsConsent), "Setup is not finished")
+        XCTAssertEqual(BackendGate.statusReason(for: .needsConsent), "Not allowed to send screenshots yet")
         XCTAssertEqual(BackendGate.statusReason(for: .notConfigured("Cloudflare API token is not set")),
                        "Cloudflare API token is not set")
     }
@@ -76,6 +129,10 @@ final class BackendGateTests: XCTestCase {
         let summary = MenuText.status(queue: .idle, watchedFolderName: "Desktop", indexedCount: 0,
                                       notWatchingReason: "Setup is not finished", now: Date())
         XCTAssertEqual(summary, MenuStatusSummary(dot: .orange, headline: "Not watching yet", detail: "Setup is not finished"))
+        let skipping = MenuText.status(queue: .idle, watchedFolderName: "Desktop", indexedCount: 0,
+                                       skippingForConsent: true, now: Date())
+        XCTAssertEqual(skipping, MenuStatusSummary(dot: .orange, headline: "Watching Desktop",
+                                                   detail: MenuText.skippingForConsentText))
         // A hard failure still wins.
         XCTAssertEqual(MenuText.status(queue: .idle, watchedFolderName: nil, indexedCount: 0, failure: "boom",
                                        notWatchingReason: "x", now: Date()).dot, .red)
@@ -177,14 +234,17 @@ final class SetupFlowTests: XCTestCase {
         flow.advance()
         XCTAssertEqual(flow.step, .connect)
         XCTAssertEqual(flow.primary.title, "Skip")
+        XCTAssertFalse(flow.primary.isDefaultAction, "Return in a half-filled field must not skip the step")
         XCTAssertEqual(flow.primaryAction(), .skipConnection)
         flow.inputs.accountID = "acct"
         XCTAssertEqual(flow.primaryAction(), .skipConnection, "an account ID without a token is not enough")
         flow.inputs.hasTokenDraft = true
         XCTAssertEqual(flow.primary, SetupPrimaryButton(title: "Continue", isEnabled: true, action: .saveConnection(.clairic)))
+        XCTAssertTrue(flow.primary.isDefaultAction)
 
-        flow.advance()
-        XCTAssertEqual(flow.step, .tryIt)
+        let opened = Date(timeIntervalSince1970: 1_800_000_000)
+        flow.advance(now: opened)
+        XCTAssertEqual(flow.tryItOpenedAt, opened)
         XCTAssertTrue(flow.showsBack)
         XCTAssertEqual(flow.tryIt, .waiting(note: nil))
         XCTAssertEqual(flow.primary, SetupPrimaryButton(title: "Skip", isEnabled: true, action: .next))
@@ -254,6 +314,7 @@ final class SetupFlowTests: XCTestCase {
     func testRerunStartsFromTheCurrentSettings() {
         var settings = AppSettings()
         settings.hasSeenPrivacyNotice = true
+        settings.acceptedUploadDestinations = [.cloudflare]
         settings.backend = .localInkling
         settings.launchAtLogin = false
         let flow = SetupFlow(settings: settings, cards: cards16)
@@ -261,11 +322,35 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertEqual(flow.choice, .localInkling)
         XCTAssertFalse(flow.openAtLogin, "a re-run keeps the user's login-item choice")
 
+        settings.acceptedUploadDestinations = []
+        XCTAssertFalse(SetupFlow(settings: settings, cards: cards16).consentChecked,
+                       "the box shows step 2's own consent (Cloudflare), not the old flag")
+        settings.acceptedUploadDestinations = [.cloudflare]
+        XCTAssertTrue(SetupFlow(settings: settings, cards: cards16, loginItemEnabled: true).openAtLogin,
+                      "the login item's real state wins over the saved setting")
+
         settings.backend = .customEndpoint
-        XCTAssertEqual(SetupFlow(settings: settings, cards: cards16).choice, .clairic, "no card for a custom endpoint")
+        XCTAssertEqual(SetupFlow(settings: settings, cards: cards16).choice, .clairic, "no card without a host")
+        let withCustom = SetupCards.make(physicalMemoryBytes: 16 * gb, customEndpointHost: "llm.lan")
+        var custom = SetupFlow(settings: settings, cards: withCustom)
+        XCTAssertEqual(custom.choice, .customEndpoint, "a re-run keeps the custom endpoint selected")
+        custom.advance(); custom.advance()
+        XCTAssertEqual(custom.primary, SetupPrimaryButton(title: "Continue", isEnabled: true,
+                                                          action: .saveConnection(.customEndpoint)))
+        XCTAssertTrue(custom.chooseNext())
+        XCTAssertEqual(custom.choice, .clairic, "arrows wrap over all three cards")
+        custom.chooseNext(); custom.chooseNext()
+        XCTAssertEqual(custom.choice, .customEndpoint)
 
         settings.backend = .localInkling
         XCTAssertEqual(SetupFlow(settings: settings, cards: SetupCards.make(physicalMemoryBytes: 8 * gb)).choice, .clairic)
+    }
+
+    func testCustomCardOnlyWithAHost() {
+        XCTAssertNil(SetupCards.make(physicalMemoryBytes: 16 * gb).custom)
+        let cards = SetupCards.make(physicalMemoryBytes: 16 * gb, customEndpointHost: "llm.lan")
+        XCTAssertEqual(cards.all.map(\.backend), [.clairic, .localInkling, .customEndpoint])
+        XCTAssertEqual(cards.custom?.subtitle, "Keeps using llm.lan. Change it in Settings → Model.")
     }
 
     func testRecommendedCardIsPreselectedOnBigMacs() {
@@ -310,7 +395,7 @@ final class TryItTests: XCTestCase {
 
     func testRenameBecomesTheResultCard() {
         let report = ProcessingReport(originalURL: original, outcome: .processed(finalURL: final, renamed: true, moved: false))
-        let state = TryIt.apply(.processed(report), entry: entry(tags: ["semiconductor", "flashcards"]), to: .waiting(note: nil))
+        let state = TryIt.apply(.processed(report), entry: entry(tags: ["semiconductor", "flashcards"]), openedAt: nil, to: .waiting(note: nil))
         guard case .result(let result) = state else { return XCTFail("\(state)") }
         XCTAssertEqual(result.oldName, "Screenshot 2026-11-21 at 16.24.11.png")
         XCTAssertEqual(result.newName, "Tweet semiconductor flashcards.png")
@@ -325,7 +410,7 @@ final class TryItTests: XCTestCase {
 
     func testKeptNameStillWorks() {
         let report = ProcessingReport(originalURL: original, outcome: .processed(finalURL: original, renamed: false, moved: false))
-        guard case .result(let result) = TryIt.apply(.processed(report), entry: nil, to: .waiting(note: nil)) else {
+        guard case .result(let result) = TryIt.apply(.processed(report), entry: nil, openedAt: nil, to: .waiting(note: nil)) else {
             return XCTFail()
         }
         XCTAssertNil(result.newName)
@@ -337,28 +422,65 @@ final class TryItTests: XCTestCase {
     func testProblemsKeepWaitingForTheNextScreenshot() {
         let failed = ScreenshotEvent.failed(originalURL: original,
                                             problem: UserFacingProblem(message: "the model backend rejected the token"))
-        XCTAssertEqual(TryIt.apply(failed, entry: nil, to: .waiting(note: nil)),
+        XCTAssertEqual(TryIt.apply(failed, entry: nil, openedAt: nil, to: .waiting(note: nil)),
                        .problem("Could not name that screenshot: the model backend rejected the token. Take another one to try again."))
         let excluded = ScreenshotEvent.processed(ProcessingReport(
             originalURL: original, outcome: .skipped(.excluded(.init(.filenameContains, "bank")))))
-        guard case .problem(let text) = TryIt.apply(excluded, entry: nil, to: .waiting(note: nil)) else { return XCTFail() }
+        guard case .problem(let text) = TryIt.apply(excluded, entry: nil, openedAt: nil, to: .waiting(note: nil)) else { return XCTFail() }
         XCTAssertTrue(text.contains("exclude rule"))
         let paused = ScreenshotEvent.processed(ProcessingReport(originalURL: original, outcome: .skipped(.paused(until: Date()))))
-        guard case .problem(let pausedText) = TryIt.apply(paused, entry: nil, to: .waiting(note: nil)) else { return XCTFail() }
+        guard case .problem(let pausedText) = TryIt.apply(paused, entry: nil, openedAt: nil, to: .waiting(note: nil)) else { return XCTFail() }
         XCTAssertTrue(pausedText.contains("paused"))
+    }
+
+    /// Only screenshots taken since step 4 opened count: a backlog file finishing now is not the user's test.
+    func testFilesFromBeforeStepFourAreIgnored() {
+        let opened = Date(timeIntervalSince1970: 1_800_000_000)
+        var old = entry(tags: [])
+        old.capturedAt = opened.addingTimeInterval(-60)
+        let report = ProcessingReport(originalURL: original, outcome: .processed(finalURL: final, renamed: true, moved: false))
+        XCTAssertEqual(TryIt.apply(.processed(report), entry: old, openedAt: opened, to: .waiting(note: nil)),
+                       .waiting(note: nil))
+        var justBefore = old
+        justBefore.capturedAt = opened.addingTimeInterval(-TryIt.slack + 1)
+        guard case .result = TryIt.apply(.processed(report), entry: justBefore, openedAt: opened, to: .waiting(note: nil)) else {
+            return XCTFail("a screenshot taken a moment before the step opened still counts")
+        }
+        var after = old
+        after.capturedAt = opened.addingTimeInterval(30)
+        guard case .result = TryIt.apply(.processed(report), entry: after, openedAt: opened, to: .waiting(note: nil)) else {
+            return XCTFail()
+        }
+
+        let failed = ScreenshotEvent.failed(originalURL: original, problem: UserFacingProblem(message: "x"))
+        XCTAssertEqual(TryIt.apply(failed, entry: nil, fileCreatedAt: opened.addingTimeInterval(-60), openedAt: opened,
+                                   to: .waiting(note: nil)), .waiting(note: nil), "an old file failing is not shown")
+        guard case .problem = TryIt.apply(failed, entry: nil, fileCreatedAt: opened.addingTimeInterval(10), openedAt: opened,
+                                          to: .waiting(note: nil)) else { return XCTFail() }
+        guard case .problem = TryIt.apply(failed, entry: nil, openedAt: opened, to: .waiting(note: nil)) else {
+            return XCTFail("an unknown date is not a reason to hide a problem")
+        }
+    }
+
+    func testAwaitingConsentIsExplained() {
+        let event = ScreenshotEvent.processed(ProcessingReport(originalURL: original, outcome: .skipped(.awaitingConsent)))
+        guard case .problem(let text) = TryIt.apply(event, entry: nil, openedAt: nil, to: .waiting(note: nil)) else {
+            return XCTFail()
+        }
+        XCTAssertTrue(text.contains("not allowed"), text)
     }
 
     func testUnrelatedSkipsChangeNothing() {
         for reason in [SkipReason.missing, .alreadyIndexed, .restoredByUndo] {
             let event = ScreenshotEvent.processed(ProcessingReport(originalURL: original, outcome: .skipped(reason)))
-            XCTAssertEqual(TryIt.apply(event, entry: nil, to: .waiting(note: "n")), .waiting(note: "n"))
+            XCTAssertEqual(TryIt.apply(event, entry: nil, openedAt: nil, to: .waiting(note: "n")), .waiting(note: "n"))
         }
     }
 
     func testAResultStays() {
         let shown = TryItState.result(TryItResult(path: "/a.png", oldName: "S.png", newName: "A.png", hashtags: []))
         let later = ScreenshotEvent.failed(originalURL: original, problem: UserFacingProblem(message: "x"))
-        XCTAssertEqual(TryIt.apply(later, entry: nil, to: shown), shown)
+        XCTAssertEqual(TryIt.apply(later, entry: nil, openedAt: nil, to: shown), shown)
         XCTAssertEqual(TryIt.withNote("n", in: shown), shown)
         XCTAssertEqual(TryIt.withNote("n", in: .waiting(note: nil)), .waiting(note: "n"))
     }

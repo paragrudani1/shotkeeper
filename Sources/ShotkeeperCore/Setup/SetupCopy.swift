@@ -55,13 +55,18 @@ public struct SetupModelCard: Equatable, Sendable, Identifiable {
 public struct SetupCards: Equatable, Sendable {
     public var clairic: SetupModelCard
     public var local: SetupModelCard
-    public var all: [SetupModelCard] { [clairic, local] }
+    /// Only when a custom endpoint is the current backend (setup run again): a third card that keeps it, so the
+    /// re-run never silently switches the backend to Clairic.
+    public var custom: SetupModelCard?
+    public var all: [SetupModelCard] { [clairic, local] + (custom.map { [$0] } ?? []) }
     public var recommended: AppSettings.Backend { local.isRecommended ? .localInkling : .clairic }
 
     public func card(for backend: AppSettings.Backend) -> SetupModelCard? { all.first { $0.backend == backend } }
 
+    /// - Parameter customEndpointHost: the configured custom endpoint's host when it is the current backend.
     public static func make(physicalMemoryBytes: UInt64, catalog: [ModelVariant] = ModelCatalog.all,
-                            clairicLongSide: Int = ClairicFieldSchema.recommendedMaxImageLongSide) -> SetupCards {
+                            clairicLongSide: Int = ClairicFieldSchema.recommendedMaxImageLongSide,
+                            customEndpointHost: String? = nil) -> SetupCards {
         let ramGB = BackendRecommender.marketingGB(physicalMemoryBytes)
         let recommendation = BackendRecommender.recommend(physicalMemoryBytes: physicalMemoryBytes, catalog: catalog)
         let localRecommended = recommendation.recommended.backend == .localInkling
@@ -92,7 +97,12 @@ public struct SetupCards: Equatable, Sendable {
                                    subtitle: "Needs a Mac with at least \(needed) GB of memory. This Mac has \(ramGB) GB.",
                                    isRecommended: false, isAvailable: false, model: nil)
         }
-        return SetupCards(clairic: clairic, local: local)
+        let custom = customEndpointHost.map {
+            SetupModelCard(backend: .customEndpoint, title: "Custom endpoint", badges: [],
+                           subtitle: "Keeps using \($0). Change it in Settings → Model.", isRecommended: false,
+                           isAvailable: true, model: nil)
+        }
+        return SetupCards(clairic: clairic, local: local, custom: custom)
     }
 
     /// 10.4 → 10, 13.5 → 14 (the catalog's sizes are 10^9 bytes, like Finder's).

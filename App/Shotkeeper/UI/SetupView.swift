@@ -6,6 +6,7 @@ import SwiftUI
 /// Keys: Return = the primary button (when enabled), Esc = Back (steps 2–4), ←/→ switch the model cards.
 struct SetupView: View {
     static let size = CGSize(width: 720, height: 520)
+    static let windowTitle = "Set Up Shotkeeper"
 
     @Bindable var model: SetupModel
 
@@ -46,10 +47,17 @@ struct SetupView: View {
                     .buttonStyle(PanelSecondaryButtonStyle(large: true))
                     .keyboardShortcut(.cancelAction)
             }
-            Button(flow.primary.title) { model.pressPrimary() }
-                .buttonStyle(BrandPrimaryButtonStyle(large: true))
-                .keyboardShortcut(.defaultAction)
-                .disabled(!flow.primary.isEnabled)
+            if flow.primary.isDefaultAction {
+                Button(flow.primary.title) { model.pressPrimary() }
+                    .buttonStyle(BrandPrimaryButtonStyle(large: true))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!flow.primary.isEnabled)
+            } else {
+                // Step 3's "Skip": not the default, so Return in a half-filled field does not skip the step.
+                Button(flow.primary.title) { model.pressPrimary() }
+                    .buttonStyle(PanelSecondaryButtonStyle(large: true))
+                    .disabled(!flow.primary.isEnabled)
+            }
         }
         .padding(.horizontal, 20)
         .frame(height: 56)
@@ -189,6 +197,9 @@ private struct PrivacyStep: View {
                     .font(.system(size: 13))
             }
             .toggleStyle(.checkbox)
+            // Space ticks it without "Keyboard navigation" (the step has no text field to type into).
+            .keyboardShortcut(.space, modifiers: [])
+            .help("Space")
             .padding(.top, 8)
         }
     }
@@ -238,8 +249,12 @@ private struct ConnectStep: View {
             switch flow.choice {
             case .localInkling:
                 LocalModelSetup(model: model, card: flow.cards.local)
-            case .clairic, .customEndpoint:
-                ClairicSetup(model: model, hasSavedToken: flow.inputs.hasSavedToken)
+            case .clairic:
+                ClairicSetup(model: model, hasSavedToken: flow.inputs.hasSavedToken, complete: flow.inputs.clairicComplete)
+            case .customEndpoint:
+                Text("Continue keeps the custom endpoint you set up in Settings → Model.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
             }
         }
         .task(id: flow.choice) {
@@ -282,7 +297,8 @@ private struct ModelCardButton: View {
                 }
                 Text(card.subtitle)
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    // The reason a card is unavailable must stay readable (secondary is ~3.9:1 on the card).
+                    .foregroundStyle(card.isAvailable ? Color.secondary : Color.primary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -317,9 +333,13 @@ private struct ModelCardButton: View {
 }
 
 private struct ClairicSetup: View {
+    enum Field { case account, token }
+
     @Bindable var model: SetupModel
     let hasSavedToken: Bool
-    @FocusState private var accountFocused: Bool
+    /// When complete, Return is the default "Continue"; when not, Return moves to the next empty field.
+    let complete: Bool
+    @FocusState private var focused: Field?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -330,7 +350,8 @@ private struct ClairicSetup: View {
                               prompt: Text("From the Workers AI page of the Cloudflare dashboard"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
-                        .focused($accountFocused)
+                        .focused($focused, equals: .account)
+                        .onSubmit { focusNextEmptyField() }
                 }
                 GridRow {
                     Text("API token")
@@ -338,6 +359,8 @@ private struct ClairicSetup: View {
                                 prompt: Text(hasSavedToken ? "Saved in the Keychain; type to replace" : "Workers AI API token"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
+                        .focused($focused, equals: .token)
+                        .onSubmit { focusNextEmptyField() }
                 }
             }
             .font(.system(size: 13))
@@ -351,7 +374,16 @@ private struct ClairicSetup: View {
                 .font(.system(size: 12))
                 .help(BackendCopy.tokenHelpText)
         }
-        .onAppear { if model.accountID.isEmpty { accountFocused = true } }
+        .onAppear { if model.accountID.isEmpty { focused = .account } }
+    }
+
+    private func focusNextEmptyField() {
+        guard !complete else { return }
+        if model.accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            focused = .account
+        } else {
+            focused = .token
+        }
     }
 }
 
@@ -601,6 +633,8 @@ private struct DoneStep: View {
                 Text("Open Shotkeeper when I log in").font(.system(size: 13))
             }
             .toggleStyle(.checkbox)
+            .keyboardShortcut(.space, modifiers: []) // as on step 2: no text field here
+            .help("Space")
         }
     }
 }
