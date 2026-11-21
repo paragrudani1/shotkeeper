@@ -7,12 +7,52 @@ public enum SkipReason: Equatable, Sendable {
     case paused(until: Date)
     /// Same fingerprint already processed (`done`/`skipped`) at this or another path.
     case alreadyIndexed
+    /// The user restored this file's original name with Undo; Shotkeeper leaves it alone from then on.
+    case restoredByUndo
 }
 
 public enum ProcessingOutcome: Equatable, Sendable {
     /// Analyzed and indexed. `finalURL` is where the file is now.
     case processed(finalURL: URL, renamed: Bool, moved: Bool)
     case skipped(SkipReason)
+}
+
+/// What `ScreenshotProcessor.processWithReport(_:)` did to one file: enough for the rename toast and its Undo.
+public struct ProcessingReport: Equatable, Sendable {
+    /// The path the screenshot had when it was handed to the processor.
+    public var originalURL: URL
+    public var outcome: ProcessingOutcome
+    /// The undo record written for the rename/move, if any.
+    public var undoRecordID: UUID?
+
+    public init(originalURL: URL, outcome: ProcessingOutcome, undoRecordID: UUID? = nil) {
+        self.originalURL = originalURL
+        self.outcome = outcome
+        self.undoRecordID = undoRecordID
+    }
+}
+
+/// Result of a rename the user typed (the toast's "Edit name").
+public struct ManualRenameResult: Equatable, Sendable {
+    public var finalURL: URL
+    /// Nil when the name did not change (nothing was moved, nothing to undo).
+    public var undoRecordID: UUID?
+
+    public init(finalURL: URL, undoRecordID: UUID?) {
+        self.finalURL = finalURL
+        self.undoRecordID = undoRecordID
+    }
+}
+
+public enum ManualRenameError: Error, Equatable, Sendable {
+    /// `FilenameSanitizer` left nothing usable (empty, only punctuation, or a generic "Screenshot" name).
+    case unusableName(String)
+}
+
+/// Result of undoing several records at once ("Undo All").
+public struct UndoBatchResult: Equatable, Sendable {
+    public var restored: [UndoRecord]
+    public var failed: [UUID]
 }
 
 /// One screenshot through the whole pipeline:
@@ -65,6 +105,18 @@ public final class ScreenshotProcessor: Sendable {
 
     /// Suitable as a `ProcessingQueue` handler: `{ _ = try await processor.process($0) }`.
     public func process(_ url: URL) async throws -> ProcessingOutcome {
+        try await processWithReport(url).outcome
+    }
+
+    /// `process(_:)` plus the original path and the undo record id (for the rename toast).
+    public func processWithReport(_ url: URL) async throws -> ProcessingReport {
+        let original = url.standardizedFileURL
+        var undoRecordID: UUID?
+        let outcome = try await process(original, undoRecordID: &undoRecordID)
+        return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: undoRecordID)
+    }
+
+    private func process(_ url: URL, undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
         let url = url.standardizedFileURL
         let settings = self.settings()
         let fm = FileManager.default
@@ -78,8 +130,9 @@ public final class ScreenshotProcessor: Sendable {
         case nil: break
         }
 
-        let hash = try ContentFingerprint.compute(for: url)
         let rowAtPath = try index.lookup(byPath: url.path)
+        if rowAtPath?.restoredByUndo == true { return .skipped(.restoredByUndo) }
+        let hash = try ContentFingerprint.compute(for: url)
         if let rowAtPath, rowAtPath.contentHash == hash, rowAtPath.status.isFinal { return .skipped(.alreadyIndexed) }
         if let previous = try index.lookup(byHash: hash), previous.status.isFinal, previous.path != url.path {
             // The file we processed was moved by the user: follow it. A second copy is simply not re-analyzed.
@@ -135,7 +188,7 @@ public final class ScreenshotProcessor: Sendable {
             }
         }
         if finalURL != url {
-            do { try undoLog.append(from: url, to: finalURL, at: now()) }
+            do { undoRecordID = try undoLog.append(from: url, to: finalURL, at: now()).id }
             catch { notes.append("undo record not written (\(error))") }
         }
 
@@ -159,19 +212,76 @@ public final class ScreenshotProcessor: Sendable {
         return .processed(finalURL: finalURL, renamed: renamed, moved: moved)
     }
 
-    /// Undo the most recent rename/move and point the index back at the original path.
+    /// Undo the most recent rename/move, point the index back at the original path, and flag the file so it is
+    /// never processed again.
     @discardableResult
     public func undoLast() throws -> UndoRecord {
         let record = try undoLog.undoLast(at: now())
-        _ = try? index.updatePath(from: record.to, to: record.from)
+        recordRestored(record)
         return record
     }
 
     @discardableResult
     public func undo(id: UUID) throws -> UndoRecord {
         let record = try undoLog.undo(id: id, at: now())
-        _ = try? index.updatePath(from: record.to, to: record.from)
+        recordRestored(record)
         return record
+    }
+
+    /// Undoes `ids` newest first (the reverse of the given order), so a rename made on top of an earlier one is
+    /// undone before it. Keeps going after a failure; the failed ids are returned.
+    public func undo(ids: [UUID]) -> UndoBatchResult {
+        var result = UndoBatchResult(restored: [], failed: [])
+        for id in ids.reversed() {
+            do { result.restored.append(try undo(id: id)) } catch { result.failed.append(id) }
+        }
+        return result
+    }
+
+    /// The most recent rename/move that can still be undone (for "Undo: <title>" in the menu).
+    public func lastUndoable() -> UndoRecord? {
+        (try? undoLog.records())?.last
+    }
+
+    /// Renames `url` to a name the user typed, with the pipeline's rules: `FilenameSanitizer`, the original
+    /// extension, no-replace "Name 2.png" collisions via `FileOrganizer`. Writes an undo record and moves the index
+    /// row (whose title becomes the new name, so search finds it).
+    public func rename(_ url: URL, to proposedName: String) throws -> ManualRenameResult {
+        let url = url.standardizedFileURL
+        guard let stem = FilenameSanitizer.stem(from: proposedName) else {
+            throw ManualRenameError.unusableName(proposedName)
+        }
+        if stem == url.deletingPathExtension().lastPathComponent { return ManualRenameResult(finalURL: url, undoRecordID: nil) }
+        let finalURL = try organizer.organize(url, stem: stem, into: nil)
+        guard finalURL != url else { return ManualRenameResult(finalURL: url, undoRecordID: nil) }
+        let record: UndoRecord
+        do {
+            record = try undoLog.append(from: url, to: finalURL, at: now())
+        } catch {
+            // Never leave a rename that cannot be undone: put the file back (no-replace) and report the failure.
+            try? organizer.move(finalURL, to: url)
+            throw error
+        }
+        _ = try? index.updatePath(from: url.path, to: finalURL.path)
+        if var row = try? index.lookup(byPath: finalURL.path) {
+            row.title = stem
+            row.note = [row.note, "renamed by the user"].compactMap { $0 }.joined(separator: "; ")
+            _ = try? index.save(row)
+        }
+        return ManualRenameResult(finalURL: finalURL, undoRecordID: record.id)
+    }
+
+    /// After an undo: the index follows the file back, and the file is flagged so neither the watcher (which sees
+    /// the restored name appear) nor "Process existing" nor a later launch processes it again.
+    private func recordRestored(_ record: UndoRecord) {
+        _ = try? index.updatePath(from: record.to, to: record.from)
+        if (try? index.markRestoredByUndo(path: record.from)) == true { return }
+        // No row (e.g. the index was reset): add a minimal one so the flag still persists.
+        let url = URL(fileURLWithPath: record.from)
+        guard let hash = try? ContentFingerprint.compute(for: url) else { return }
+        _ = try? index.save(IndexedScreenshot(path: record.from, originalFilename: url.lastPathComponent,
+                                              contentHash: hash, processedAt: now(), status: .skipped,
+                                              restoredByUndo: true))
     }
 
     private static func format(_ value: Double) -> String {

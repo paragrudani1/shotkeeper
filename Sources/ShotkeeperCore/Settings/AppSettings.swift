@@ -40,6 +40,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var excludeRules: ExcludeRules = ExcludeRules()
     /// The "screenshots go to your Cloudflare account" notice was shown and accepted.
     public var hasSeenPrivacyNotice: Bool = false
+    /// Show the rename toast after each rename (and the batch summary).
+    public var showRenameToast: Bool = true
+    /// Play a short sound after a rename.
+    public var playRenameSound: Bool = false
 
     public init() {}
 
@@ -48,7 +52,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case backend, clairicAccountID, localModelVariantID, customEndpointURL, customModelName, idleTimeoutMinutes,
              watchedFolderOverride, organizedFolder, renameEnabled, moveEnabled, launchAtLogin, minTitleConfidence,
-             requestsPerMinute, maxImageLongSide, writeFinderMetadata, excludeRules, hasSeenPrivacyNotice
+             requestsPerMinute, maxImageLongSide, writeFinderMetadata, excludeRules, hasSeenPrivacyNotice,
+             showRenameToast, playRenameSound
     }
 
     public init(from decoder: Decoder) throws {
@@ -75,6 +80,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         s.writeFinderMetadata = value(.writeFinderMetadata, s.writeFinderMetadata)
         s.excludeRules = value(.excludeRules, s.excludeRules)
         s.hasSeenPrivacyNotice = value(.hasSeenPrivacyNotice, s.hasSeenPrivacyNotice)
+        s.showRenameToast = value(.showRenameToast, s.showRenameToast)
+        s.playRenameSound = value(.playRenameSound, s.playRenameSound)
         self = s
     }
 

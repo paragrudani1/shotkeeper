@@ -15,6 +15,27 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(s.maxImageLongSide, 1280)
         XCTAssertEqual(s.excludeRules, ExcludeRules())
         XCTAssertFalse(s.hasSeenPrivacyNotice)
+        XCTAssertTrue(s.showRenameToast)
+        XCTAssertFalse(s.playRenameSound)
+    }
+
+    func testSettingsFileFromBeforeTheToastSettingsStillDecodes() throws {
+        // Written by the build at 7720981 (no toast/sound keys).
+        let json = """
+        {"backend":"clairic","clairicAccountID":"acct","hasSeenPrivacyNotice":true,"idleTimeoutMinutes":10,
+         "launchAtLogin":false,"maxImageLongSide":1280,"minTitleConfidence":0.5,"moveEnabled":false,
+         "renameEnabled":true,"requestsPerMinute":30,"writeFinderMetadata":true,"excludeRules":{"rules":[]}}
+        """
+        let s = AppSettings.decode(Data(json.utf8))
+        XCTAssertEqual(s.clairicAccountID, "acct")
+        XCTAssertTrue(s.hasSeenPrivacyNotice)
+        XCTAssertTrue(s.showRenameToast)
+        XCTAssertFalse(s.playRenameSound)
+
+        var changed = s
+        changed.showRenameToast = false
+        changed.playRenameSound = true
+        XCTAssertEqual(AppSettings.decode(try changed.encoded()), changed)
     }
 
     func testEmptyObjectDecodesToDefaults() {
