@@ -212,7 +212,7 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   still needs consent (the app cannot tell where a URL ends up). `AnalyzerFactory` now asks the gate instead of
   repeating the checks. The flag keeps its name (no migration, so existing consents stay valid); it now means
   "accepted", and only step 2's "I Agree" sets it. Before, the old single-page setup set it on "Use …" for any
-  backend, including local.
+  backend, including local. *Superseded by the review fixes below (`4472f0b`): consent is per destination.*
 - 2026-11-21 (`6afa5aa`): the Clairic card's cost is computed, not copied: `ClairicPricing` = the measured
   8,242 tokens for a 1280×800 screenshot ([clairic-field-schema](clairic-field-schema.md)) × $0.24/M (standard
   price after the promo ends 2026-12-01) = $1.98 → **"About $2 for 1,000 screenshots"**. Deviation: the spec's
@@ -241,7 +241,8 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
 - 2026-11-21 (`65add2b`): **watching waits for a usable backend.** The coordinator starts the folder watcher (and
   re-queues `pending` rows) only when `BackendGate` says ready, re-checked after every settings or secret change.
   Before, the watcher ran from launch and screenshots taken before setup waited in a held queue, to be uploaded
-  once credentials appeared. Once started it keeps running for the session, so a token removed later still shows
+  once credentials appeared. (Review fix `4472f0b`: a watcher started for Local still saw screenshots while the
+  user switched to Clairic before consenting; those are now skipped, see below.) Once started it keeps running for the session, so a token removed later still shows
   "Needs attention" and the error toast. "Process Existing Screenshots…" also refuses before setup ("Finish setup
   first: …"). While not watching, the menu shows an orange "Not watching yet" + the reason, and "Finish Setup…"
   (also after consent when step 3 was skipped).
@@ -273,6 +274,50 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
 - 2026-11-21 (`65add2b`): text colours added for 4.5:1: error text light #C4281C / dark #FF7B72 (systemRed is 3.6:1
   on white), warning text (Experimental badge, local note) light #8A4600 / dark #FFB340.
 
+### Review fixes (review of `80113d7`, commit `4472f0b`)
+- 2026-11-21: **consent per destination.** New key `acceptedUploadDestinations` (`cloudflare`, `customEndpoint`) +
+  `acceptedCustomEndpointHost`. `BackendGate` checks the selected backend's destination; a custom endpoint only for
+  the allowed host (another host is asked again; the port does not matter). Step 2's "I Agree" grants `.cloudflare`
+  only (its text names Cloudflare) and still sets `hasSeenPrivacyNotice`, which now only means "setup's privacy step
+  was done" (setup opens at launch while false; the menu shows "Finish Setup…").
+- 2026-11-21: **upgrade.** A settings file without the new key is migrated once at load: the old flag counts only
+  for the destination of the backend stored with it (Clairic → `.cloudflare`; custom → `.customEndpoint` for the
+  stored URL's host; Local → nothing, because the old setup set the flag for Local too). Once the key exists it is
+  never re-seeded. Test: `SettingsTests.testUpgradeSeedsConsentOnlyForTheStoredBackend`.
+- 2026-11-21: **skip, don't hold.** Without consent for the destination, `ScreenshotProcessor` returns
+  `.skipped(.awaitingConsent)` (like Pause: not indexed, file untouched) before reading the file. Before, the
+  analyzer threw `.notConfigured`, the queue held the file, and "I Agree" resumed the queue and uploaded a screenshot
+  taken before the consent (path: Local first so watching started, then Clairic). While watching with consent
+  missing, the menu says "Skipping new screenshots: sending them is not allowed yet" + "Finish Setup…".
+  A skipped file can still be processed later by an explicit "Process Existing Screenshots…" after consent.
+- 2026-11-21: **Settings → Model confirmation.** While the selected backend's destination is not allowed, Model shows
+  "Screenshots will be sent to gpu-box.lan. Nothing is sent until you allow it." + "Allow…", which opens a
+  confirmation naming the destination (core `BackendGate.consentPrompt`). It opens by itself when the backend is
+  switched; while a URL is typed only the row updates (no dialog per keystroke). Clairic can be allowed there too
+  (the dialog names "your Cloudflare account"), for users who chose Local in setup and switch later.
+- 2026-11-21: **step 4 timing.** `SetupFlow.tryItOpenedAt` is set when step 4 opens; `TryIt.apply` ignores a
+  processed file whose index `capturedAt` (or a failed file whose creation date) is more than 5 s
+  (`TryIt.slack`) before it, so a backlog file finishing then is not shown as "your" screenshot. An unknown date
+  is not a reason to hide a result or a problem.
+- 2026-11-21: **Return on step 3.** "Skip" is a secondary button without the default action
+  (`SetupPrimaryButton.isDefaultAction`); Return in a field moves to the next empty field (Account ID → token).
+  Once the card is complete, "Continue" is the default again.
+- 2026-11-21: **re-run with a custom endpoint**: a third card "Custom endpoint — Keeps using <host>" is shown and
+  preselected, and Continue keeps it, so Return no longer switches the backend to Clairic.
+- 2026-11-21: nits. The VoiceOver announcement goes to the setup window (after ⌘⇧4 another app is key), else the
+  app. Each Test Connection run is tagged; editing the account ID or token drops the running result. The Keychain
+  is read once per `credentialsRevision`, not per render. On a re-run the login checkbox shows the real login item
+  (`SMAppService` status), and Finish applies it every time (`LaunchAtLogin.apply`, no-op when it already matches).
+  Space ticks the checkboxes on steps 2 and 5 (`keyboardShortcut(.space, modifiers: [])`; those steps have no text
+  field). The unavailable card's reason is primary text (secondary measured ~3.9:1 on the card in light mode).
+- 2026-11-21: **restart during a local download.** The download runs in the app; quitting stops it. After a
+  restart the model shows "Not installed" (no completion marker), screenshots are held with "Needs attention: …not
+  installed", and Settings → Model → "Install and download" continues: `hf download` resumes the files already on
+  disk ([app-implementation](app-implementation.md)). Setup does not reopen for it. No automatic resume yet.
+- 2026-11-21 (deviation, narrowed): without "Keyboard navigation", "Change Shortcut…" on step 5 and the Settings
+  "Allow…" button are reachable only with the mouse or VoiceOver; Return, Esc, Space (checkboxes) and the text
+  fields work without it.
+
 ### What CI cannot check (Parag, on a real Mac)
 - First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
   app (no Dock icon) while it is open.
@@ -287,6 +332,15 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
 - "Change Shortcut…" brings Settings → General to the front over setup; "Run setup again…" there opens step 1.
 - "Open Shotkeeper when I log in": with the app in /Applications, it appears in System Settings → General → Login Items.
 - The 72 pt icon and the menu bar glyph in step 5 look sharp on a Retina screen.
+- (review fixes) Step 3 with an empty token: Return in Account ID moves to the token field and does not skip.
+  Space ticks the step 2 and step 5 checkboxes with "Keyboard navigation" off.
+- (review fixes) Settings → Model → Custom with a URL: the "Screenshots will be sent to <host>" dialog appears;
+  nothing is renamed before "Allow"; changing the host asks again.
+- (review fixes) Pick Local in setup, then Clairic in Settings without allowing it: a new screenshot keeps its
+  name, the menu says "Skipping new screenshots…", and allowing it later does not rename the earlier one.
+- (review fixes) Upgrade from a build with the old setup: a Clairic user keeps working without being asked again;
+  a Local user who switches to Clairic is asked.
+- (review fixes) A VoiceOver announcement "It works…" when the step 4 result appears while another app is in front.
 
 ### Snapshot review
 - 2026-11-21: run 44945029445 (21 setup/icon images × light/dark) matched the spec except the 8 GB state: the

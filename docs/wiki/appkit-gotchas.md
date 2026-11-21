@@ -28,3 +28,5 @@ fixed in `paragrudani1/shotkeeper@544e24a`.
   and lists. SwiftUI `Button`s (also with a custom style), checkboxes and selectable cards are not in the Tab
   loop then, so `onKeyPress` on them never fires. Give the screen a `.defaultAction` (Return) and a
   `.cancelAction` (Esc) so it works without Tab, and check both settings of "Keyboard navigation" on a Mac.
+- 2026-11-21 (PR 3 review fixes): a SwiftUI `Group` passes its modifiers to each child. `onChange` on a `Group`
+  whose `if` is false has no child and never fires: put it on a real container (`VStack`).
