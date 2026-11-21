@@ -34,7 +34,7 @@ jobs:
         run: swift build
 
       - name: swift test
-        run: scripts/ci-swift-test.sh
+        run: swift test
 
   macos-app:
     name: macos-app
@@ -67,7 +67,7 @@ jobs:
           restore-keys: macos-xcode${{ steps.xcode.outputs.version }}-
 
       - name: swift test (package)
-        run: scripts/ci-swift-test.sh
+        run: swift test
 
       - name: Install XcodeGen
         run: brew install xcodegen
