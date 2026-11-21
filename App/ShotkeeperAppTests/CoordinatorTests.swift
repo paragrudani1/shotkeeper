@@ -250,6 +250,9 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
         XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
         coordinator.setSecret("tok", for: .cloudflareAPIToken)
         XCTAssertTrue(coordinator.hasSecret(.cloudflareAPIToken))
+        // Credentials alone are not enough: nothing leaves the Mac before the privacy notice is accepted.
+        XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
+        coordinator.updateSettings { $0.hasSeenPrivacyNotice = true }
         XCTAssertTrue(coordinator.currentAnalyzer is CloudflareClairicAnalyzer)
 
         coordinator.updateSettings {
