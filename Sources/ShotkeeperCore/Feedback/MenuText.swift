@@ -78,10 +78,16 @@ public enum MenuText {
     ///   - watchedFolderName: last path component of the watched folder, nil while unknown.
     ///   - indexedCount: screenshots in the index (`IndexStats.done`), nil when unknown.
     ///   - failure: a hard failure (index not opened, local server gave up); wins over the queue status.
+    ///   - notWatchingReason: set while the folder is not watched because no backend is usable yet
+    ///     (`BackendGate.statusReason`); wins over the queue status, which is idle then.
     public static func status(queue: QueueStatus, watchedFolderName: String?, indexedCount: Int?, failure: String? = nil,
+                              notWatchingReason: String? = nil,
                               now: Date, time: TimeLabel = TimeLabel()) -> MenuStatusSummary {
         let headline = watchedFolderName.map { "Watching \($0)" } ?? "Watching for screenshots"
         if let failure { return MenuStatusSummary(dot: .red, headline: "Not working", detail: failure) }
+        if let notWatchingReason {
+            return MenuStatusSummary(dot: .orange, headline: "Not watching yet", detail: notWatchingReason)
+        }
         switch queue {
         case .idle:
             let detail = indexedCount.map { "Idle · \(screenshots($0)) in the index" } ?? "Idle"
