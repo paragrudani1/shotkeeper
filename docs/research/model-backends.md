@@ -39,6 +39,39 @@ https://huggingface.co/mlx-community/Inkling-2-Mini-4bit, https://github.com/ml-
   PR head commit `0c4c99192230f1943dd468d297f0b8a64ae7b7c2` (branch `jundot:inkling2-mini`). mlx-community 4-bit README installs
   `git+https://github.com/ml-explore/mlx-lm.git@refs/pull/2086/head` and says: for images run `mlx_lm.server` and send `image_url` parts.
 - Quants: `mlx-community/Inkling-2-Mini-4bit` (4 safetensors shards, ~17 GB); `VisualInference/Inkling-2-Mini-MLX-2bit` (mlx-vlm tag,
-  ships a patch for mlx-vlm tool calls; check its README before relying on mlx-lm). 3-bit MLX repo: not yet verified.
+  ships a patch for mlx-vlm tool calls; check its README before relying on mlx-lm). 3-bit MLX repo: see the catalog section below.
 - llama.cpp: GGUFs exist (`ggml-org/Inkling-2-Mini-GGUF` IQ4_NL 17.6 GB, Q8_0 27.8 GB, mmproj Q8_0 0.35 GB; unsloth UD quants 7.8–22.9 GB),
   llama.cpp Inkling PRs (#32187, #32695) still open on 2026-11-21. Live llama.cpp test on the Linux box was cancelled by the user on 2026-11-21 (disk).
+
+## MLX quant catalog (checked 2026-11-21, ~11:00 UTC)
+Source: `https://huggingface.co/api/models?search=Inkling-2-Mini%20mlx` (26 hits), then `/api/models/<repo>?blobs=true`
+for sizes/revisions and each model card (`/raw/main/README.md`). Sizes = sum of repo files, GB = 10^9 bytes.
+
+| Repo | Revision (sha) | Download | Card says | Format |
+|---|---|---|---|---|
+| `mlx-community/Inkling-2-Mini-4bit` | `9856dc53edead71405f8348930937c3638ff21a2` | 17.33 GB | serve with `mlx_lm.server` (PR #2086 install) | mlx-lm |
+| `VisualInference/Inkling-2-Mini-MLX-3bit` | `ab80e9d5290b3e0c5af093bfd89d2f534c3ffb5b` | 13.46 GB | "for Macs with 24 GB"; 11.9 GiB weights, peak 12.7–14.1 GiB, +1.4% perplexity | mlx-vlm |
+| `VisualInference/Inkling-2-Mini-MLX-2bit` | `66cf4fbfecdd3198202dc8918e2ba6e22561519d` | 10.40 GB | "16 GB (tight) or 18 GB"; 9.1 GiB weights, peak 9.8–11.2 GiB, +10% perplexity, weaker image recognition | mlx-vlm |
+
+- **A real 3-bit MLX build for 24 GB Macs exists**: `VisualInference/Inkling-2-Mini-MLX-3bit` (created 2026-11-21 05:27 UTC).
+  Same publisher and method as the 2-bit build the user chose, so it is the catalog's 3-bit entry.
+  Other 3-bit builds seen: `netprojects/Inkling-2-Mini-MLX-3bit` (14.73 GB, "for 24 GB Macs", mlx-vlm, weights renamed on
+  2026-11-21 so early downloads break) and `mlx-community/Inkling-2-Mini-oQ3e-mtp` (13.70 GB, needs oMLX ≥ 0.8.1, not mlx-lm).
+- **Open risk:** both VisualInference cards say to use **mlx-vlm** (`git+https://github.com/Neywa-Labs/mlx-vlm`, PR 2778,
+  merged 2026-11-20, unreleased) and `mlx_vlm.generate`, not `mlx_lm.server`. Whether the pinned mlx-lm commit loads their
+  weights is unverified (no Mac here). mlx-lm's loader (`mlx_lm/models/inkling2/checkpoint.py` at the pinned commit) remaps
+  the original checkpoint's key names; mlx-vlm-format keys may differ. `ModelVariant.verifiedWithMLXLM` is false for these
+  and setup shows "Experimental build". First Mac run must check this; fallback is serving them with `mlx_vlm.server`.
+- Revisions are pinned in `ModelCatalog` and passed as `hf download --revision`.
+
+## mlx_lm.server at the pinned commit
+Source: `https://raw.githubusercontent.com/ml-explore/mlx-lm/0c4c99192230f1943dd468d297f0b8a64ae7b7c2/mlx_lm/server.py`
+(`main()` argparse) and `pyproject.toml` at the same commit.
+- Flags used: `--model`, `--host` (default `127.0.0.1`), `--port` (default 8080), `--chat-template-args` (JSON passed to
+  `apply_chat_template`, e.g. `{"reasoning_effort":"none"}`). Others available: `--max-tokens` (default 512), `--temp`,
+  `--draft-model`, `--trust-remote-code`, `--log-level`, `--prompt-cache-size`, `--kv-bits`, `--decode-concurrency`.
+- Per-request `chat_template_kwargs` is accepted. Images: message parts of type `image_url`/`input_image`/`image`; data URLs work.
+- Endpoints: `GET /health`, `GET /v1/models`, `POST /v1/chat/completions`.
+- Console script `mlx_lm.server` (pyproject `[project.scripts]`); `python -m mlx_lm.server` is deprecated.
+- `requires-python = ">=3.11"`; deps include `transformers>=5.7.0`, `pillow`, `mlx>=0.32.3` on Darwin. macOS's bundled
+  python3 is 3.9, so the plan prefers `uv venv --python 3.12`.
