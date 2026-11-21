@@ -349,7 +349,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
 
         candidate.backend = .clairic
         let missing = await coordinator.testConnection(settings: candidate, secrets: [:])
-        XCTAssertEqual(missing, .failure(AnalyzerFailure(message: "Cloudflare account ID is not set")))
+        XCTAssertEqual(missing, .failure(AnalyzerFailure(message: "Cloudflare account ID is not set.")))
     }
 }
 

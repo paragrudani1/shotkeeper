@@ -58,6 +58,35 @@ enum UISnapshotCatalog {
             UISnapshot("search-no-match") { Fixtures.search(text: "zebra crossing", rows: []) },
             UISnapshot("search-empty-index") { Fixtures.search(rows: [], total: 0) },
             UISnapshot("search-index-error") { Fixtures.searchIndexError() },
+            // First-run setup (PR 3) and the app icon it shows
+            UISnapshot("app-icon") { Fixtures.appIcons() },
+            UISnapshot("setup-1-welcome") { Fixtures.setup(.welcome) },
+            UISnapshot("setup-2-privacy") { Fixtures.setup(.privacy) },
+            UISnapshot("setup-2-privacy-agreed") { Fixtures.setup(.privacy, consent: true) },
+            UISnapshot("setup-3-clairic-empty") { Fixtures.setup(.connect) },
+            UISnapshot("setup-3-clairic-testing") { Fixtures.setup(.connect, account: Fixtures.account, token: "fake", test: .running) },
+            UISnapshot("setup-3-clairic-connected") {
+                Fixtures.setup(.connect, account: Fixtures.account, token: "fake", test: .succeeded)
+            },
+            UISnapshot("setup-3-clairic-error") {
+                Fixtures.setup(.connect, account: Fixtures.account, token: "fake", test: .failed(
+                    ConnectionTestText.failure(AnalyzerError.unauthorized("HTTP 401"), backend: .clairic)))
+            },
+            UISnapshot("setup-3-local") { Fixtures.setup(.connect, choice: .localInkling) },
+            UISnapshot("setup-3-local-downloading") { Fixtures.setup(.connect, choice: .localInkling, phase: .downloading(0.42)) },
+            UISnapshot("setup-3-local-32gb") { Fixtures.setup(.connect, choice: .localInkling, memoryGB: 32) },
+            UISnapshot("setup-3-8gb") { Fixtures.setup(.connect, memoryGB: 8) },
+            UISnapshot("setup-4-waiting") { Fixtures.setup(.tryIt) },
+            UISnapshot("setup-4-waiting-download") {
+                Fixtures.setup(.tryIt, phase: .downloading(0.42), backend: .localInkling)
+            },
+            UISnapshot("setup-4-problem") {
+                Fixtures.setup(.tryIt, tryIt: .problem("Could not name that screenshot: the model backend rejected the token. "
+                                                       + "Take another one to try again."))
+            },
+            UISnapshot("setup-4-result") { Fixtures.setup(.tryIt, tryIt: .result(Fixtures.tryItResult)) },
+            UISnapshot("setup-4-not-connected") { Fixtures.setup(.tryIt, tryIt: .notConnected(TryIt.notConnectedText)) },
+            UISnapshot("setup-5-done") { Fixtures.setup(.done) },
         ]
     }
 
@@ -318,6 +347,62 @@ enum Fixtures {
         if copied { model.showCopied() }
         if let problem { model.showProblem(problem) }
         return SearchView(model: model, actions: .none, opaqueBackground: true)
+    }
+
+    // MARK: Setup
+
+    static let account = "0123456789abcdef0123456789abcdef"
+    static let tryItResult = TryItResult(path: "/Users/parag/Desktop/Tweet semiconductor flashcards.png",
+                                         oldName: "Screenshot 2026-11-21 at 16.24.11.png",
+                                         newName: "Tweet semiconductor flashcards.png",
+                                         hashtags: ["#semiconductor", "#flashcards", "#chips", "#x.com"])
+
+    /// Fixed answers and no-op actions: nothing reaches a coordinator, the Keychain or the network.
+    static func setupServices(memoryGB: UInt64 = 16, phase: RuntimePhase = .notInstalled,
+                              backend: AppSettings.Backend = .clairic) -> SetupServices {
+        let settings: AppSettings = {
+            var settings = AppSettings()
+            settings.backend = backend
+            return settings
+        }()
+        return SetupServices(
+            physicalMemoryBytes: memoryGB * 1_073_741_824,
+            settings: { settings }, hasSavedToken: { false }, runtimePhase: { phase }, readiness: { .ready },
+            isPaused: { false }, acceptConsent: {}, saveClairic: { _, _ in }, chooseLocal: { _ in },
+            refreshLocal: { _ in }, installLocal: { _ in }, cancelInstall: {},
+            testClairic: { _, _ in .success("") }, addEventObserver: { _ in nil }, removeEventObserver: { _ in },
+            indexEntry: { _ in nil }, openShortcutSettings: {}, finish: { _ in })
+    }
+
+    static func setup(_ step: SetupStep, choice: AppSettings.Backend = .clairic, consent: Bool = false,
+                      account: String = "", token: String = "", test: ConnectionTestState = .idle,
+                      tryIt: TryItState? = nil, phase: RuntimePhase = .notInstalled, memoryGB: UInt64 = 16,
+                      backend: AppSettings.Backend = .clairic) -> some View {
+        let model = SetupModel(services: setupServices(memoryGB: memoryGB, phase: phase, backend: backend))
+        var flow = model.flow
+        for _ in 1..<step.rawValue { flow.advance() }
+        flow.consentChecked = consent || step.rawValue > SetupStep.privacy.rawValue
+        flow.choose(choice)
+        if let tryIt { flow.tryIt = tryIt }
+        model.flow = flow
+        model.accountID = account
+        model.tokenDraft = token
+        model.test = test
+        return SetupView(model: model)
+    }
+
+    static func appIcons() -> some View {
+        HStack(alignment: .bottom, spacing: 24) {
+            AppIconView(size: 32)
+            AppIconView(size: 72)
+            AppIconView(size: 160)
+            VStack(spacing: 10) {
+                MenuBarGlyphView(size: 18)
+                MenuBarGlyphView(size: 72)
+            }
+        }
+        .padding(20)
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
     }
 
     static func glyphs() -> some View {

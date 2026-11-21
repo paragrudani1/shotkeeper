@@ -107,6 +107,9 @@ final class SetupCardsTests: XCTestCase {
         XCTAssertTrue(cards.local.isAvailable)
         XCTAssertEqual(cards.local.installButtonTitle, "Install and Download (about 10 GB)")
         XCTAssertNil(cards.clairic.installButtonTitle)
+        XCTAssertEqual(cards.local.note, "Lower quality (weaker image recognition) and tight on memory: other apps may slow "
+                       + "down while it runs. Experimental build: not yet tested with the built-in model server.")
+        XCTAssertNil(cards.clairic.note)
         XCTAssertEqual(cards.clairic.accessibilityLabel,
                        "Cloudflare Clairic, Recommended. Best for this Mac (16 GB). About $2 for 1,000 screenshots.")
     }
@@ -132,6 +135,7 @@ final class SetupCardsTests: XCTestCase {
         XCTAssertEqual(cards.local.model, ModelCatalog.inkling4bit)
         XCTAssertEqual(cards.local.badges, ["Recommended"])
         XCTAssertEqual(cards.local.installButtonTitle, "Install and Download (about 17 GB)")
+        XCTAssertNil(cards.local.note, "the 4-bit build has no warning")
     }
 
     func testEightGigabyteMacCannotPickLocal() {

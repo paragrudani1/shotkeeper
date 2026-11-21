@@ -65,7 +65,7 @@ public struct IconGeometry: Equatable, Sendable {
     }
 
     /// The sparkle's four tips (top, right, bottom, left) and, for each tip, the control point of the curve to the
-    /// next tip (one quadratic control, or both cubic controls at the same point).
+    /// next tip: a cubic Bézier with both control points there (as `MenuBarGlyph` drew it in PR 1).
     /// - Parameter scale: the menu bar pulse draws it bigger.
     public func sparkle(scale: Double = 1) -> (tips: [IconPoint], controls: [IconPoint]) {
         let r = sparkleRadius * scale, p = r * sparklePinch, c = 0.5

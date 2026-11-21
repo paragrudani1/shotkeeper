@@ -31,6 +31,12 @@ final class AppCoordinator {
     }
     private var message = ExpiringMessage()
     private(set) var watchedFolder: URL?
+    /// The folder watcher runs. It starts only once the backend is usable (core `BackendGate`): nothing is queued,
+    /// and later uploaded, before the user chose where screenshots go. Once started it keeps running for the
+    /// session, so a token removed later shows the "Needs attention" hold instead of silently ignoring screenshots.
+    private(set) var isWatching = false
+    /// Whether the chosen backend may analyze screenshots now. Updated on every settings or secret change.
+    private(set) var readiness: BackendReadiness = .notConfigured("Starting")
     /// The menu's "Recent" rows (last 5 processed), the "Undo: <title>" target and the index count.
     private(set) var recentItems: [RecentItem] = []
     private(set) var undoCandidate: UndoRecord?
@@ -57,6 +63,8 @@ final class AppCoordinator {
     @ObservationIgnored private var toastBatcher = ToastBatcher()
     @ObservationIgnored private var lastSoundAt: Date?
     @ObservationIgnored private let eventSink = LockedValue<(@MainActor @Sendable (ScreenshotEvent) -> Void)?>(nil)
+    /// Extra listeners for pipeline events (setup's "Try it now" step), keyed by the id `addEventObserver` returned.
+    @ObservationIgnored private var eventObservers: [UUID: @MainActor (ScreenshotEvent) -> Void] = [:]
     /// Shows a toast (set by the app delegate; nil in unit tests unless a test sets it).
     @ObservationIgnored var onToast: ((ToastContent) -> Void)?
     /// Plays the rename sound (only called when `playRenameSound` is on).
@@ -99,6 +107,12 @@ final class AppCoordinator {
 
     var recommendation: BackendRecommendation {
         BackendRecommender.recommend(physicalMemoryBytes: physicalMemoryBytes)
+    }
+
+    /// The menu's second line while the folder is not watched because no backend is usable ("Not watching yet"),
+    /// nil while watching or about to start.
+    var notWatchingReason: String? {
+        isWatching ? nil : BackendGate.statusReason(for: readiness)
     }
 
     var statusLine: String {
@@ -151,6 +165,13 @@ final class AppCoordinator {
         guard !servicesStarted else { return }
         servicesStarted = true
         Task { await localRuntime.cleanUpAfterPreviousRun() }
+        startWatchingIfReady()
+    }
+
+    /// Starts the watcher (and re-queues interrupted work) once services run and the backend is usable.
+    private func startWatchingIfReady() {
+        guard servicesStarted, !isWatching, readiness == .ready else { return }
+        isWatching = true
         restartWatcher()
         if let index, let queue, let pending = try? index.entries(withStatus: .pending) {
             Task { for entry in pending { await queue.enqueue(URL(fileURLWithPath: entry.path)) } }
@@ -185,7 +206,7 @@ final class AppCoordinator {
             let rate = max(1, new.requestsPerMinute)
             Task { await queue.setRequestsPerMinute(rate) }
         }
-        if new.watchedFolderOverride != old.watchedFolderOverride, servicesStarted { restartWatcher() }
+        if new.watchedFolderOverride != old.watchedFolderOverride, isWatching { restartWatcher() }
         if new.idleTimeoutMinutes != old.idleTimeoutMinutes {
             let minutes = new.idleTimeoutMinutes
             Task { await localRuntime.setIdleTimeout(minutes: minutes) }
@@ -219,8 +240,10 @@ final class AppCoordinator {
     func rebuildAnalyzer() {
         analyzerBox.value = AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: localRuntime,
                                                  physicalMemoryBytes: physicalMemoryBytes)
+        readiness = BackendGate.readiness(settings: settings, hasClairicToken: hasSecret(.cloudflareAPIToken))
         // A queue held on "not configured"/"unauthorized" retries with the new analyzer.
         if case .error = queueStatus, let queue { Task { await queue.resume() } }
+        startWatchingIfReady()
     }
 
     /// Built once: rate changes go through `ProcessingQueue.setRequestsPerMinute`, so queued jobs and pause/hold
@@ -322,6 +345,7 @@ final class AppCoordinator {
 
     /// One pipeline event, on the main actor. Internal so tests can drive it without a model.
     func handle(_ event: ScreenshotEvent, now: Date = Date()) {
+        for observer in eventObservers.values { observer(event) }
         if case .processed(let report) = event, case .processed = report.outcome {
             message.clearAfterSuccess()
             refreshHistory()
@@ -368,6 +392,15 @@ final class AppCoordinator {
     /// Queues every screenshot in the watched folder that the index does not hold yet.
     func processExistingScreenshots() async -> Int {
         guard let index, let queue else { return 0 }
+        // Queued files would be analyzed (uploaded) as soon as a backend became usable: not before setup.
+        guard readiness == .ready else {
+            if case .notConfigured(let reason) = readiness {
+                lastMessage = "Finish setup first: \(reason)"
+            } else {
+                lastMessage = "Finish setup first"
+            }
+            return 0
+        }
         let folder = watchedFolder ?? currentWatchedFolder().folder
         let detector = self.detector
         let candidates = await Task.detached {
@@ -409,6 +442,46 @@ final class AppCoordinator {
 
     // MARK: Setup helpers
 
+    /// Setup step 2 "I Agree": the only place the upload consent is stored.
+    func acceptUploadConsent() {
+        updateSettings { $0.hasSeenPrivacyNotice = true }
+    }
+
+    /// Setup step 3 "Continue" with Clairic: the token goes to the Keychain now (never while typing), then the
+    /// backend and account ID are saved. An empty token keeps the saved one.
+    func saveClairicSetup(accountID: String, token: String) {
+        if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { setSecret(token, for: .cloudflareAPIToken) }
+        let account = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateSettings {
+            $0.backend = .clairic
+            $0.clairicAccountID = account.isEmpty ? nil : account
+        }
+    }
+
+    /// Setup step 3 "Continue" with the local model.
+    func chooseLocalBackend(_ variant: ModelVariant) {
+        updateSettings {
+            $0.backend = .localInkling
+            $0.localModelVariantID = variant.id
+        }
+    }
+
+    /// Calls `observer` with every pipeline event (the same ones the toast gets) until `removeEventObserver`.
+    func addEventObserver(_ observer: @escaping @MainActor (ScreenshotEvent) -> Void) -> UUID {
+        let id = UUID()
+        eventObservers[id] = observer
+        return id
+    }
+
+    func removeEventObserver(_ id: UUID) {
+        eventObservers[id] = nil
+    }
+
+    /// The index row at `path` (setup's result card reads its tags).
+    func indexEntry(atPath path: String) -> IndexedScreenshot? {
+        try? index?.lookup(byPath: path)
+    }
+
     /// Runs one analysis of a generated image with the given (unsaved) settings and secrets.
     func testConnection(settings candidate: AppSettings, secrets: [CredentialKey: String]) async -> Result<String, AnalyzerFailure> {
         let store = InMemoryCredentialStore()
@@ -430,7 +503,7 @@ final class AppCoordinator {
             let analysis = try await analyzer.analyze(payload, context: ConnectionTestImage.context)
             return .success(ConnectionTestImage.summary(analysis))
         } catch {
-            return .failure(AnalyzerFailure(message: StatusText.describe(error)))
+            return .failure(AnalyzerFailure(message: ConnectionTestText.failure(error, backend: candidate.backend)))
         }
     }
 

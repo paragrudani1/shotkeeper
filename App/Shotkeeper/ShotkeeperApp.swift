@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     private var toast: ToastController?
     private let windows = WindowPresenter()
+    private let settingsNavigation = SettingsNavigation()
     private lazy var searchPanel = SearchPanelController(model: makeSearchModel())
 
     override init() {
@@ -95,16 +96,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func showSettings() {
+    /// - Parameter tab: switch to this tab, also when the window is already open (setup's "Change Shortcut…").
+    func showSettings(tab: SettingsTab? = nil) {
+        if let tab { settingsNavigation.tab = tab }
         windows.show(id: "settings", title: "Shotkeeper Settings", size: NSSize(width: 640, height: 560)) {
-            SettingsView(coordinator: coordinator, showSetup: { [weak self] in self?.showSetup() })
+            SettingsView(coordinator: coordinator, navigation: settingsNavigation,
+                         showSetup: { [weak self] in self?.showSetup() })
         }
     }
 
+    /// First launch, the menu's "Finish Setup…" and Settings' "Run setup again…": always a fresh flow at step 1.
     func showSetup() {
         windows.close(id: "setup")
-        windows.show(id: "setup", title: "Set up Shotkeeper", size: NSSize(width: 600, height: 680)) {
-            SetupView(coordinator: coordinator, onDone: { [weak self] in self?.windows.close(id: "setup") })
+        let services = SetupServices.live(
+            coordinator: coordinator,
+            // The shortcut recorder is PR 4; until then the shortcut is shown in General, where it will live.
+            openShortcutSettings: { [weak self] in self?.showSettings(tab: .general) },
+            close: { [weak self] in self?.windows.close(id: "setup") })
+        let model = SetupModel(services: services)
+        windows.show(id: "setup", title: "Set Up Shotkeeper",
+                     size: NSSize(width: SetupView.size.width, height: SetupView.size.height), resizable: false) {
+            SetupView(model: model)
         }
     }
 

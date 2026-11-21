@@ -1,21 +1,37 @@
 import AppKit
+import Observation
 import ShotkeeperCore
 import SwiftUI
+
+enum SettingsTab: Hashable {
+    case general, model, exclusions
+}
+
+/// Which settings tab shows. Kept by the app delegate so "Change Shortcut…" in setup can switch an open window.
+@MainActor
+@Observable
+final class SettingsNavigation {
+    var tab: SettingsTab = .general
+}
 
 /// Tabbed settings. Each tab edits a draft copy of `AppSettings` and hands every change to the coordinator,
 /// which saves it and applies what changed (analyzer, queue rate, watcher, idle timer, login item).
 struct SettingsView: View {
     let coordinator: AppCoordinator
+    @Bindable var navigation: SettingsNavigation
     let showSetup: () -> Void
 
     var body: some View {
-        TabView {
-            GeneralSettingsTab(coordinator: coordinator)
+        TabView(selection: $navigation.tab) {
+            GeneralSettingsTab(coordinator: coordinator, showSetup: showSetup)
                 .tabItem { Label("General", systemImage: "gearshape") }
-            BackendSettingsTab(coordinator: coordinator, showSetup: showSetup)
+                .tag(SettingsTab.general)
+            BackendSettingsTab(coordinator: coordinator)
                 .tabItem { Label("Model", systemImage: "cpu") }
+                .tag(SettingsTab.model)
             ExcludeRulesTab(coordinator: coordinator)
                 .tabItem { Label("Exclusions", systemImage: "eye.slash") }
+                .tag(SettingsTab.exclusions)
         }
         .padding(16)
         .frame(minWidth: 620, minHeight: 520)
@@ -42,6 +58,7 @@ private struct DraftEditor<Content: View>: View {
 
 private struct GeneralSettingsTab: View {
     let coordinator: AppCoordinator
+    let showSetup: () -> Void
 
     var body: some View {
         DraftEditor(coordinator: coordinator) { draft in
@@ -72,6 +89,17 @@ private struct GeneralSettingsTab: View {
                     Toggle("Play a sound after a rename", isOn: draft.playRenameSound)
                 }
                 Section("App") {
+                    // Setup's "Change Shortcut…" opens this tab; the shortcut recorder replaces this row in PR 4.
+                    LabeledContent("Search shortcut") {
+                        Text(GlobalHotKey.Shortcut.defaultSearch.displayString)
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: 20)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.07)))
+                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5))
+                            .accessibilityLabel("Option Command S")
+                    }
+                    .help("Changing the shortcut comes with the next Settings update.")
                     Toggle("Launch at login", isOn: draft.launchAtLogin)
                     if LaunchAtLogin.status == .requiresApproval {
                         Button("Approve in System Settings…") { LaunchAtLogin.openSystemSettings() }
@@ -86,6 +114,9 @@ private struct GeneralSettingsTab: View {
                             Button("Pause") { coordinator.pauseIndefinitely() }
                         }
                     }
+                }
+                Section {
+                    Button("Run setup again…", action: showSetup)
                 }
                 if let message = coordinator.lastMessage {
                     Text(message).font(.caption).foregroundStyle(.secondary)
@@ -128,7 +159,6 @@ private struct FolderRow: View {
 
 private struct BackendSettingsTab: View {
     let coordinator: AppCoordinator
-    let showSetup: () -> Void
     @State private var tokenDraft = ""
     @State private var apiKeyDraft = ""
 
@@ -167,8 +197,6 @@ private struct BackendSettingsTab: View {
                     }
                     Stepper("Longest image side sent: \(draft.wrappedValue.maxImageLongSide) px",
                             value: draft.maxImageLongSide, in: 512...2048, step: 128)
-                    Divider()
-                    Button("Run setup again…", action: showSetup)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(4)

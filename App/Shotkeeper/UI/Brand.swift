@@ -15,7 +15,21 @@ enum Brand {
         appearance.isDark ? NSColor(srgbHex: 0xA5A4FF) : NSColor(srgbHex: 0x4644C0)
     }
 
+    /// Error text (setup's failed Test Connection): systemRed is 3.6:1 on white, below the spec's 4.5:1.
+    /// Light #C4281C (5.7:1 on white, 4.8:1 on #ECECEC), dark #FF7B72 (6.6:1 on #1E1E1E, 5.1:1 on #323232).
+    static let errorTextNSColor = NSColor(name: "ShotkeeperErrorText") { appearance in
+        appearance.isDark ? NSColor(srgbHex: 0xFF7B72) : NSColor(srgbHex: 0xC4281C)
+    }
+
+    /// Orange text on a light orange fill (setup's "Experimental" badge, local model note): light #8A4600
+    /// (6.1:1 on its fill), dark #FFB340 (6.0:1).
+    static let warningTextNSColor = NSColor(name: "ShotkeeperWarningText") { appearance in
+        appearance.isDark ? NSColor(srgbHex: 0xFFB340) : NSColor(srgbHex: 0x8A4600)
+    }
+
     static var indigo: Color { Color(nsColor: indigoNSColor) }
+    static var warningText: Color { Color(nsColor: warningTextNSColor) }
+    static var errorText: Color { Color(nsColor: errorTextNSColor) }
     static var indigoText: Color { Color(nsColor: indigoTextNSColor) }
 }
 
@@ -30,16 +44,18 @@ extension NSColor {
     }
 }
 
-/// Primary button in our own panels: indigo fill, white text (5.1–5.7:1).
+/// Primary button in our own panels: indigo fill, white text (5.1–5.7:1). `large` is the window size (setup).
 struct BrandPrimaryButtonStyle: ButtonStyle {
+    var large = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: large ? 13 : 12, weight: .semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .frame(height: 24)
+            .padding(.horizontal, large ? 16 : 10)
+            .frame(minWidth: large ? 84 : nil)
+            .frame(height: large ? 28 : 24)
             .background(Brand.indigo.opacity(configuration.isPressed ? 0.8 : 1), in: RoundedRectangle(cornerRadius: 6))
             .opacity(isEnabled ? 1 : 0.5)
             .contentShape(RoundedRectangle(cornerRadius: 6))
@@ -48,14 +64,16 @@ struct BrandPrimaryButtonStyle: ButtonStyle {
 
 /// Secondary button in our own panels: a light neutral fill that works on materials in light and dark mode.
 struct PanelSecondaryButtonStyle: ButtonStyle {
+    var large = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: large ? 13 : 12, weight: .medium))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 10)
-            .frame(height: 24)
+            .padding(.horizontal, large ? 16 : 10)
+            .frame(minWidth: large ? 84 : nil)
+            .frame(height: large ? 28 : 24)
             .background(Color.primary.opacity(configuration.isPressed ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.08)))
             .opacity(isEnabled ? 1 : 0.5)

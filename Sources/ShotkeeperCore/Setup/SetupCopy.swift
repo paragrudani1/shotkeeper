@@ -36,6 +36,8 @@ public struct SetupModelCard: Equatable, Sendable, Identifiable {
     public var isAvailable: Bool
     /// The local build setup installs; nil for Clairic and when no build fits.
     public var model: ModelVariant?
+    /// The orange note under the selected local card (quality, memory, experimental build), from `BackendRecommender`.
+    public var note: String? = nil
 
     /// "Install and Download (about 10 GB)" for the local card.
     public var installButtonTitle: String? {
@@ -82,7 +84,8 @@ public struct SetupCards: Equatable, Sendable {
                 ? "Private, but slow and lower quality on \(ramGB) GB. \(disk)"
                 : "Private: nothing leaves this Mac. \(localRecommended ? "Best for this Mac (\(ramGB) GB). " : "")\(disk)"
             local = SetupModelCard(backend: .localInkling, title: "Inkling 2 Mini, on this Mac", badges: badges,
-                                   subtitle: subtitle, isRecommended: localRecommended, isAvailable: true, model: model)
+                                   subtitle: subtitle, isRecommended: localRecommended, isAvailable: true, model: model,
+                                   note: localOption?.warning)
         } else {
             let needed = catalog.map(\.minRAMGB).min() ?? 16
             local = SetupModelCard(backend: .localInkling, title: "Inkling 2 Mini, on this Mac", badges: [],
