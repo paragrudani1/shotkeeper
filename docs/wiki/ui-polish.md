@@ -146,7 +146,7 @@ values clipped by the button row; spacing was tightened so a 2-line description 
 - 2026-11-21 (`590d438`): when the index failed to open at launch, the search function throws `IndexUnavailableError`
   with the coordinator's `indexProblem`, and the window shows "The screenshot index could not be opened".
 
-### Review fixes (review of `685c06c`, commit REVIEWSHA)
+### Review fixes (review of `685c06c`, commit `544e24a`)
 - 2026-11-21: ⌘ keys moved to `SearchPanel.performKeyEquivalent` (`commandKeyHandler`). AppKit routes ⌘ keys through key
   equivalents and the main menu (SwiftUI's Edit > Copy owns ⌘C), so the `sendEvent` key-down path could miss them.
   `sendEvent` now handles only unmodified keys (↑/↓/Return/Esc/Space). The IME guard is on both paths. A ⌘ shortcut
