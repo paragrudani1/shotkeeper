@@ -14,6 +14,8 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
 - 2026-11-21: the processor's `analyzer:` closure reads a lock box; `rebuildAnalyzer()` replaces it on backend, account,
   endpoint, model or secret changes, then calls `queue.resume()` if the queue was held in `.error`. `requestsPerMinute`
   is fixed per `ProcessingQueue`, so a change builds a new queue; the old one is resumed and drains its own jobs.
+  Superseded 2026-11-21 (review, branch `app/review-fixes`): resuming the old queue ran its held screenshots while the
+  user had paused. The coordinator now builds one queue and calls core's `ProcessingQueue.setRequestsPerMinute(_:)`.
 - 2026-11-21: windows (setup, settings) are plain `NSWindow` + `NSHostingController` via `WindowPresenter`, not SwiftUI
   `Settings`/`Window` scenes: an LSUIElement app has to activate itself explicitly anyway, and `SettingsLink` from a
   menu-style `MenuBarExtra` is unreliable about bringing the window forward. Settings edits a draft and applies every change.
@@ -21,7 +23,11 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
 ## Backends
 - 2026-11-21: `AnalyzerFactory` (pure, unit-tested) maps settings to an analyzer. Missing account/token/URL/model gives an
   `UnconfiguredAnalyzer` that throws `.notConfigured(reason)`, so the queue holds in `.error` ("Needs attention: …")
-  instead of failing screenshots. Keychain items: service `dev.shotkeeper.Shotkeeper`, account `CredentialKey.rawValue`.
+  instead of failing screenshots.
+  2026-11-21 (review): Clairic and custom-endpoint analyzers also stay `UnconfiguredAnalyzer` ("Finish setup to accept
+  where screenshots are sent") until `hasSeenPrivacyNotice`, which only setup's "Use …" button sets. Before, a token and
+  account ID entered in Settings → Model after "Later" made queued screenshots upload without the notice being accepted.
+  "Test connection" is exempt: it sends only the generated image. Keychain items: service `dev.shotkeeper.Shotkeeper`, account `CredentialKey.rawValue`.
 - 2026-11-21: setup labels the reduced-quality local option "Use local anyway (2-bit, lower quality, high memory use)"
   (app-side wording over the recommender's title; core unchanged). The Clairic token link is the Workers AI REST API
   guide, which says a custom token needs Workers AI Read + Edit (`docs/research/clairic/workers-ai-rest-api-2026-11-21.md`).
@@ -40,6 +46,8 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
   and holds the queue with a message). Requests send `model` = the local model path the server was launched with.
 - 2026-11-21: crash leftovers: `runtime/server.pid` stores pid **and process start time** (`proc_pidinfo`); at launch and
   before every start the app kills that pid only if the start time still matches, so a reused pid is never killed.
+- 2026-11-21 (review): the crash restart is a stored task that `stop()` cancels. Before, a restart scheduled just before
+  a backend switch (or idle stop) relaunched the server a couple of seconds later.
 
 ## Pause semantics
 - 2026-11-21: "Pause for 10 minutes" sets core's `ExcludeRules` pause window (screenshots captured in it are skipped,
@@ -49,7 +57,9 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
 ## Search
 - 2026-11-21: `SearchViewModel` debounces 150 ms and runs `ScreenshotIndex.search` off the main actor; empty query =
   recent. Keys are handled in `SearchPanel.sendEvent` (↑/↓/Return/Esc/⌘C/⌘R) before the text field sees them, because
-  SwiftUI `onKeyPress` on a focused `TextField` does not reliably receive arrows on macOS. ⌘C writes the image and its
+  SwiftUI `onKeyPress` on a focused `TextField` does not reliably receive arrows on macOS.
+  2026-11-21 (review): not while an input method has marked text (`SearchPanel.isComposingText`): ↑/↓/Return/Esc then
+  pick, commit or cancel the Japanese/Chinese/Korean composition instead of moving, opening or closing. ⌘C writes the image and its
   file URL to the pasteboard. Thumbnails come from `QLThumbnailGenerator`, cached in an `NSCache`.
 
 ## Not verifiable without a Mac (2026-11-21)
@@ -57,3 +67,7 @@ CI builds and runs headless unit tests only. Unverified: menu-bar rendering, win
 key handling with a real keyboard, FSEvents on a real Desktop, Keychain prompts on an ad-hoc-signed build, SMAppService,
 a live Clairic call, and the whole local runtime (uv install, `hf download` output format, mlx-lm loading the 2/3-bit
 builds; see the open question in [core-implementation](core-implementation.md)).
+
+## Process existing screenshots
+- 2026-11-21 (review): the scan skips dataless files (iCloud `.notDownloaded`, or `SF_DATALESS` in `st_flags`), so an
+  iCloud "Desktop & Documents" backlog is not downloaded and uploaded just because the button was pressed.

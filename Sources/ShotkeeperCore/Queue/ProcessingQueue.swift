@@ -30,7 +30,7 @@ public actor ProcessingQueue {
 
     public typealias Handler = @Sendable (URL) async throws -> Void
 
-    public let configuration: Configuration
+    public private(set) var configuration: Configuration
     private let clock: QueueClock
     private let random: @Sendable () -> Double
     private let probe: (@Sendable () async -> Bool)?
@@ -98,6 +98,14 @@ public actor ProcessingQueue {
             }
         }
         publish()
+    }
+
+    /// Changes the request rate in place. Queued jobs, pause and hold state are kept: rebuilding the queue instead
+    /// would have to hand its jobs over, and resuming the old queue to drain them would bypass a user pause.
+    public func setRequestsPerMinute(_ requestsPerMinute: Int) {
+        guard requestsPerMinute != configuration.requestsPerMinute else { return }
+        configuration.requestsPerMinute = requestsPerMinute
+        bucket = TokenBucket(requestsPerMinute: requestsPerMinute, burst: configuration.burst)
     }
 
     /// Clears a user pause and an `.error` hold.

@@ -120,6 +120,10 @@ final class AnalyzerFactoryTests: XCTestCase {
         try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
                                       contains: "token")
         try credentials.setSecret("secret-token", for: .cloudflareAPIToken)
+        // Configured in Settings but setup's privacy notice not accepted: nothing may be sent yet.
+        try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
+                                      contains: "Finish setup")
+        settings.hasSeenPrivacyNotice = true
         let analyzer = AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
         XCTAssertTrue(analyzer is CloudflareClairicAnalyzer)
         XCTAssertEqual(analyzer.backendID, "clairic")
@@ -128,6 +132,7 @@ final class AnalyzerFactoryTests: XCTestCase {
     func testClairicRequestUsesTrimmedAccountAndKeychainToken() throws {
         var settings = AppSettings()
         settings.clairicAccountID = " acct123 "
+        settings.hasSeenPrivacyNotice = true
         let credentials = InMemoryCredentialStore([.cloudflareAPIToken: "tok"])
         let analyzer = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials,
                                                           localRuntime: nil) as? CloudflareClairicAnalyzer)
@@ -149,6 +154,9 @@ final class AnalyzerFactoryTests: XCTestCase {
         try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
                                       contains: "model")
         settings.customModelName = "inkling-2-mini"
+        try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
+                                      contains: "Finish setup")
+        settings.hasSeenPrivacyNotice = true
         let plain = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
             as? LocalOpenAICompatibleAnalyzer)
         XCTAssertEqual(plain.configuration.baseURL, URL(string: "http://192.168.1.5:8080"))
@@ -216,6 +224,15 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
                        applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
     }
 
+    /// Status reaches the coordinator through an AsyncStream task; give it up to 5 s.
+    private func waitUntil(_ condition: () -> Bool) async {
+        var tries = 0
+        while !condition(), tries < 500 {
+            tries += 1
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     func testOpensIndexAndDefaultsToUnconfiguredClairic() {
         let coordinator = makeCoordinator()
         XCTAssertNil(coordinator.startupError)
@@ -264,14 +281,39 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
         XCTAssertTrue(reloaded.settings.hasSeenPrivacyNotice)
     }
 
-    func testRequestsPerMinuteChangeRebuildsTheQueue() async {
+    /// The rate changes in place: a paused queue keeps its jobs held (a rebuilt queue used to resume the old one,
+    /// which ran its queued screenshots during the pause).
+    func testRequestsPerMinuteChangeKeepsTheQueueAndItsPause() async throws {
         let coordinator = makeCoordinator()
-        let before = coordinator.queue
+        let queue = try XCTUnwrap(coordinator.queue)
+        coordinator.pauseIndefinitely()
+        await waitUntil { coordinator.isPaused }
+        let screenshot = directory.appendingPathComponent("Screenshot 2026-11-21 at 10.00.00.png")
+        await queue.enqueue(screenshot)
         coordinator.updateSettings { $0.requestsPerMinute = 5 }
-        let after = coordinator.queue
-        XCTAssertFalse(before === after)
-        let rate = await after?.configuration.requestsPerMinute
+        XCTAssertTrue(coordinator.queue === queue)
+        var rate = await queue.configuration.requestsPerMinute
+        for _ in 0..<200 where rate != 5 {
+            await Task.yield()
+            rate = await queue.configuration.requestsPerMinute
+        }
         XCTAssertEqual(rate, 5)
+        let status = await queue.status
+        XCTAssertEqual(status, .paused(until: nil))
+        let queued = await queue.queuedCount
+        XCTAssertEqual(queued, 1, "the held screenshot is still waiting, not processed")
+    }
+
+    func testTestConnectionDoesNotNeedThePrivacyNoticeForTheGeneratedImage() async {
+        let coordinator = makeCoordinator()
+        var candidate = AppSettings()
+        candidate.backend = .customEndpoint
+        candidate.customEndpointURL = URL(string: "http://127.0.0.1:1")
+        candidate.customModelName = "m"
+        XCTAssertFalse(candidate.hasSeenPrivacyNotice)
+        let result = await coordinator.testConnection(settings: candidate, secrets: [:])
+        guard case .failure(let failure) = result else { return XCTFail("port 1 cannot answer") }
+        XCTAssertFalse(failure.message.contains("Finish setup"), failure.message)
     }
 
     func testPauseSetsTheSkipWindowAndResumeClearsIt() {
@@ -327,6 +369,18 @@ final class ExistingScreenshotScannerTests: TempDirectoryTestCase {
             $0.standardizedFileURL.path == indexed
         }
         XCTAssertEqual(found.map(\.lastPathComponent), [names[2], names[0]])
+    }
+
+    func testSkipsFilesWhoseDataIsNotOnThisMac() throws {
+        let local = directory.appendingPathComponent("Screenshot 2026-11-20 at 09.00.00.png")
+        let evicted = directory.appendingPathComponent("Screenshot 2026-11-21 at 10.00.00.png")
+        try Data("x".utf8).write(to: local)
+        try Data("x".utf8).write(to: evicted)
+        XCTAssertTrue(ExistingScreenshotScanner.isStoredLocally(local), "an ordinary file is local")
+        let found = ExistingScreenshotScanner.candidates(in: directory, detector: ScreenshotDetector(),
+                                                         isIndexed: { _ in false },
+                                                         isStoredLocally: { $0.lastPathComponent != evicted.lastPathComponent })
+        XCTAssertEqual(found.map(\.lastPathComponent), [local.lastPathComponent])
     }
 
     func testIndexedCheckUsesFinalStatusOnly() throws {
