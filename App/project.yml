@@ -1,0 +1,87 @@
+# XcodeGen spec for the macOS app. Generate with: xcodegen generate --spec App/project.yml
+# The generated App/Shotkeeper.xcodeproj is gitignored; never commit it.
+name: Shotkeeper
+options:
+  bundleIdPrefix: dev.shotkeeper
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Ad-hoc / unsigned: no team, no certificate. CI additionally passes CODE_SIGNING_ALLOWED=NO.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+    DEAD_CODE_STRIPPING: YES
+
+packages:
+  # The Swift package at the repository root (path is relative to this spec).
+  Shotkeeper:
+    path: ..
+
+targets:
+  Shotkeeper:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Shotkeeper
+    dependencies:
+      - package: Shotkeeper
+        product: ShotkeeperCore
+    info:
+      path: Shotkeeper/Info.plist
+      properties:
+        CFBundleDisplayName: Shotkeeper
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Menu-bar only: no Dock icon, no main menu.
+        LSUIElement: true
+        NSHumanReadableCopyright: ""
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.shotkeeper.Shotkeeper
+        PRODUCT_NAME: Shotkeeper
+        # Not sandboxed: the app watches arbitrary folders and launches a local Python model server.
+        ENABLE_APP_SANDBOX: NO
+        COMBINE_HIDPI_IMAGES: YES
+
+  ShotkeeperAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: ShotkeeperAppTests
+    dependencies:
+      - target: Shotkeeper
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.shotkeeper.ShotkeeperAppTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Shotkeeper.app/Contents/MacOS/Shotkeeper
+        BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+  Shotkeeper:
+    build:
+      targets:
+        Shotkeeper: all
+        ShotkeeperAppTests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - ShotkeeperAppTests
+    run:
+      config: Debug
+    archive:
+      config: Release

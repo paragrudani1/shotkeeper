@@ -8,3 +8,6 @@ build/
 !.env.example
 .DS_Store
 *.gguf
+
+# XcodeGen writes this from App/project.yml `info:`
+App/Shotkeeper/Info.plist

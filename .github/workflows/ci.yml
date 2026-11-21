@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-core:
+    name: linux-core (Swift 6.4.3)
+    runs-on: ubuntu-latest
+    container: swift:6.4.3-noble
+    timeout-minutes: 30
+    steps:
+      - name: Install libsqlite3-dev
+        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+
+      - uses: actions/checkout@v5
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: linux-swift-6.4.3-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**', 'Tests/**') }}
+          restore-keys: linux-swift-6.4.3-
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: scripts/ci-swift-test.sh
+
+  macos-app:
+    name: macos-app
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select newest stable Xcode
+        id: xcode
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|_RC|Release_Candidate' | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+          swift --version
+          sw_vers
+          echo "version=$(xcodebuild -version | head -1 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: macos-xcode${{ steps.xcode.outputs.version }}-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**', 'Tests/**') }}
+          restore-keys: macos-xcode${{ steps.xcode.outputs.version }}-
+
+      - name: swift test (package)
+        run: scripts/ci-swift-test.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec App/project.yml
+
+      - name: xcodebuild build (Release)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project App/Shotkeeper.xcodeproj -scheme Shotkeeper -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: xcodebuild test (Debug)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project App/Shotkeeper.xcodeproj -scheme Shotkeeper -configuration Debug \
+            -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Ad-hoc sign and zip the app
+        run: |
+          set -euo pipefail
+          APP="$DERIVED_DATA/Build/Products/Release/Shotkeeper.app"
+          # Built with CODE_SIGNING_ALLOWED=NO; an ad-hoc seal (no identity) keeps the bundle launchable on
+          # Apple silicon after the user clears quarantine. Not notarized.
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          /usr/libexec/PlistBuddy -c 'Print :LSUIElement' -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
+          mkdir -p build/artifacts
+          ditto -c -k --keepParent "$APP" build/artifacts/Shotkeeper-unsigned.zip
+          ls -lh build/artifacts
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shotkeeper-unsigned
+          path: build/artifacts/Shotkeeper-unsigned.zip
+          if-no-files-found: error
+          retention-days: 14
