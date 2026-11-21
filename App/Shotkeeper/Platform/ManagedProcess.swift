@@ -132,8 +132,8 @@ enum LogLocation {
 /// exit is reported via `onExit` and `waitForExit()`. Every running instance is terminated by
 /// `terminateAllRunning()`, which the app delegate calls from `applicationWillTerminate`.
 ///
-/// Limitation: a hard crash of the app cannot run that hook, so the child may outlive it. Phase 2 should kill a
-/// stale server on launch (e.g. by a pid file) before starting a new one.
+/// A hard crash of the app cannot run that hook, so the child may outlive it; `ServerPIDFile` records the server's
+/// pid and start time so the next launch kills that leftover (see `LocalModelRuntime`).
 final class ManagedProcess: @unchecked Sendable {
     let spec: ProcessSpec
     let log: RotatingLogFile
@@ -143,7 +143,14 @@ final class ManagedProcess: @unchecked Sendable {
         set { lock.withLock { _onExit = newValue } }
     }
 
+    /// Called on a background thread with each chunk of combined stdout/stderr (after it was logged).
+    var onOutput: (@Sendable (Data) -> Void)? {
+        get { lock.withLock { _onOutput } }
+        set { lock.withLock { _onOutput = newValue } }
+    }
+
     private let lock = NSLock()
+    private var _onOutput: (@Sendable (Data) -> Void)?
     private var process: Process?
     private var exitStatus: ProcessExit?
     private var waiters: [CheckedContinuation<ProcessExit, Never>] = []
@@ -178,13 +185,14 @@ final class ManagedProcess: @unchecked Sendable {
         drained.enter()
         let log = self.log
         let reader = output.fileHandleForReading
-        reader.readabilityHandler = { handle in
+        reader.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
             if chunk.isEmpty {
                 handle.readabilityHandler = nil
                 drained.leave()
             } else {
                 log.write(chunk)
+                self?.onOutput?(chunk)
             }
         }
 

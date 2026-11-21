@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import ShotkeeperCore
 
 enum KeychainError: Error, Equatable {
     case status(operation: String, OSStatus)
@@ -14,10 +15,9 @@ enum KeychainError: Error, Equatable {
     }
 }
 
-/// Secrets (e.g. the Cloudflare API token) as generic-password items.
-/// Keys are plain strings for now; phase 2 passes `CredentialKey.rawValue`.
-// conforms to CredentialStore in phase 2
-struct KeychainCredentialStore: Sendable {
+/// Secrets (e.g. the Cloudflare API token) as generic-password items: service = bundle id, account = `key.rawValue`.
+/// Values are never logged; errors carry only the operation and OSStatus.
+struct KeychainCredentialStore: CredentialStore {
     static let defaultService = "dev.shotkeeper.Shotkeeper"
 
     let service: String
@@ -26,7 +26,7 @@ struct KeychainCredentialStore: Sendable {
         self.service = service
     }
 
-    func secret(for key: String) throws -> String? {
+    func secret(for key: CredentialKey) throws -> String? {
         var query = baseQuery(key)
         query[kSecReturnData] = true
         query[kSecMatchLimit] = kSecMatchLimitOne
@@ -45,7 +45,7 @@ struct KeychainCredentialStore: Sendable {
         }
     }
 
-    func setSecret(_ value: String, for key: String) throws {
+    func setSecret(_ value: String, for key: CredentialKey) throws {
         let data = Data(value.utf8)
         let update: [CFString: Any] = [kSecValueData: data, kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock]
         let updateStatus = SecItemUpdate(baseQuery(key) as CFDictionary, update as CFDictionary)
@@ -56,7 +56,7 @@ struct KeychainCredentialStore: Sendable {
             var add = baseQuery(key)
             add[kSecValueData] = data
             add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
-            add[kSecAttrLabel] = "Shotkeeper: \(key)"
+            add[kSecAttrLabel] = "Shotkeeper: \(key.rawValue)"
             let addStatus = SecItemAdd(add as CFDictionary, nil)
             guard addStatus == errSecSuccess else { throw KeychainError.status(operation: "SecItemAdd", addStatus) }
         default:
@@ -64,14 +64,14 @@ struct KeychainCredentialStore: Sendable {
         }
     }
 
-    func removeSecret(for key: String) throws {
+    func removeSecret(for key: CredentialKey) throws {
         let status = SecItemDelete(baseQuery(key) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.status(operation: "SecItemDelete", status)
         }
     }
 
-    private func baseQuery(_ key: String) -> [CFString: Any] {
-        [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: key]
+    private func baseQuery(_ key: CredentialKey) -> [CFString: Any] {
+        [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: key.rawValue]
     }
 }

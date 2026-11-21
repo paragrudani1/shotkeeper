@@ -1,10 +1,12 @@
+import ShotkeeperCore
 import XCTest
 @testable import Shotkeeper
 
 final class KeychainCredentialStoreTests: XCTestCase {
     /// A per-run service so tests never touch the real app's items and never collide between runs.
     private let store = KeychainCredentialStore(service: "dev.shotkeeper.Shotkeeper.tests.\(UUID().uuidString)")
-    private let key = "cloudflare-api-token"
+    private let key = CredentialKey.cloudflareAPIToken
+    private let other = CredentialKey(rawValue: "other")
 
     override func tearDown() {
         try? store.removeSecret(for: key)
@@ -29,16 +31,16 @@ final class KeychainCredentialStoreTests: XCTestCase {
     }
 
     func testMissingKeyReturnsNil() throws {
-        let value = try skipIfKeychainUnavailable { try store.secret(for: "never-set-\(UUID().uuidString)") }
+        let value = try skipIfKeychainUnavailable { try store.secret(for: CredentialKey(rawValue: "never-set-\(UUID().uuidString)")) }
         XCTAssertNil(value)
     }
 
     func testKeysAreIndependent() throws {
         try skipIfKeychainUnavailable { try store.setSecret("a", for: key) }
-        defer { try? store.removeSecret(for: "other") }
-        try store.setSecret("b", for: "other")
+        defer { try? store.removeSecret(for: other) }
+        try store.setSecret("b", for: other)
         XCTAssertEqual(try store.secret(for: key), "a")
-        XCTAssertEqual(try store.secret(for: "other"), "b")
+        XCTAssertEqual(try store.secret(for: other), "b")
     }
 
     /// CI runners may have no unlocked login keychain; that is an environment limit, not a bug in the store.

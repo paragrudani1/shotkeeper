@@ -12,8 +12,7 @@ enum ImageIODownscalerError: Error, Equatable {
 
 /// Downscales a screenshot so its long side is at most `maxLongSide`, applying the EXIF orientation,
 /// and encodes PNG (sharp text) unless the PNG exceeds `pngByteLimit`, in which case JPEG at `jpegQuality`.
-// conforms to ImagePreparer in phase 2
-struct ImageIODownscaler: Sendable {
+struct ImageIODownscaler: ImagePreparer {
     let maxLongSide: Int
     let pngByteLimit: Int
     let jpegQuality: Double
@@ -79,5 +78,17 @@ struct ImageIODownscaler: Sendable {
         context.fill(rect)
         context.draw(image, in: rect)
         return context.makeImage()
+    }
+}
+
+/// The pipeline's `ImagePreparer`: reads `maxImageLongSide` from the current settings for every screenshot, so a
+/// change in Settings applies to the next one without rebuilding the processor.
+struct SettingsDrivenImagePreparer: ImagePreparer {
+    let settings: @Sendable () -> AppSettings
+
+    func prepare(_ url: URL) throws -> ImagePayload {
+        // Clairic caps one image at 4 MiB (CloudflareClairicAnalyzer.maxImageBytes); stay under it with margin.
+        let longSide = max(64, settings().maxImageLongSide)
+        return try ImageIODownscaler(maxLongSide: longSide, pngByteLimit: 3_500_000).prepare(url)
     }
 }
