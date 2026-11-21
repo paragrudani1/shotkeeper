@@ -9,6 +9,7 @@ macOS menu-bar app that renames, tags and indexes new screenshots using a model 
 - `Sources/shotkeeper-cli` — CLI for live analyzer calls.
 - `App/` — macOS app (XcodeGen `App/project.yml`), built only in CI.
 - `docs/wiki/` — dated decision log (read `docs/wiki/index.md` first). `docs/research/` — API facts with sources.
+- `docs/specs/` — approved product specs (verbatim from Parag; never edit the requirements).
 
 ## Commands (Linux box)
 - Test core: `scripts/test-linux.sh` (Docker, no network). Build only: `scripts/test-linux.sh build`.
