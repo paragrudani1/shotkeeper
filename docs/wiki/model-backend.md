@@ -11,3 +11,5 @@
   `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN` appear in env or `.env.local`.
 
 Facts and sources: [../research/model-backends.md](../research/model-backends.md).
+- 2026-11-21: first live Clairic calls succeeded (3 samples). Cost is ~1.8× the docs-based estimate; schema changed to
+  scalar fields. See [clairic-field-schema](clairic-field-schema.md).

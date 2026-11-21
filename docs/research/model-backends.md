@@ -16,16 +16,24 @@ Source: https://developers.cloudflare.com/workers-ai/models/clairic/ (+ `schema-
 - Field `type` enum: text, number, compute, date, time, datetime, duration, boolean, enum, object, list, estimate, forecast.
   Per-type keys (unknown keys are rejected): `instructions`, `nullable` (default true), text: `minLength`/`maxLength`/`pattern`/`enum`/`knowledge`;
   enum: `enum` (required); list: `items` ("text"|"number"|"date"|object spec), `max_items`; date: `source_only`, `null_threshold`.
-  `knowledge: true` (text/number only) allows answers not present in the input — likely needed for a synthesized title/description. Unverified live.
+  `knowledge: true` (text/number only) allows answers not present in the input. Accepted live on 2026-11-21 (title, description, tags, source).
 - Answers (`result.answers[name]`): always `type`, `value` (null when undetermined). Generated answers (text, number, boolean, enum, object,
   lists): `valid`, `complete`, `confidence` (0 when invalid), `p_null`, `span`, `raw`, `failure_reason`. Typed answers (date…): `guess`, `confidence`
   (probability of guess), `p_null`. Lists: `value[]`, `confidences[]`, `spans[]`, `p_nulls[]`.
 - `truncated`: true when any generated answer is invalid/incomplete. `usage`: `input_tokens` (incl. retries), `output_tokens`, `image_tokens`,
   `state_tokens`, `schema_tokens`, `passes`.
-- Billing: input tokens only. $0.10/M until 2026-12-01 (promo), then $0.24/M. **Each `text` field gets its own pass; every pass re-bills the full
-  state and all images.** Non-text fields share a pass. So cost ≈ passes × (image_tokens + schema share).
+- Billing: input tokens only. $0.10/M until 2026-12-01 (promo), then $0.24/M. Docs: **each `text` field gets its own pass; every pass re-bills the full
+  state and all images.** Non-text fields share a pass.
+  **Live, 2026-11-21 (differs from the docs):** `input_tokens = schema_tokens + k × image_tokens` exactly, with k = one copy per
+  answer. 7 scalar fields (text, enum, date) → k = 7, and a text list of 8+1 items took k = 16. Non-text fields did not share a pass.
+  `usage.passes` (schema-output: "sequential decode steps") was 33–125 and does not track cost. Source: the saved responses in
+  `Tests/ShotkeeperCoreTests/Fixtures/clairic-live-2026-11-21-*.json`; analysis in `docs/wiki/clairic-field-schema.md`.
 - Image tokens: sides rounded to multiples of 32; images under ~65k px² upscaled to ~256×256; larger NOT downscaled by Clairic;
-  tokens = (w/32)·(h/32) + 2. E.g. 1024×640 → 642 tokens. Downscaling on the Mac is the main cost lever.
+  docs: tokens = (w/32)·(h/32) + 2. **Live `usage.image_tokens` has no +2** (1280×800 → 1000, 591×1280 → 720). Downscaling on
+  the Mac is the main cost lever.
+- Live answer details (2026-11-21): `confidence` comes with `confidence_method: ar_sequence_probability` (whole sequence, so
+  multi-word text scores low), plus `log_probability` and `tokens`. A `source_only` date answers as a generated answer with
+  `printed_value`/`normalization_method`, not with `guess`; `11/08/2026` failed with `invalid_printed_temporal`.
 - Context: 65,536 tokens; each prompt must fit in 65,273.
 - Preview model; the docs page gives no release date (user brief says 2026-10-19).
 
