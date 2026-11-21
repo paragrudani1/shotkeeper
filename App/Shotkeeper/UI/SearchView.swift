@@ -92,7 +92,7 @@ struct SearchView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .padding(.bottom, 8)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Type")
     }
@@ -304,12 +304,14 @@ struct SearchPreview: View {
     private var url: URL { URL(fileURLWithPath: item.path) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // Height budget (540 window): the body is ~410 pt; image 220 + title + a 2-line description + tags + the
+        // metadata grid + the buttons fit without scrolling. Longer text scrolls; the buttons stay put.
+        VStack(alignment: .leading, spacing: 8) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     PreviewImageView(path: item.path, title: item.title, showsCopiedPill: model.showsCopiedPill)
                         .onDrag { FileDrag.provider(for: item.path) }
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(item.title)
                             .font(.system(size: 18, weight: .semibold))
                             .lineLimit(2)
@@ -319,7 +321,7 @@ struct SearchPreview: View {
                             Text(description)
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
-                                .lineLimit(4)
+                                .lineLimit(3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -335,7 +337,8 @@ struct SearchPreview: View {
                     }
                     metadataGrid
                 }
-                .padding([.top, .horizontal], 16)
+                .padding(.top, 12)
+                .padding(.horizontal, 16)
             }
             HStack(spacing: 8) {
                 Button("Open") { actions.open(url) }
@@ -352,7 +355,8 @@ struct SearchPreview: View {
                     .help("Preview with Quick Look (Space)")
                 Spacer(minLength: 0)
             }
-            .padding([.horizontal, .bottom], 16)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
         }
     }
 
@@ -371,7 +375,6 @@ struct SearchPreview: View {
                 }
             }
         }
-        .padding(.top, 2)
     }
 }
 
@@ -384,7 +387,7 @@ struct TagChipStyle: ButtonStyle {
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(Brand.indigoText)
             .padding(.horizontal, 8)
-            .frame(height: 22)
+            .frame(height: 20)
             .background(Capsule().fill(Brand.indigo.opacity((colorScheme == .dark ? 0.22 : 0.12)
                                                               + (configuration.isPressed ? 0.1 : 0))))
             .contentShape(Capsule())
