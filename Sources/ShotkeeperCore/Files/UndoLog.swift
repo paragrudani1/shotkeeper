@@ -60,7 +60,7 @@ public final class UndoLog: @unchecked Sendable {
             let state = try state()
             if state.undone.contains(id) { throw UndoError.alreadyUndone(id) }
             guard let record = state.active.first(where: { $0.id == id }) else { throw UndoError.notFound(id) }
-            try revert(record, at: timestamp)
+            try revert(record, moves: state.moves, at: timestamp)
             return record
         }
     }
@@ -68,8 +68,9 @@ public final class UndoLog: @unchecked Sendable {
     @discardableResult
     public func undoLast(at timestamp: Date = Date()) throws -> UndoRecord {
         try lock.withLock {
-            guard let record = try state().active.last else { throw UndoError.nothingToUndo }
-            try revert(record, at: timestamp)
+            let state = try state()
+            guard let record = state.active.last else { throw UndoError.nothingToUndo }
+            try revert(record, moves: state.moves, at: timestamp)
             return record
         }
     }
@@ -85,7 +86,13 @@ public final class UndoLog: @unchecked Sendable {
         var to: String?
     }
 
-    private func revert(_ record: UndoRecord, at timestamp: Date) throws {
+    private func revert(_ record: UndoRecord, moves: [UndoRecord], at timestamp: Date) throws {
+        // A later move put another file at the same path (ours was deleted or moved away in between): the file
+        // there now is not the one this record moved, so it must not be "put back".
+        if let position = moves.firstIndex(where: { $0.id == record.id }),
+           moves[(position + 1)...].contains(where: { $0.to == record.to }) {
+            throw UndoError.fileNotAtDestination(record.to)
+        }
         let fm = FileManager.default
         guard fm.fileExists(atPath: record.to) else { throw UndoError.fileNotAtDestination(record.to) }
         guard !fm.fileExists(atPath: record.from) else { throw UndoError.originalPathOccupied(record.from) }
@@ -97,8 +104,9 @@ public final class UndoLog: @unchecked Sendable {
         try write(Line(kind: .undo, id: record.id, timestamp: timestamp, from: nil, to: nil))
     }
 
-    private func state() throws -> (active: [UndoRecord], undone: Set<UUID>) {
-        guard let data = FileManager.default.contents(atPath: fileURL.path) else { return ([], []) }
+    /// `moves`: every move in log order (undone ones included); `active`: those not undone.
+    private func state() throws -> (active: [UndoRecord], undone: Set<UUID>, moves: [UndoRecord]) {
+        guard let data = FileManager.default.contents(atPath: fileURL.path) else { return ([], [], []) }
         let decoder = Self.decoder
         var moves: [UndoRecord] = []
         var undone = Set<UUID>()
@@ -113,7 +121,7 @@ public final class UndoLog: @unchecked Sendable {
                 undone.insert(entry.id)
             }
         }
-        return (moves.filter { !undone.contains($0.id) }, undone)
+        return (moves.filter { !undone.contains($0.id) }, undone, moves)
     }
 
     private func write(_ line: Line) throws {
