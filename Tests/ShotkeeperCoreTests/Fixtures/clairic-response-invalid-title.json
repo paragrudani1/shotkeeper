@@ -1,0 +1,19 @@
+{
+  "result": {
+    "model": "clairic-27b",
+    "answers": {
+      "title": {"type": "text", "value": null, "valid": false, "complete": false, "confidence": 0, "p_null": 0.2, "span": null, "raw": "\"An extremely long rambling title that", "failure_reason": "max_length"},
+      "description": {"type": "text", "value": "A blurry photo of a whiteboard.", "valid": true, "complete": true, "confidence": 0.4, "p_null": 0.1, "span": null},
+      "key_text": {"type": "text", "value": null, "valid": true, "complete": true, "confidence": 0.8, "p_null": 0.8, "span": null},
+      "source_app_or_site": {"type": "list", "value": ["Photos"], "confidences": [0.2], "valid": true, "complete": true},
+      "content_type": {"type": "enum", "value": "whiteboard", "valid": false, "complete": true, "confidence": 0, "p_null": 0},
+      "tags": {"type": "list", "value": ["whiteboard"], "confidences": [0.25], "valid": true, "complete": true},
+      "date_mentioned": {"type": "date", "value": "sometime", "guess": "2026-01-01", "confidence": 0.1, "p_null": 0.4}
+    },
+    "truncated": true,
+    "usage": {"input_tokens": 3200, "output_tokens": 40}
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

@@ -1,0 +1,14 @@
+{
+  "result": {
+    "model": "clairic-27b",
+    "answers": {
+      "title": {"type": "text", "value": "Screenshot", "valid": true, "complete": true, "confidence": 0.93, "p_null": 0.0, "span": null},
+      "content_type": {"type": "enum", "value": "other", "valid": true, "complete": true, "confidence": 0.6, "p_null": 0}
+    },
+    "truncated": false,
+    "usage": {"input_tokens": 1300, "output_tokens": 10}
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}
