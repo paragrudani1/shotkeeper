@@ -18,3 +18,18 @@ Workflow: `.github/workflows/ci.yml` (added on branch `app/phase1`, 2026-11-21).
 - 2026-11-21: the artifact is ad-hoc signed, not notarized. On a Mac: unzip, `xattr -dr com.apple.quarantine Shotkeeper.app`,
   then open. `SMAppService.mainApp.register()` needs the app in /Applications (else status `notFound`).
 - 2026-11-21: unit tests run hosted in the app (`TEST_HOST`); `AppDelegate` skips hotkey/watch setup when XCTest is loaded.
+- 2026-11-21 (PR #1, first compile of `App/`): the Release app built on the first try; only the test target failed.
+  `bind(...)` inside an `XCTestCase` resolves to NSObject's KVO `bind(_:to:withKeyPath:options:)`; call `Darwin.bind`.
+- 2026-11-21: `SearchPanel()` compiled but silently called NSWindow's inherited `init()` instead of the convenience
+  `init(size: = default)`, so the panel was neither floating nor non-activating. An exact `init()` match beats a
+  defaulted-argument init: give AppKit-subclass convenience inits a required label (`init(contentSize:)`).
+- 2026-11-21: Swift 6 region isolation: inside an actor, `let fm = FileManager.default; a(fm) && b(fm)` fails with
+  "sending 'fm' risks causing data races" (the `&&` autoclosure captures a non-Sendable value). Call
+  `FileManager.default` per use. Region errors are SIL diagnostics: they appear only after type errors are fixed.
+- 2026-11-21: the core test `testConcurrencyRunsJobsInParallel` was timing-based (`settle(50)` yields) and failed on the
+  2-core Linux runner (run 44904349330); it now uses a rendezvous with a 5 s fallback (commit `64a0c85`).
+- 2026-11-21: a full green `macos-app` run takes ~1.5–3 min (SwiftPM cache hit); app tests run hosted with a temp
+  support folder and `InMemoryCredentialStore` (`AppDelegate.init` checks `RuntimeEnvironment.isRunningUnitTests`).
+  The Keychain tests ran (not skipped) on `macos-latest`.
+- 2026-11-21: `gh run view` lists ARTIFACTS a few seconds after the run completes; check the job log
+  ("Artifact Shotkeeper-unsigned has been successfully uploaded") before concluding the upload failed.

@@ -179,7 +179,7 @@ struct LocalModelConfigView: View {
                     Button("Stop server") { Task { await coordinator.localRuntime.stop() } }
                 }
                 if case .failed = coordinator.runtimePhase {
-                    Button("Retry") { Task { await coordinator.localRuntime.retryAfterFailure() } }
+                    Button("Retry") { Task { await coordinator.retryLocalRuntime() } }
                 }
                 Button("Test") { runTest() }.disabled(testing || installTask != nil)
             }

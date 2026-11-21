@@ -17,3 +17,6 @@
   `KeychainCredentialStore` match the core protocols `ImagePreparer`, `FileMetadataWriter`, `CredentialStore`
   (unmerged on that date) but do not declare conformance; phase 2 adds it. Keychain keys are `String` until then
   (phase 2 passes `CredentialKey.rawValue`).
+- 2026-11-21 (app phase 2, PR #1): the platform types now declare conformance (`ImageIODownscaler: ImagePreparer`,
+  `XattrMetadataWriter: FileMetadataWriter` using core's `FinderMetadata` payloads, `KeychainCredentialStore:
+  CredentialStore` keyed by `CredentialKey`). App wiring: [app-implementation](app-implementation.md).

@@ -8,6 +8,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [architecture](architecture.md): core/app split, seams, and why (2026-11-21).
 - [clairic-field-schema](clairic-field-schema.md): Clairic fields, pass/cost trade-offs, per-screenshot cost, `maxImageLongSide` (2026-11-21).
 - [core-implementation](core-implementation.md): files/index/queue/pipeline/runtime choices, 3-bit catalog, open mlx-vlm question (2026-11-21).
+- [app-implementation](app-implementation.md): macOS app phase 2: coordinator, settings file, analyzer selection, local runtime, pause, search; what needs a real Mac (2026-11-21).
 
 ## Environment
 - [environment](environment.md): Linux build box, Docker Swift image, disk limits, credentials (2026-11-21).

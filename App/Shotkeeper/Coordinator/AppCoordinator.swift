@@ -310,11 +310,20 @@ final class AppCoordinator {
         do {
             try await localRuntime.install(variant)
             lastMessage = "\(variant.displayName) is installed."
+            rebuildAnalyzer() // un-holds a queue that stopped on "not installed"
         } catch is CancellationError {
             lastMessage = "Install cancelled."
         } catch {
             lastMessage = StatusText.describe(error)
         }
+    }
+}
+
+extension AppCoordinator {
+    /// After the local server gave up on repeated crashes: clear that state and let held screenshots retry.
+    func retryLocalRuntime() async {
+        await localRuntime.retryAfterFailure()
+        rebuildAnalyzer()
     }
 }
 
