@@ -6,13 +6,15 @@ import Foundation
 /// and docs/research/clairic/model-page-2026-11-21.md ("Unknown keys for a field's type are rejected").
 /// `ClairicFieldSchemaTests` checks each spec against that saved schema.
 ///
-/// Cost model (model page, "How media inputs are billed"): each `text` field gets its own pass; all other fields
-/// share one pass; every pass re-bills the full image. So passes = (#text fields) + 1, and the image dominates cost.
-/// Current choice: 3 text fields + 1 shared pass = 4 passes. Decision record: docs/wiki/clairic-field-schema.md.
+/// Cost model, measured on the first live calls (2026-11-21, `Tests/ShotkeeperCoreTests/Fixtures/clairic-live-2026-11-21-*.json`):
+/// `usage.input_tokens = schema_tokens + k × image_tokens`, where k is one image copy per scalar answer and, for a
+/// `list`, one per item (+1 for the list). The model page's "other fields share a pass" did not hold: the list-based
+/// schema (8 tags + 1 source item) billed the image 16 times. So every field here is a scalar (no lists) and
+/// k = number of fields. Decision record: docs/wiki/clairic-field-schema.md.
 public enum ClairicFieldSchema {
     public static func fields() -> [String: AnalysisJSON] {
         [
-            // TEXT pass 1. The whole point of the app. Needs `maxLength` (text-only key) to keep stems short and
+            // The whole point of the app. Needs `maxLength` (text-only key) to keep stems short and
             // `knowledge: true` because the title is synthesized, not printed in the screenshot.
             AnalysisFields.title: [
                 "type": "text",
@@ -20,7 +22,7 @@ public enum ClairicFieldSchema {
                 "maxLength": .number(Double(AnalysisFields.titleMaxLength)),
                 "knowledge": true,
             ],
-            // TEXT pass 2. Search/Spotlight summary. Synthesized (`knowledge`), and needs `maxLength` to stay 1–2
+            // Search/Spotlight summary. Synthesized (`knowledge`), and needs `maxLength` to stay 1–2
             // sentences; a list item cannot carry `maxLength`.
             AnalysisFields.description: [
                 "type": "text",
@@ -28,37 +30,36 @@ public enum ClairicFieldSchema {
                 "maxLength": .number(Double(AnalysisFields.descriptionMaxLength)),
                 "knowledge": true,
             ],
-            // TEXT pass 3. Full-text index payload: verbatim, so no `knowledge`; capped with `maxLength`.
+            // Full-text index payload: verbatim, so no `knowledge`; capped with `maxLength`.
             AnalysisFields.keyText: [
                 "type": "text",
                 "instructions": .string(AnalysisFields.Instructions.keyText),
                 "maxLength": .number(Double(AnalysisFields.keyTextMaxLength)),
             ],
-            // SHARED pass. Folded out of `text` to save a full image pass: a one-item text list. An `enum` would also
-            // share the pass but cannot name the long tail of sites. `knowledge` lets it recognise an app from its UI.
+            // Was a one-item text list to "share a pass"; live, lists cost an image copy per item and give no
+            // `maxLength`, so it is plain text now. `knowledge` lets it recognise an app from its UI.
             AnalysisFields.sourceAppOrSite: [
-                "type": "list",
-                "items": "text",
-                "max_items": 1,
-                "knowledge": true,
+                "type": "text",
                 "instructions": .string(AnalysisFields.Instructions.sourceAppOrSite),
+                "maxLength": .number(Double(AnalysisFields.sourceAppOrSiteMaxLength)),
+                "knowledge": true,
             ],
-            // SHARED pass. Closed set mirrors `ContentType`; never null so the pipeline always has a bucket.
+            // Closed set mirrors `ContentType`; never null so the pipeline always has a bucket.
             AnalysisFields.contentType: [
                 "type": "enum",
                 "enum": .array(ContentType.allCases.map { .string($0.rawValue) }),
                 "nullable": false,
                 "instructions": .string(AnalysisFields.Instructions.contentType),
             ],
-            // SHARED pass. Keywords are synthesized, hence `knowledge`.
+            // Keywords are synthesized, hence `knowledge`. One comma-separated text answer: the live `list` of 8
+            // billed 8+ image copies and repeated one keyword (clairic-live-2026-11-21-tweet.json).
             AnalysisFields.tags: [
-                "type": "list",
-                "items": "text",
-                "max_items": .number(Double(AnalysisFields.maxTags)),
+                "type": "text",
+                "instructions": .string(AnalysisFields.Instructions.tagsCommaSeparated),
+                "maxLength": .number(Double(AnalysisFields.tagsTextMaxLength)),
                 "knowledge": true,
-                "instructions": .string(AnalysisFields.Instructions.tags),
             ],
-            // SHARED pass. `source_only`: the date must be printed, so Clairic does not invent one from context.
+            // `source_only`: the date must be printed, so Clairic does not invent one from context.
             AnalysisFields.dateMentioned: [
                 "type": "date",
                 "source_only": true,
@@ -67,13 +68,16 @@ public enum ClairicFieldSchema {
         ]
     }
 
-    /// Number of passes the schema should cost (each text field + one shared pass), before any context-window merging.
-    public static var expectedPasses: Int {
-        fields().values.filter { $0["type"] == "text" }.count + 1
+    /// How many times one call bills the image: one copy per scalar field (measured 2026-11-21; see the type comment).
+    /// Not `usage.passes`, which counts sequential decode steps (schema-output.json) and was 38 on the first call.
+    public static var imageCopiesPerCall: Int {
+        fields().values.filter { $0["type"] != "list" }.count
     }
 
-    /// Image tokens per the model page ("Clairic tokenizes images as follows"): sides rounded to multiples of 32,
-    /// images under ~65,000 px² scaled up to reach that area (never down), one token per 32×32 patch, +2 markers.
+    /// Image tokens as `usage.image_tokens` reports them. Model page ("Clairic tokenizes images as follows"): sides
+    /// rounded to multiples of 32, images under ~65,000 px² scaled up to reach that area (never down), one token per
+    /// 32×32 patch. The page adds 2 start/end markers, but live usage (2026-11-21) shows none: 1280×800 → 1000,
+    /// 1280×831 → 1040, 591×1280 → 720, and `input_tokens` = `schema_tokens` + copies × `image_tokens` exactly.
     public static func estimatedImageTokens(width: Int, height: Int) -> Int {
         guard width > 0, height > 0 else { return 0 }
         var w = Double(width), h = Double(height)
@@ -85,7 +89,16 @@ public enum ClairicFieldSchema {
         }
         let pw = max(1, Int((w / 32).rounded()))
         let ph = max(1, Int((h / 32).rounded()))
-        return pw * ph + 2
+        return pw * ph
+    }
+
+    /// Schema tokens billed for `fields()` once per call (live `usage.schema_tokens`, 2026-11-21; the list-based
+    /// schema it replaced cost 3,448).
+    public static let measuredSchemaTokens = 1242
+
+    /// Expected `usage.input_tokens` for one call with an image of this size: schema + one image copy per field.
+    public static func estimatedInputTokens(width: Int, height: Int) -> Int {
+        measuredSchemaTokens + imageCopiesPerCall * estimatedImageTokens(width: width, height: height)
     }
 
     /// Recommended `maxImageLongSide` for the Mac's ImageIO downscale. See docs/wiki/clairic-field-schema.md.

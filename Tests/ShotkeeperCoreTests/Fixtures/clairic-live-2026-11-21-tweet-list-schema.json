@@ -1,0 +1,163 @@
+{
+  "answers" : {
+    "content_type" : {
+      "complete" : true,
+      "confidence" : 0.9998982055705729,
+      "confidence_method" : "ar_sequence_probability",
+      "decoder" : "parallel-ar-json-scalar-v1",
+      "log_probability" : -0.00010179961083167655,
+      "p_null" : 0,
+      "p_null_method" : "schema_disallows_null",
+      "raw" : "\"tweet\"",
+      "span" : null,
+      "tokens" : 4,
+      "type" : "enum",
+      "valid" : true,
+      "value" : "tweet"
+    },
+    "date_mentioned" : {
+      "complete" : true,
+      "confidence" : 0.9936352186335144,
+      "confidence_method" : "ar_sequence_probability",
+      "decoder" : "parallel-ar-json-scalar-v1",
+      "log_probability" : -0.006385122946483079,
+      "normalization_method" : "printed_temporal_v1",
+      "p_null" : 0.00006605083859643148,
+      "p_null_method" : "ar_first_token_null_probability",
+      "printed_value" : "Mar 14, 2026",
+      "raw" : "\"Mar 14, 2026\"",
+      "span" : null,
+      "tokens" : 13,
+      "type" : "date",
+      "valid" : true,
+      "value" : "2026-03-14"
+    },
+    "description" : {
+      "complete" : true,
+      "confidence" : 0.00003808340300576028,
+      "confidence_method" : "ar_sequence_probability",
+      "decoder" : "parallel-ar-json-scalar-v1",
+      "log_probability" : -10.175731987386825,
+      "p_null" : 0.000007954940796027844,
+      "p_null_method" : "ar_first_token_null_probability",
+      "raw" : "\"A Twitter post by Maya Kowalski sharing a free PDF of semiconductor fab flashcards, highlighting educational content on chip manufacturing.\"",
+      "span" : null,
+      "tokens" : 27,
+      "type" : "text",
+      "valid" : true,
+      "value" : "A Twitter post by Maya Kowalski sharing a free PDF of semiconductor fab flashcards, highlighting educational content on chip manufacturing."
+    },
+    "key_text" : {
+      "complete" : true,
+      "confidence" : 0.7335092215980569,
+      "confidence_method" : "ar_sequence_probability",
+      "decoder" : "parallel-ar-json-scalar-v1",
+      "log_probability" : -0.30991510942897094,
+      "p_null" : 0.00001081038533659838,
+      "p_null_method" : "ar_first_token_null_probability",
+      "raw" : "\"I spent the weekend turning my fab notes into 40 flashcards on how a chip is made: wafer prep, lithography, etching, doping, CMP and packaging.\"",
+      "span" : null,
+      "tokens" : 38,
+      "type" : "text",
+      "valid" : true,
+      "value" : "I spent the weekend turning my fab notes into 40 flashcards on how a chip is made: wafer prep, lithography, etching, doping, CMP and packaging."
+    },
+    "source_app_or_site" : {
+      "complete" : true,
+      "confidence" : 0.9986562170209036,
+      "confidence_method" : "ar_sequence_probability",
+      "confidences" : [
+        0.9993813450573987
+      ],
+      "log_probability" : -0.0013446866651065648,
+      "p_null" : 0.00009607728600161196,
+      "p_null_method" : "first_item_null_probability",
+      "p_nulls" : [
+        0.00009607728600161196
+      ],
+      "spans" : [
+        null
+      ],
+      "type" : "list",
+      "valid" : true,
+      "value" : [
+        "X"
+      ]
+    },
+    "tags" : {
+      "complete" : true,
+      "confidence" : 3.906293046824017e-07,
+      "confidence_method" : "ar_sequence_probability",
+      "confidences" : [
+        0.27871004321287945,
+        0.43188107819966715,
+        0.39298330870672354,
+        0.15352008526252453,
+        0.13043864773764377,
+        0.12276990936586632,
+        0.05790700336423832,
+        0.058079203504707966
+      ],
+      "log_probability" : -14.755506796529517,
+      "p_null" : 0.000001166110595552967,
+      "p_null_method" : "first_item_null_probability",
+      "p_nulls" : [
+        0.000001166110595552967,
+        0.000007617191359231984,
+        0.00019564786786725844,
+        0.00268417840477015,
+        0.0020862419579036457,
+        0.0030126822379563543,
+        0.03506106095602288,
+        0.12610275267596854
+      ],
+      "spans" : [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "type" : "list",
+      "valid" : true,
+      "value" : [
+        "semiconductor",
+        "semiconductor",
+        "semiconductor",
+        "semiconductor",
+        "semiconductor",
+        "pdf",
+        "semiconductor",
+        "semiconductor"
+      ]
+    },
+    "title" : {
+      "complete" : true,
+      "confidence" : 0.38172014615428357,
+      "confidence_method" : "ar_sequence_probability",
+      "decoder" : "parallel-ar-json-scalar-v1",
+      "log_probability" : -0.9630675405496731,
+      "p_null" : 1.813561858632559e-08,
+      "p_null_method" : "ar_first_token_null_probability",
+      "raw" : "\"Tweet semiconductor flashcards\"",
+      "span" : null,
+      "tokens" : 7,
+      "type" : "text",
+      "valid" : true,
+      "value" : "Tweet semiconductor flashcards"
+    }
+  },
+  "model" : "clairic-27b",
+  "truncated" : false,
+  "usage" : {
+    "image_tokens" : 1000,
+    "input_tokens" : 19448,
+    "output_tokens" : 136,
+    "passes" : 38,
+    "schema_tokens" : 3448,
+    "state_tokens" : 0
+  }
+}

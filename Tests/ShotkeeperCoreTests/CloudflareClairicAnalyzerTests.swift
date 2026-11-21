@@ -41,20 +41,49 @@ final class ClairicFieldSchemaTests: XCTestCase {
     }
 
     func testCostShape() {
-        // 3 text passes (title, description, key_text) + 1 shared pass.
-        XCTAssertEqual(ClairicFieldSchema.expectedPasses, 4)
-        XCTAssertEqual(ClairicFieldSchema.fields()[AnalysisFields.sourceAppOrSite]?["type"], "list")
-        XCTAssertEqual(ClairicFieldSchema.fields()[AnalysisFields.contentType]?["nullable"], false)
-        XCTAssertEqual(ClairicFieldSchema.fields()[AnalysisFields.title]?["knowledge"], true)
+        // Live 2026-11-21 (clairic-live-2026-11-21-tweet.json): a text list billed the image once per item, so the
+        // schema has no list fields; every field is a single scalar answer.
+        let fields = ClairicFieldSchema.fields()
+        XCTAssertFalse(fields.values.contains { $0["type"] == "list" }, "list fields re-bill the image per item")
+        XCTAssertEqual(ClairicFieldSchema.imageCopiesPerCall, 7)
+        XCTAssertEqual(fields[AnalysisFields.sourceAppOrSite]?["type"], "text")
+        XCTAssertEqual(fields[AnalysisFields.tags]?["type"], "text")
+        XCTAssertEqual(fields[AnalysisFields.contentType]?["nullable"], false)
+        XCTAssertEqual(fields[AnalysisFields.title]?["knowledge"], true)
     }
 
-    func testImageTokenFormulaMatchesDocExample() {
-        // model-backends.md / model page: 1024×640 → 642 tokens.
-        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 1024, height: 640), 642)
-        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 1280, height: 800), 1002)
-        // Small images are scaled up to ~256×256 → 8×8 patches + 2.
-        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 100, height: 100), 66)
+    func testImageTokenFormulaMatchesLiveUsage() {
+        // Live usage.image_tokens (clairic-live-2026-11-21-*.json): no +2 markers.
+        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 1280, height: 800), 1000)
+        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 1280, height: 831), 1040)
+        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 591, height: 1280), 720)
+        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 1024, height: 640), 640)
+        // Small images are scaled up to ~256×256 → 8×8 patches.
+        XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 100, height: 100), 64)
         XCTAssertEqual(ClairicFieldSchema.estimatedImageTokens(width: 0, height: 10), 0)
+    }
+
+    /// The billing model the schema is built on, checked against every saved live response:
+    /// input_tokens = schema_tokens + copies × image_tokens, copies = 7 (one per scalar field) or 16 (old list schema).
+    func testLiveUsageMatchesBillingModel() throws {
+        let cases: [(String, copies: Int, width: Int, height: Int)] = [
+            ("clairic-live-2026-11-21-tweet.json", 7, 1280, 800),
+            ("clairic-live-2026-11-21-code.json", 7, 1280, 831),
+            ("clairic-live-2026-11-21-receipt.json", 7, 591, 1280),
+            ("clairic-live-2026-11-21-tweet-list-schema.json", 16, 1280, 800), // 3 text + enum + date + 9 list items + 2
+        ]
+        for (name, copies, width, height) in cases {
+            let usage = try XCTUnwrap(AnalysisJSON.parse(Fixture.data(name))["usage"], name)
+            let image = try XCTUnwrap(usage["image_tokens"]?.intValue, name)
+            let schema = try XCTUnwrap(usage["schema_tokens"]?.intValue, name)
+            XCTAssertEqual(image, ClairicFieldSchema.estimatedImageTokens(width: width, height: height), name)
+            XCTAssertEqual(usage["input_tokens"]?.intValue, schema + copies * image, name)
+            if copies == ClairicFieldSchema.imageCopiesPerCall {
+                XCTAssertEqual(schema, ClairicFieldSchema.measuredSchemaTokens, name)
+                XCTAssertEqual(usage["input_tokens"]?.intValue,
+                               ClairicFieldSchema.estimatedInputTokens(width: width, height: height), name)
+            }
+        }
     }
 }
 
@@ -91,12 +120,12 @@ final class CloudflareClairicAnalyzerTests: XCTestCase {
                           "instructions": "One or two sentences describing what the screenshot shows and why it might matter."},
           "key_text": {"type": "text", "maxLength": 500,
                        "instructions": "The main visible text of the screenshot (headline, message or code), verbatim, without UI chrome."},
-          "source_app_or_site": {"type": "list", "items": "text", "max_items": 1, "knowledge": true,
+          "source_app_or_site": {"type": "text", "maxLength": 40, "knowledge": true,
                                  "instructions": "The app or website shown, as its common name (e.g. \"X\", \"Slack\", \"GitHub\", \"Figma\", \"Terminal\", \"nytimes.com\"). Null if it cannot be told."},
           "content_type": {"type": "enum", "enum": ["tweet", "article", "code", "chat", "receipt", "design", "other"],
                            "nullable": false, "instructions": "The kind of content shown in the screenshot."},
-          "tags": {"type": "list", "items": "text", "max_items": 8, "knowledge": true,
-                   "instructions": "Up to 8 short lowercase keywords (1-2 words each) for finding this screenshot later."},
+          "tags": {"type": "text", "maxLength": 160, "knowledge": true,
+                   "instructions": "Up to 8 different short lowercase keywords (1-2 words each) for finding this screenshot later, separated by commas."},
           "date_mentioned": {"type": "date", "source_only": true,
                              "instructions": "The most prominent calendar date printed in the screenshot content (post date, due date, event date). Null if none."}
         }
@@ -104,7 +133,7 @@ final class CloudflareClairicAnalyzerTests: XCTestCase {
         XCTAssertEqual(body["fields"], expectedFields)
         // Integral numbers are encoded without a fraction.
         let raw = String(decoding: request.httpBody!, as: UTF8.self)
-        XCTAssertTrue(raw.contains(#""max_items":8"#), raw.prefix(200).description)
+        XCTAssertTrue(raw.contains(#""maxLength":160"#), raw.prefix(200).description)
     }
 
     func testReferenceDateUsesConfiguredTimeZone() throws {
@@ -166,6 +195,74 @@ final class CloudflareClairicAnalyzerTests: XCTestCase {
             billedInputTokens: 4618
         ))
         XCTAssertEqual(transport.requestCount, 1)
+    }
+
+    /// First live response (2026-11-21, list-based schema, scrubbed): `result` only, as saved by `shotkeeper-cli --raw`.
+    func testParsesLiveTweetResponseFromListSchema() throws {
+        let result = try CloudflareClairicAnalyzer.parseResponse(Fixture.data("clairic-live-2026-11-21-tweet-list-schema.json"))
+        XCTAssertEqual(result.title, "Tweet semiconductor flashcards")
+        // Sequence confidence is 0.38 (log_probability -0.963 over 7 tokens); per token exp(-0.963/7) ≈ 0.87.
+        XCTAssertEqual(result.titleConfidence, 0.8714, accuracy: 0.0005)
+        XCTAssertEqual(result.sourceAppOrSite, "X")
+        XCTAssertEqual(result.contentType, .tweet)
+        XCTAssertEqual(result.tags, ["semiconductor"], "the list repeated one item; items < 0.3 dropped, duplicates merged")
+        XCTAssertEqual(result.dateMentioned, "2026-03-14")
+        XCTAssertEqual(result.keyText?.hasPrefix("I spent the weekend turning my fab notes"), true)
+        XCTAssertEqual(result.billedInputTokens, 19448)
+    }
+
+    /// Live responses for the current (all-scalar) schema, 2026-11-21.
+    func testParsesLiveResponsesFromCurrentSchema() throws {
+        let tweet = try CloudflareClairicAnalyzer.parseResponse(Fixture.data("clairic-live-2026-11-21-tweet.json"))
+        XCTAssertEqual(tweet.title, "Tweet semiconductor flashcards")
+        XCTAssertEqual(tweet.titleConfidence, 0.8714, accuracy: 0.0005)
+        XCTAssertEqual(tweet.sourceAppOrSite, "X")
+        XCTAssertEqual(tweet.contentType, .tweet)
+        XCTAssertEqual(tweet.tags, ["twitter", "semiconductor", "flashcards", "wafer", "lithography", "chiplets", "asml", "tsmc"])
+        XCTAssertEqual(tweet.dateMentioned, "2026-03-14")
+        XCTAssertEqual(tweet.billedInputTokens, 8242)
+
+        let code = try CloudflareClairicAnalyzer.parseResponse(Fixture.data("clairic-live-2026-11-21-code.json"))
+        XCTAssertEqual(code.title, "FileOrganizer Swift source code")
+        XCTAssertEqual(code.titleConfidence, 0.7061, accuracy: 0.0005, "sequence confidence was 0.044")
+        XCTAssertEqual(code.sourceAppOrSite, "Xcode")
+        XCTAssertEqual(code.contentType, .code)
+        XCTAssertEqual(code.tags, ["swift"])
+        XCTAssertNil(code.dateMentioned, "value null, p_null 0.9999")
+        XCTAssertEqual(code.keyText?.hasPrefix("// Moves a screenshot without ever replacing an existing file."), true)
+        XCTAssertEqual(code.billedInputTokens, 8522)
+
+        let receipt = try CloudflareClairicAnalyzer.parseResponse(Fixture.data("clairic-live-2026-11-21-receipt.json"))
+        XCTAssertEqual(receipt.title, "Greenleaf Market grocery receipt")
+        XCTAssertEqual(receipt.titleConfidence, 0.8191, accuracy: 0.0005, "sequence confidence was 0.20")
+        XCTAssertNil(receipt.sourceAppOrSite, "a paper receipt shows no app: value null")
+        XCTAssertEqual(receipt.contentType, .receipt)
+        XCTAssertEqual(receipt.tags, ["grocery", "receipt", "greenleaf", "food", "shopping"])
+        XCTAssertNil(receipt.dateMentioned, "valid false, failure_reason invalid_printed_temporal for 11/08/2026")
+        XCTAssertEqual(receipt.keyText, "GREENLEAF MARKET")
+        XCTAssertEqual(receipt.billedInputTokens, 6282)
+    }
+
+    func testTextTagsAreSplitOnCommasAndTextSourceIsUsed() throws {
+        let body = #"""
+        {"answers":{
+          "title":{"type":"text","value":"Greenleaf grocery receipt","valid":true,"confidence":0.5,"log_probability":-1.2,"tokens":8},
+          "source_app_or_site":{"type":"text","value":" Photos ","valid":true,"confidence":0.6},
+          "tags":{"type":"text","value":"Groceries, receipt; greenleaf market\nGroceries, #shopping, ","valid":true,"confidence":0.001}
+        },"usage":{"input_tokens":5,"output_tokens":1}}
+        """#
+        let result = try CloudflareClairicAnalyzer.parseResponse(Data(body.utf8))
+        XCTAssertEqual(result.tags, ["groceries", "receipt", "greenleaf market", "shopping"])
+        XCTAssertEqual(result.sourceAppOrSite, "Photos")
+        XCTAssertEqual(result.titleConfidence, exp(-1.2 / 8), accuracy: 1e-9)
+    }
+
+    func testTitleConfidenceFallsBackToSequenceConfidenceWithoutTokenCount() throws {
+        for extra in [#""log_probability":-0.5"#, #""log_probability":-0.5,"tokens":0"#, #""tokens":4"#] {
+            let body = #"{"answers":{"title":{"type":"text","value":"Blurry receipt","valid":true,"confidence":0.3,"#
+                + extra + #"}},"usage":{"input_tokens":5,"output_tokens":1}}"#
+            XCTAssertEqual(try CloudflareClairicAnalyzer.parseResponse(Data(body.utf8)).titleConfidence, 0.3, extra)
+        }
     }
 
     func testParsesUnwrappedBodyAndIgnoresDateGuess() throws {
