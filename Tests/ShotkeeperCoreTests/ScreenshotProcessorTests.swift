@@ -213,6 +213,113 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(try index.lookup(byPath: source.standardizedFileURL.path)?.title, "Invoice From Acme")
     }
 
+    func testReportCarriesOriginalPathAndUndoRecord() async throws {
+        let source = try screenshot()
+        let report = try await processor(StubAnalyzer(analysis(title: "Invoice From Acme"))).processWithReport(source)
+        XCTAssertEqual(report.originalURL, source.standardizedFileURL)
+        XCTAssertEqual(report.undoRecordID, try undoLog.records().last?.id)
+        guard case .processed(_, true, false) = report.outcome else { return XCTFail("\(report.outcome)") }
+    }
+
+    func testFileRestoredByUndoIsNeverProcessedAgainEvenAfterARestart() async throws {
+        let source = try screenshot()
+        let analyzer = StubAnalyzer(analysis(title: "Invoice From Acme"))
+        let first = processor(analyzer)
+        _ = try await first.process(source)
+        let record = try XCTUnwrap(first.lastUndoable())
+        _ = try first.undo(id: record.id)
+        XCTAssertNil(first.lastUndoable())
+        XCTAssertEqual(read(source), "png bytes")
+        XCTAssertEqual(try index.lookup(byPath: source.standardizedFileURL.path)?.restoredByUndo, true)
+
+        // The watcher sees the restored name appear; the user even edits the file (new fingerprint).
+        try Data("edited bytes".utf8).write(to: source)
+        let again = try await processor(analyzer).process(source)
+        XCTAssertEqual(again, .skipped(.restoredByUndo))
+        XCTAssertEqual(analyzer.calls.get.count, 1, "never sent to the model again")
+        XCTAssertEqual(read(source), "edited bytes")
+    }
+
+    func testRestoredFlagPersistsInTheIndexFile() async throws {
+        let file = dir.url.appendingPathComponent("state/index.sqlite")
+        index = try ScreenshotIndex(fileURL: file)
+        let source = try screenshot()
+        let processor = processor(StubAnalyzer(analysis(title: "Invoice From Acme")))
+        _ = try await processor.process(source)
+        _ = try processor.undoLast()
+        index = try ScreenshotIndex(fileURL: file)  // "restart"
+        let outcome = try await self.processor(StubAnalyzer(analysis(title: "Other"))).process(source)
+        XCTAssertEqual(outcome, .skipped(.restoredByUndo))
+    }
+
+    func testUndoWithoutAnIndexRowStillRecordsTheRestoredFlag() throws {
+        let source = try screenshot()
+        let renamed = dir.url.appendingPathComponent("Desktop/Renamed.png")
+        try FileManager.default.moveItem(at: source, to: renamed)
+        let record = try undoLog.append(from: source, to: renamed)
+        _ = try processor(StubAnalyzer(analysis(title: "x"))).undo(id: record.id)
+        let row = try XCTUnwrap(index.lookup(byPath: source.standardizedFileURL.path))
+        XCTAssertTrue(row.restoredByUndo)
+        XCTAssertEqual(row.status, .skipped)
+    }
+
+    func testUndoAllRevertsNewestFirstAndReportsFailures() async throws {
+        let a = try dir.file("Screenshot A.png", contents: "a", in: "Desktop")
+        let b = try dir.file("Screenshot B.png", contents: "b", in: "Desktop")
+        let p = processor(StubAnalyzer([.success(analysis(title: "Alpha")), .success(analysis(title: "Beta"))]))
+        let ra = try await p.processWithReport(a)
+        let rb = try await p.processWithReport(b)
+        // Something now occupies B's original name: that one cannot be restored, A still is.
+        try Data("other".utf8).write(to: b)
+        let result = p.undo(ids: [try XCTUnwrap(ra.undoRecordID), try XCTUnwrap(rb.undoRecordID)])
+        XCTAssertEqual(result.restored.map(\.from), [a.standardizedFileURL.path])
+        XCTAssertEqual(result.failed, [rb.undoRecordID])
+        XCTAssertEqual(read(a), "a")
+        XCTAssertEqual(read(b), "other", "never overwritten")
+        XCTAssertEqual(read(dir.url.appendingPathComponent("Desktop/Beta.png")), "b")
+    }
+
+    func testManualRenameUsesSanitizerCollisionsIndexAndUndo() async throws {
+        let source = try screenshot()
+        let p = processor(StubAnalyzer(analysis(title: "Invoice From Acme")))
+        let report = try await p.processWithReport(source)
+        guard case .processed(let current, _, _) = report.outcome else { return XCTFail() }
+        try dir.file("Acme - March invoice.png", contents: "taken", in: "Desktop")
+
+        let result = try p.rename(current, to: "  Acme/March invoice\n")
+        let expected = dir.url.appendingPathComponent("Desktop/Acme - March invoice 2.png").standardizedFileURL
+        XCTAssertEqual(result.finalURL, expected)
+        XCTAssertEqual(read(expected), "png bytes")
+        XCTAssertEqual(read(dir.url.appendingPathComponent("Desktop/Acme - March invoice.png")), "taken")
+        let row = try XCTUnwrap(index.lookup(byPath: expected.path))
+        XCTAssertEqual(row.title, "Acme - March invoice")
+        XCTAssertNil(try index.lookup(byPath: current.path))
+        XCTAssertEqual(try index.search("march").map(\.path), [expected.path])
+        XCTAssertEqual(try undoLog.records().last?.id, result.undoRecordID)
+
+        // Undo from the toast: both records, newest first, back to the original screenshot name.
+        let undone = p.undo(ids: [try XCTUnwrap(report.undoRecordID), try XCTUnwrap(result.undoRecordID)])
+        XCTAssertEqual(undone.failed, [])
+        XCTAssertEqual(read(source), "png bytes")
+        XCTAssertEqual(try index.lookup(byPath: source.standardizedFileURL.path)?.restoredByUndo, true)
+    }
+
+    func testManualRenameRejectsUnusableNamesAndIgnoresNoChange() async throws {
+        let source = try screenshot()
+        let p = processor(StubAnalyzer(analysis(title: "Invoice From Acme")))
+        _ = try await p.process(source)
+        let current = dir.url.appendingPathComponent("Desktop/Invoice From Acme.png").standardizedFileURL
+        for bad in ["", "  ", "...", "Screenshot", "///"] {
+            XCTAssertThrowsError(try p.rename(current, to: bad), bad) { error in
+                XCTAssertEqual(error as? ManualRenameError, .unusableName(bad))
+            }
+        }
+        let same = try p.rename(current, to: "Invoice From Acme")
+        XCTAssertEqual(same, ManualRenameResult(finalURL: current, undoRecordID: nil))
+        XCTAssertEqual(try undoLog.records().count, 1)
+        XCTAssertEqual(read(current), "png bytes")
+    }
+
     func testRenameOntoPathOfDeletedIndexedFileIndexesNewFile() async throws {
         // The user deleted an already processed "Invoice From Acme.png"; its row stays in the index. The next
         // screenshot with the same title gets that (now free) name and must be indexed there, not fail half-way.

@@ -19,6 +19,9 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
 - 2026-11-21: windows (setup, settings) are plain `NSWindow` + `NSHostingController` via `WindowPresenter`, not SwiftUI
   `Settings`/`Window` scenes: an LSUIElement app has to activate itself explicitly anyway, and `SettingsLink` from a
   menu-style `MenuBarExtra` is unreliable about bringing the window forward. Settings edits a draft and applies every change.
+- 2026-11-21 (UI polish PR 1, `83ba0ee`): `MenuBarExtra` was replaced by an `NSStatusItem` + `MenuPanel` (SwiftUI in a
+  non-activating panel), and the coordinator now feeds pipeline events to the rename toast. Details:
+  [ui-polish](ui-polish.md).
 
 ## Backends
 - 2026-11-21: `AnalyzerFactory` (pure, unit-tested) maps settings to an analyzer. Missing account/token/URL/model gives an

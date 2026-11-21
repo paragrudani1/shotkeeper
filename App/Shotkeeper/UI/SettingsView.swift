@@ -67,6 +67,10 @@ private struct GeneralSettingsTab: View {
                     Stepper("Requests per minute: \(draft.wrappedValue.requestsPerMinute)",
                             value: draft.requestsPerMinute, in: 1...120)
                 }
+                Section("After a rename") {
+                    Toggle("Show a toast after each rename", isOn: draft.showRenameToast)
+                    Toggle("Play a sound after a rename", isOn: draft.playRenameSound)
+                }
                 Section("App") {
                     Toggle("Launch at login", isOn: draft.launchAtLogin)
                     if LaunchAtLogin.status == .requiresApproval {

@@ -29,12 +29,15 @@ public struct IndexedScreenshot: Equatable, Sendable {
     public var lastError: String?
     /// Human-readable note, e.g. why the name was kept ("title confidence 0.31 < 0.5").
     public var note: String?
+    /// The user put this file back to its original name with Undo: never process it again (migration 2).
+    public var restoredByUndo: Bool
 
     public init(id: Int64 = 0, path: String, originalFilename: String, contentHash: String, capturedAt: Date? = nil,
                 processedAt: Date? = nil, title: String? = nil, titleConfidence: Double? = nil, sourceAppOrSite: String? = nil,
                 contentType: ContentType? = nil, description: String? = nil, tags: [String] = [], keyText: String? = nil,
                 dateMentioned: String? = nil, producedBy: String? = nil, billedInputTokens: Int? = nil,
-                status: ProcessingStatus = .pending, lastError: String? = nil, note: String? = nil) {
+                status: ProcessingStatus = .pending, lastError: String? = nil, note: String? = nil,
+                restoredByUndo: Bool = false) {
         self.id = id
         self.path = path
         self.originalFilename = originalFilename
@@ -54,6 +57,7 @@ public struct IndexedScreenshot: Equatable, Sendable {
         self.status = status
         self.lastError = lastError
         self.note = note
+        self.restoredByUndo = restoredByUndo
     }
 
     /// Copies the analysis fields in.
@@ -143,6 +147,21 @@ public final class ScreenshotIndex: @unchecked Sendable {
 
     public func recent(limit: Int = 50) throws -> [IndexedScreenshot] {
         try select("ORDER BY COALESCE(processed_at, captured_at, 0) DESC, id DESC LIMIT ?", [.int(Int64(limit))])
+    }
+
+    /// The newest `done` rows, most recently processed first (the menu's "Recent" list).
+    public func recentProcessed(limit: Int = 5) throws -> [IndexedScreenshot] {
+        try select("WHERE status = 'done' ORDER BY COALESCE(processed_at, captured_at, 0) DESC, id DESC LIMIT ?",
+                   [.int(Int64(limit))])
+    }
+
+    /// Flags the row at `path` as restored by Undo. Returns false when no row has that path.
+    @discardableResult
+    public func markRestoredByUndo(path: String) throws -> Bool {
+        try lock.withLock {
+            try db.run("UPDATE screenshots SET restored_by_undo = 1 WHERE path = ?", [.text(path)])
+            return db.changes > 0
+        }
     }
 
     /// E.g. pending/failed rows to re-enqueue at launch.
@@ -251,13 +270,18 @@ public final class ScreenshotIndex: @unchecked Sendable {
             END
             """,
         ]),
+        // 2026-11-21 (UI polish PR 1): a file the user restored with Undo is never processed again, even after a
+        // restart or when its content fingerprint changes.
+        SQLiteMigration(version: 2, statements: [
+            "ALTER TABLE screenshots ADD COLUMN restored_by_undo INTEGER NOT NULL DEFAULT 0",
+        ]),
     ]
 
     /// Every column except id, in insert order. `path` first: it is the upsert key.
     private static let writableColumns = [
         "path", "original_filename", "content_hash", "captured_at", "processed_at", "title", "title_confidence",
         "source_app_or_site", "content_type", "description", "tags", "key_text", "date_mentioned", "produced_by",
-        "billed_input_tokens", "status", "last_error", "note",
+        "billed_input_tokens", "status", "last_error", "note", "restored_by_undo",
     ]
 
     private static func selectColumns(_ alias: String) -> String {
@@ -271,7 +295,7 @@ public final class ScreenshotIndex: @unchecked Sendable {
             .optional(e.title), .optional(e.titleConfidence), .optional(e.sourceAppOrSite), .optional(e.contentType?.rawValue),
             .optional(e.description), .text(tagsJSON), .optional(e.keyText), .optional(e.dateMentioned),
             .optional(e.producedBy), .optional(e.billedInputTokens), .text(e.status.rawValue), .optional(e.lastError),
-            .optional(e.note),
+            .optional(e.note), .int(e.restoredByUndo ? 1 : 0),
         ]
     }
 
@@ -283,7 +307,7 @@ public final class ScreenshotIndex: @unchecked Sendable {
             sourceAppOrSite: s.text(8), contentType: s.text(9).flatMap(ContentType.init(rawValue:)), description: s.text(10),
             tags: tags, keyText: s.text(12), dateMentioned: s.text(13), producedBy: s.text(14),
             billedInputTokens: s.optionalInt(15), status: s.text(16).flatMap(ProcessingStatus.init(rawValue:)) ?? .pending,
-            lastError: s.text(17), note: s.text(18))
+            lastError: s.text(17), note: s.text(18), restoredByUndo: s.int64(19) != 0)
     }
 
     private func select(_ clause: String, _ bindings: [SQLiteValue]) throws -> [IndexedScreenshot] {

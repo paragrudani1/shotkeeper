@@ -134,8 +134,39 @@ final class ScreenshotIndexTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path + "-wal"), "WAL mode")
         }
         let reopened = try ScreenshotIndex(fileURL: url)
-        XCTAssertEqual(reopened.schemaVersion, 1)
+        XCTAssertEqual(reopened.schemaVersion, Int32(ScreenshotIndex.migrations.count))
         XCTAssertEqual(try reopened.search("kept").map(\.path), ["/1.png"])
+    }
+
+    func testRecentProcessedAndRestoredFlag() throws {
+        let index = try ScreenshotIndex.inMemory()
+        try index.save(entry("/old.png", minutes: 1))
+        try index.save(entry("/new.png", minutes: 5))
+        try index.save(entry("/failed.png", minutes: 9, status: .failed))
+        XCTAssertEqual(try index.recentProcessed(limit: 5).map(\.path), ["/new.png", "/old.png"])
+        XCTAssertEqual(try index.recentProcessed(limit: 1).map(\.path), ["/new.png"])
+
+        XCTAssertEqual(try index.lookup(byPath: "/old.png")?.restoredByUndo, false)
+        XCTAssertTrue(try index.markRestoredByUndo(path: "/old.png"))
+        XCTAssertFalse(try index.markRestoredByUndo(path: "/missing.png"))
+        XCTAssertEqual(try index.lookup(byPath: "/old.png")?.restoredByUndo, true)
+        XCTAssertTrue(try index.updatePath(from: "/old.png", to: "/moved.png"))
+        XCTAssertEqual(try index.lookup(byPath: "/moved.png")?.restoredByUndo, true, "the flag follows the row")
+    }
+
+    func testVersionOneDatabaseMigratesWithRowsKept() throws {
+        let dir = try TempDir()
+        let path = dir.url.appendingPathComponent("index.sqlite").path
+        do {
+            let db = try SQLiteDatabase(path: path)
+            try db.migrate([ScreenshotIndex.migrations[0]])
+            try db.run("INSERT INTO screenshots (path, original_filename, content_hash, status) VALUES (?, ?, ?, 'done')",
+                       [.text("/v1.png"), .text("Screenshot.png"), .text("h")])
+        }
+        let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: path))
+        XCTAssertEqual(index.schemaVersion, 2)
+        let row = try XCTUnwrap(index.lookup(byPath: "/v1.png"))
+        XCTAssertFalse(row.restoredByUndo)
     }
 
     func testGenericMigrationsApplyOnlyNewSteps() throws {

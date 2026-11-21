@@ -30,6 +30,9 @@ let queue = ProcessingQueue(
     handler: { _ = try await processor.process($0) })
 for await status in await queue.statusUpdates() { menuBar.show(status) }
 ```
+For the toast, the handler calls `processor.processWithReport(url)` and feeds a `ScreenshotEvent` to a `ToastBatcher`
+on the main actor; on a thrown error it sends `.failed(originalURL:problem:)` when `UserFacingError.shouldNotify(error)`,
+then rethrows so the queue still decides about retries (see `AppCoordinator.buildQueue`).
 At launch, re-enqueue `index.entries(withStatus: .pending)` and `.failed` if you want retries across restarts.
 Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and pause/hold state are kept). Do not rebuild the queue for it.
 
@@ -47,7 +50,8 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `_FilenameSanitizerStub.swift`: delete at merge (the analyzers task owns `FilenameSanitizer`).
 - **Index/**
   - `ScreenshotIndex`: `save(_:) -> id` (upsert by path), `updatePath(from:to:)`, `lookup(byPath:)`, `lookup(byHash:)`,
-    `recent(limit:)`, `entries(withStatus:limit:)`, `search(_:limit:)` (empty → recent), `stats()`. Thread-safe.
+    `recent(limit:)`, `recentProcessed(limit:)` (`done` only), `entries(withStatus:limit:)`, `search(_:limit:)` (empty → recent),
+    `stats()`, `markRestoredByUndo(path:)`. Thread-safe. Schema version 2 (adds `restored_by_undo`).
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
   - `ContentFingerprint.compute(for:)`: size + mtime + first 64 KiB (not a security hash).
 - **Queue/**
@@ -59,8 +63,27 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
 - **Pipeline/**
   - `ScreenshotProcessor`: `process(_:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`),
     `undoLast()`, `undo(id:)`. Throws analyzer/preparer errors after recording `failed` in the index; the file is untouched.
+    - `processWithReport(_:) -> ProcessingReport` (`originalURL`, `outcome`, `undoRecordID`): what the toast needs.
+    - `rename(_:to:) -> ManualRenameResult` (toast "Edit name"): `FilenameSanitizer` + original extension + `FileOrganizer`
+      collisions ("Name 2.png"), undo record, index path and title. Throws `ManualRenameError.unusableName`, `FileOrganizerError`.
+    - `undo(ids:) -> UndoBatchResult` (Undo / Undo All; newest first, keeps going), `lastUndoable()` (menu "Undo: <title>").
+    - Undo flags the file in the index (`restoredByUndo`); `process` then returns `.skipped(.restoredByUndo)` for it forever,
+      also after a restart and after the file changed.
+- **Feedback/** (UI wording and rules for the toast and the menu; the app only renders)
+  - `ToastBatcher`: `beginRun(_:)` (Process existing), `record(_ event: ScreenshotEvent, at:) -> ToastContent?`. One summary
+    for > 3 counted files within 10 s or for a run; counts renamed/moved and excluded files.
+  - `ToastContent`: `.renamed(RenamedToast)`, `.restored(RestoredToast)`, `.batch(BatchToast)`, `.error(ErrorToast)`, each
+    with its label/title/subline/button text. `ToastCountdown`: 4 s, `pause(at:)`/`resume(at:)`, `fraction(at:)`.
+  - `RecentItems.make(from:)` (last 5 `done`, newest first) → `RecentItem` with `accessibilityLabel(now:time:)`.
+  - `TimeLabel(calendar:locale:)`: `short` ("4:24 PM", "Yesterday", "Mon", "Nov 14"), `spoken` ("today 4:24 PM"), `timeOrDateTime`.
+  - `MenuText`: `status(queue:watchedFolderName:indexedCount:failure:now:time:) -> MenuStatusSummary` (`StatusDot` + two
+    lines), `download(fraction:totalGB:)`, `undoItem(for:)`, `screenshots(_:)`.
+  - `ExpiringMessage`: menu message that expires after 30 s or on `clearAfterSuccess()`.
+  - `UserFacingError.problem(for:) -> UserFacingProblem` (short text, `needsSettings`), `shouldNotify(_:)` (no toast for
+    retryable errors). Use it instead of `String(describing: error)` anywhere in the UI.
 - **Settings/**
   - `AppSettings`: all settings with defaults; `encoded()` / `AppSettings.decode(_:)` (missing/bad keys → defaults).
+    `showRenameToast` (default true) and `playRenameSound` (default false) drive the toast and the sound.
     Toggle Finder metadata with `writeFinderMetadata`. Show the Clairic privacy notice until `hasSeenPrivacyNotice`.
   - `CredentialStore`, `CredentialKey.cloudflareAPIToken`, `.customEndpointAPIKey`, `InMemoryCredentialStore`.
 - **Runtime/**

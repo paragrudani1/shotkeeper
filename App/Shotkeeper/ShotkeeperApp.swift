@@ -7,56 +7,9 @@ struct ShotkeeperApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuBarContent(coordinator: appDelegate.coordinator,
-                           showSearch: { appDelegate.showSearch() },
-                           showSettings: { appDelegate.showSettings() },
-                           showSetup: { appDelegate.showSetup() })
-        } label: {
-            Image(systemName: StatusText.symbol(for: appDelegate.coordinator.queueStatus))
-        }
-    }
-}
-
-struct MenuBarContent: View {
-    let coordinator: AppCoordinator
-    let showSearch: () -> Void
-    let showSettings: () -> Void
-    let showSetup: () -> Void
-
-    var body: some View {
-        Text(coordinator.statusLine)
-        if let watched = coordinator.watchedFolder {
-            Text("Watching \(watched.lastPathComponent)")
-        }
-        if let message = coordinator.lastMessage {
-            Text(message)
-        }
-        if case .error = coordinator.queueStatus {
-            Button("Fix Settings…", action: showSettings)
-        }
-        if !coordinator.settings.hasSeenPrivacyNotice {
-            Button("Finish Setup…", action: showSetup)
-        }
-        Divider()
-        Button("Pause for 10 Minutes") { coordinator.pause(minutes: 10) }
-        if coordinator.isPaused {
-            Button("Resume") { coordinator.resume() }
-        } else {
-            Button("Pause") { coordinator.pauseIndefinitely() }
-        }
-        Button("Undo Last Rename") { coordinator.undoLastRename() }
-        Button("Process Existing Screenshots") {
-            Task { _ = await coordinator.processExistingScreenshots() }
-        }
-        Divider()
-        Button("Search…", action: showSearch)
-            .keyboardShortcut("s", modifiers: [.option, .command])
-        Button("Settings…", action: showSettings)
-            .keyboardShortcut(",")
-        Divider()
-        Button("Quit Shotkeeper") { NSApplication.shared.terminate(nil) }
-            .keyboardShortcut("q")
+        // The menu bar item is an AppKit NSStatusItem (`StatusItemController`): its menu needs a status dot,
+        // thumbnails and a progress bar, which a MenuBarExtra menu cannot show. Windows are opened by the delegate.
+        Settings { EmptyView() }
     }
 }
 
@@ -65,6 +18,8 @@ struct MenuBarContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let coordinator: AppCoordinator
     private var hotKey: GlobalHotKey?
+    private var statusItem: StatusItemController?
+    private var toast: ToastController?
     private let windows = WindowPresenter()
     private lazy var searchPanel = SearchPanelController(model: makeSearchModel())
 
@@ -84,6 +39,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Unit tests run inside this app (TEST_HOST); do not grab the hotkey or watch folders then.
         guard !RuntimeEnvironment.isRunningUnitTests else { return }
+        let coordinator = self.coordinator
+        let undo: ([UUID]) -> ToastContent = { ids in coordinator.undoFromToast(ids: ids) }
+        let rename: (RenamedToast, String) -> Result<RenamedToast, UserFacingProblem> = { toast, name in
+            coordinator.renameFromToast(toast, to: name)
+        }
+        let viewInSearch: ([String]) -> Void = { [weak self] _ in self?.showSearch() }  // PR 2 filters to the batch
+        let fixSettings: () -> Void = { [weak self] in self?.showSettings() }
+        let toast = ToastController(handlers: ToastController.Handlers(undo: undo, rename: rename,
+                                                                       viewInSearch: viewInSearch, fixSettings: fixSettings))
+        self.toast = toast
+        coordinator.onToast = { content in toast.show(content, on: ToastPlacement.screenForNewScreenshot()) }
+        coordinator.onRenameSound = { NSSound(named: "Pop")?.play() }
+        statusItem = StatusItemController(coordinator: coordinator,
+                                          searchShortcut: GlobalHotKey.Shortcut.defaultSearch.displayString) { [weak self] row, reveal in
+            self?.perform(row, reveal: reveal)
+        }
         coordinator.startServices()
         do {
             hotKey = try GlobalHotKey(shortcut: .defaultSearch) { [weak self] in self?.searchPanel.toggle() }
@@ -100,6 +71,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showSearch() {
         searchPanel.show()
+    }
+
+    private func perform(_ row: MenuRowID, reveal: Bool) {
+        switch row {
+        case .fixSettings, .settings: showSettings()
+        case .finishSetup: showSetup()
+        case .recent(let id):
+            guard let item = coordinator.recentItems.first(where: { $0.id == id }) else { return }
+            let url = URL(fileURLWithPath: item.path)
+            if reveal { SearchActions.reveal(url) } else { SearchActions.open(url) }
+        case .undo: coordinator.undoLastRename()
+        case .pause: coordinator.pause(minutes: 10)
+        case .resume: coordinator.resume()
+        case .processExisting: Task { _ = await coordinator.processExistingScreenshots() }
+        case .search: showSearch()
+        case .about:
+            NSApp.activate()
+            NSApp.orderFrontStandardAboutPanel(nil)
+        case .quit: NSApplication.shared.terminate(nil)
+        }
     }
 
     func showSettings() {

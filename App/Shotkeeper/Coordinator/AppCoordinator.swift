@@ -18,9 +18,23 @@ final class AppCoordinator {
     private(set) var runtimePhase: RuntimePhase = .notInstalled
     /// Set when the index could not be opened; the app keeps running but does not process.
     private(set) var startupError: String?
-    /// Last user-facing result (undo, process existing, errors from settings changes).
-    var lastMessage: String?
+    /// Last user-facing result (undo, process existing, errors from settings changes). Expires after 30 s or
+    /// when the next action succeeds (core `ExpiringMessage`), so the menu never shows stale text.
+    var lastMessage: String? {
+        get { message.visibleText(at: Date()) }
+        set {
+            message.set(newValue, at: Date())
+            scheduleMessageExpiry()
+        }
+    }
+    private var message = ExpiringMessage()
     private(set) var watchedFolder: URL?
+    /// The menu's "Recent" rows (last 5 processed), the "Undo: <title>" target and the index count.
+    private(set) var recentItems: [RecentItem] = []
+    private(set) var undoCandidate: UndoRecord?
+    private(set) var indexedCount: Int?
+    /// Bumped after each rename; the menu bar icon pulses when it changes.
+    private(set) var renamePulse = 0
     /// Bumped when a secret changes so views re-read `hasSecret`.
     private(set) var credentialsRevision = 0
 
@@ -37,6 +51,16 @@ final class AppCoordinator {
     @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var detector = ScreenshotDetector()
     @ObservationIgnored private var servicesStarted = false
+    @ObservationIgnored private var messageExpiryTask: Task<Void, Never>?
+    @ObservationIgnored private var toastBatcher = ToastBatcher()
+    @ObservationIgnored private var lastSoundAt: Date?
+    @ObservationIgnored private let eventSink = LockedValue<(@MainActor @Sendable (ScreenshotEvent) -> Void)?>(nil)
+    /// Shows a toast (set by the app delegate; nil in unit tests unless a test sets it).
+    @ObservationIgnored var onToast: ((ToastContent) -> Void)?
+    /// Plays the rename sound (only called when `playRenameSound` is on).
+    @ObservationIgnored var onRenameSound: (() -> Void)?
+    /// At most one rename sound per this many seconds, so a batch is not a drum roll.
+    static let renameSoundSpacing: TimeInterval = 2
 
     init(supportDirectory: URL = AppPaths.supportDirectory, credentials: any CredentialStore,
          physicalMemoryBytes: UInt64 = SystemInfo.physicalMemoryBytes,
@@ -58,7 +82,9 @@ final class AppCoordinator {
 
         openStorage()
         rebuildAnalyzer()
+        eventSink.value = { [weak self] event in self?.handle(event) }
         buildQueue()
+        refreshHistory()
         Task { await localRuntime.refresh(for: localVariant) }
     }
 
@@ -81,6 +107,13 @@ final class AppCoordinator {
     var isPaused: Bool {
         if case .paused = queueStatus { return true }
         return false
+    }
+
+    /// A hard failure for the menu's red dot: the index did not open, or the local server gave up.
+    var failureText: String? {
+        if let startupError { return startupError }
+        if settings.backend == .localInkling, case .failed(let message) = runtimePhase { return message }
+        return nil
     }
 
     func hasSecret(_ key: CredentialKey) -> Bool {
@@ -193,8 +226,19 @@ final class AppCoordinator {
         guard let processor, queue == nil else { return }
         let configuration = ProcessingQueue.Configuration(concurrency: 1,
                                                           requestsPerMinute: max(1, settings.requestsPerMinute))
+        let sink = eventSink
         let queue = ProcessingQueue(configuration: configuration, handler: { url in
-            _ = try await processor.process(url)
+            do {
+                let report = try await processor.processWithReport(url)
+                await MainActor.run { sink.value?(.processed(report)) }
+            } catch {
+                if UserFacingError.shouldNotify(error) {
+                    let event = ScreenshotEvent.failed(originalURL: url.standardizedFileURL,
+                                                       problem: UserFacingError.problem(for: error))
+                    await MainActor.run { sink.value?(event) }
+                }
+                throw error
+            }
         })
         self.queue = queue
         statusTask = Task { [weak self] in
@@ -224,15 +268,97 @@ final class AppCoordinator {
         if let queue { Task { await queue.resume() } }
     }
 
+    /// The menu's "Undo: <title>" (⌘Z): the most recent rename. Shows the "restored" toast.
     func undoLastRename() {
         guard let processor else { return }
         do {
             let record = try processor.undoLast()
-            let to = URL(fileURLWithPath: record.to).lastPathComponent
-            let from = URL(fileURLWithPath: record.from).lastPathComponent
-            lastMessage = "Restored “\(from)” (was “\(to)”)"
+            message.clearAfterSuccess()
+            refreshHistory()
+            showToast(.restored(RestoredToast(restoredPaths: [record.from])))
         } catch {
             lastMessage = StatusText.describe(error)
+        }
+    }
+
+    /// The toast's Undo / Undo All. Returns the toast to show next.
+    func undoFromToast(ids: [UUID]) -> ToastContent {
+        guard let processor else { return .error(ErrorToast(.undo, UserFacingProblem(message: "the index is not open"))) }
+        defer { refreshHistory() }
+        if ids.count == 1 {
+            do {
+                let record = try processor.undo(id: ids[0])
+                message.clearAfterSuccess()
+                return .restored(RestoredToast(restoredPaths: [record.from]))
+            } catch {
+                return .error(ErrorToast(.undo, UserFacingError.problem(for: error)))
+            }
+        }
+        let result = processor.undo(ids: ids)
+        if result.restored.isEmpty {
+            return .error(ErrorToast(.undo, UserFacingProblem(message: "the files were moved or renamed since")))
+        }
+        message.clearAfterSuccess()
+        return .restored(RestoredToast(restoredPaths: result.restored.map(\.from), failedCount: result.failed.count))
+    }
+
+    /// The toast's "Edit name": rename through the pipeline's rules, update the index, write an undo record.
+    func renameFromToast(_ toast: RenamedToast, to name: String) -> Result<RenamedToast, UserFacingProblem> {
+        guard let processor else { return .failure(UserFacingProblem(message: "the index is not open")) }
+        do {
+            let result = try processor.rename(toast.currentURL, to: name)
+            message.clearAfterSuccess()
+            refreshHistory()
+            return .success(toast.edited(to: result.finalURL, undoRecordID: result.undoRecordID))
+        } catch {
+            return .failure(UserFacingError.problem(for: error))
+        }
+    }
+
+    // MARK: Pipeline events (toast, recents, sound, pulse)
+
+    /// One pipeline event, on the main actor. Internal so tests can drive it without a model.
+    func handle(_ event: ScreenshotEvent, now: Date = Date()) {
+        if case .processed(let report) = event, case .processed = report.outcome {
+            message.clearAfterSuccess()
+            refreshHistory()
+        }
+        guard let content = toastBatcher.record(event, at: now) else { return }
+        switch content {
+        case .renamed, .batch:
+            renamePulse += 1
+            if settings.playRenameSound, lastSoundAt.map({ now.timeIntervalSince($0) >= Self.renameSoundSpacing }) ?? true {
+                lastSoundAt = now
+                onRenameSound?()
+            }
+            if settings.showRenameToast { onToast?(content) }
+        case .error, .restored:
+            // Errors are shown even with rename toasts off: the setting is about confirmations, not problems.
+            onToast?(content)
+        }
+    }
+
+    private func showToast(_ content: ToastContent) {
+        if settings.showRenameToast { onToast?(content) } else if case .restored(let restored) = content {
+            lastMessage = "\(restored.label): \(restored.title)"
+        }
+    }
+
+    /// Re-reads the recent list, the undo target and the index count.
+    func refreshHistory() {
+        guard let index else { return }
+        recentItems = RecentItems.make(from: (try? index.recentProcessed(limit: RecentItems.limit)) ?? [])
+        indexedCount = (try? index.stats())?.done
+        undoCandidate = processor?.lastUndoable()
+    }
+
+    private func scheduleMessageExpiry() {
+        messageExpiryTask?.cancel()
+        guard message.text != nil else { return }
+        messageExpiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(ExpiringMessage.lifetime * 1_000_000_000) + 50_000_000)
+            guard !Task.isCancelled else { return }
+            self?.message.expire(at: Date())
         }
     }
 
@@ -245,6 +371,7 @@ final class AppCoordinator {
             ExistingScreenshotScanner.candidates(in: folder, detector: detector,
                                                  isIndexed: ExistingScreenshotScanner.indexedCheck(index))
         }.value
+        toastBatcher.beginRun(candidates)
         for url in candidates { await queue.enqueue(url) }
         lastMessage = candidates.isEmpty ? "No unprocessed screenshots in \(folder.lastPathComponent)"
             : "Queued \(candidates.count) screenshot\(candidates.count == 1 ? "" : "s")"
