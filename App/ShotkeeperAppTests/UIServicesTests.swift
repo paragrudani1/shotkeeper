@@ -42,6 +42,30 @@ final class SearchPanelTests: XCTestCase {
         XCTAssertEqual(dismissed, 1)
     }
 
+    func testKeysGoToTheInputMethodWhileComposing() throws {
+        let panel = SearchPanel(contentSize: SearchPanel.defaultContentSize)
+        let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        panel.contentView?.addSubview(field)
+        XCTAssertTrue(panel.makeFirstResponder(field))
+        var handled = 0
+        panel.keyHandler = { _ in handled += 1; return true }
+        let returnKey = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                       windowNumber: panel.windowNumber, context: nil, characters: "\r",
+                                                       charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+
+        XCTAssertFalse(panel.isComposingText)
+        panel.sendEvent(returnKey)
+        XCTAssertEqual(handled, 1, "no composition: the panel handles Return")
+
+        field.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0),
+                            replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(panel.isComposingText)
+        panel.sendEvent(returnKey)
+        XCTAssertEqual(handled, 1, "Return commits the composition; it must not open a result")
+        field.unmarkText()
+        XCTAssertFalse(panel.isComposingText)
+    }
+
     func testControllerTogglesVisibility() {
         let controller = SearchPanelController()
         XCTAssertFalse(controller.isVisible)
