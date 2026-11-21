@@ -210,6 +210,29 @@ final class ProcessingQueueTests: XCTestCase {
         XCTAssertEqual(failed, 0)
     }
 
+    /// Changing the rate must not drop or release queued jobs: a paused queue stays paused with its jobs.
+    func testSetRequestsPerMinuteKeepsPauseAndJobsAndAppliesTheNewRate() async {
+        let (handler, calls) = scripted([])
+        let clock = FakeClock()
+        let queue = makeQueue(handler, clock: clock, rpm: 60, burst: 1)
+        await queue.pause()
+        await queue.enqueue(a)
+        await queue.enqueue(b)
+        await queue.setRequestsPerMinute(6)
+        await settle()
+        XCTAssertEqual(calls.get, [], "still paused")
+        let status = await queue.status
+        XCTAssertEqual(status, .paused(until: nil))
+        let rate = await queue.configuration.requestsPerMinute
+        XCTAssertEqual(rate, 6)
+        let queued = await queue.queuedCount
+        XCTAssertEqual(queued, 2)
+        await queue.resume()
+        await queue.waitUntilIdle()
+        XCTAssertEqual(calls.get, [a, b])
+        XCTAssertTrue(clock.sleeps.contains { abs($0 - 10) < 0.01 }, "6/min, burst 1: second job waits 10 s; \(clock.sleeps)")
+    }
+
     func testProcessingStatusReportsRemaining() async {
         let gate = Locked<CheckedContinuation<Void, Never>?>(nil)
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock()) { _ in

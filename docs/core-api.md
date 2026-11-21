@@ -31,7 +31,7 @@ let queue = ProcessingQueue(
 for await status in await queue.statusUpdates() { menuBar.show(status) }
 ```
 At launch, re-enqueue `index.entries(withStatus: .pending)` and `.failed` if you want retries across restarts.
-`requestsPerMinute` is fixed per queue: rebuild the queue when the user changes it.
+Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and pause/hold state are kept). Do not rebuild the queue for it.
 
 ## Types by folder
 - **Files/**
@@ -51,7 +51,7 @@ At launch, re-enqueue `index.entries(withStatus: .pending)` and `.failed` if you
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
   - `ContentFingerprint.compute(for:)`: size + mtime + first 64 KiB (not a security hash).
 - **Queue/**
-  - `ProcessingQueue` (actor): `enqueue`, `pause(until:)`, `resume()`, `statusUpdates()`, `status`, `waitUntilIdle()`,
+  - `ProcessingQueue` (actor): `enqueue`, `pause(until:)`, `resume()`, `setRequestsPerMinute(_:)`, `statusUpdates()`, `status`, `waitUntilIdle()`,
     `succeededCount`, `failedCount`, `lastFailure`.
   - `QueueStatus`: `.idle`, `.processing(current:remaining:)`, `.paused(until:)`, `.offline`, `.error(message)`.
     `.error` means held on `unauthorized`/`notConfigured`: show "Fix settings", call `resume()` after the user fixes them.

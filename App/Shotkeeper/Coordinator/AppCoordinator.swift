@@ -58,7 +58,7 @@ final class AppCoordinator {
 
         openStorage()
         rebuildAnalyzer()
-        rebuildQueue()
+        buildQueue()
         Task { await localRuntime.refresh(for: localVariant) }
     }
 
@@ -138,12 +138,17 @@ final class AppCoordinator {
 
         if new.backend != old.backend || new.clairicAccountID != old.clairicAccountID
             || new.customEndpointURL != old.customEndpointURL || new.customModelName != old.customModelName
-            || new.localModelVariantID != old.localModelVariantID {
+            || new.localModelVariantID != old.localModelVariantID
+            || new.hasSeenPrivacyNotice != old.hasSeenPrivacyNotice { // accepting consent un-holds cloud backends
             rebuildAnalyzer()
             Task { await localRuntime.refresh(for: localVariant) }
             if new.backend != .localInkling, old.backend == .localInkling { Task { await localRuntime.stop() } }
         }
-        if new.requestsPerMinute != old.requestsPerMinute { rebuildQueue() }
+        if new.requestsPerMinute != old.requestsPerMinute, let queue {
+            // In place: a rebuilt queue had to resume the old one to drain it, which ran held jobs during a pause.
+            let rate = max(1, new.requestsPerMinute)
+            Task { await queue.setRequestsPerMinute(rate) }
+        }
         if new.watchedFolderOverride != old.watchedFolderOverride, servicesStarted { restartWatcher() }
         if new.idleTimeoutMinutes != old.idleTimeoutMinutes {
             let minutes = new.idleTimeoutMinutes
@@ -182,30 +187,20 @@ final class AppCoordinator {
         if case .error = queueStatus, let queue { Task { await queue.resume() } }
     }
 
-    private func rebuildQueue() {
-        guard let processor else { return }
-        let old = queue
+    /// Built once: rate changes go through `ProcessingQueue.setRequestsPerMinute`, so queued jobs and pause/hold
+    /// state never have to move between queues.
+    private func buildQueue() {
+        guard let processor, queue == nil else { return }
         let configuration = ProcessingQueue.Configuration(concurrency: 1,
                                                           requestsPerMinute: max(1, settings.requestsPerMinute))
         let queue = ProcessingQueue(configuration: configuration, handler: { url in
             _ = try await processor.process(url)
         })
         self.queue = queue
-        statusTask?.cancel()
         statusTask = Task { [weak self] in
             for await status in await queue.statusUpdates() {
                 guard !Task.isCancelled else { break }
                 self?.queueStatus = status
-            }
-        }
-        if let old {
-            // Jobs already in the old queue still finish there (its workers keep it alive); un-hold it so they drain.
-            var carriedPause: Date?? = nil
-            if case .paused(let until) = queueStatus { carriedPause = .some(until) }
-            let pauseToCarry = carriedPause
-            Task {
-                await old.resume()
-                if let pauseToCarry { await queue.pause(until: pauseToCarry) }
             }
         }
     }
@@ -295,6 +290,9 @@ final class AppCoordinator {
                 try? store.setSecret(saved, for: key)
             }
         }
+        // Only a generated image is sent here, never a user file, so the privacy-notice gate does not apply.
+        var candidate = candidate
+        candidate.hasSeenPrivacyNotice = true
         let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,
                                             physicalMemoryBytes: physicalMemoryBytes)
         do {

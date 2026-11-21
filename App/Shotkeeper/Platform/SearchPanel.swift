@@ -7,7 +7,8 @@ import SwiftUI
 final class SearchPanel: NSPanel {
     /// Called when the panel hides itself (Esc, or it lost key status).
     var onDismiss: (() -> Void)?
-    /// Sees every key-down first. Return true to consume it (↑/↓/Return/⌘C/⌘R never reach the text field then).
+    /// Sees every key-down first (except while an input method is composing). Return true to consume it
+    /// (↑/↓/Return/⌘C/⌘R never reach the text field then).
     var keyHandler: ((NSEvent) -> Bool)?
 
     static let defaultContentSize = NSSize(width: 680, height: 460)
@@ -36,8 +37,14 @@ final class SearchPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, keyHandler?(event) == true { return }
+        if event.type == .keyDown, !isComposingText, keyHandler?(event) == true { return }
         super.sendEvent(event)
+    }
+
+    /// True while an input method (Japanese, Chinese, Korean…) holds uncommitted marked text in the focused field.
+    /// ↑/↓/Return/Esc then belong to the input method (pick a candidate, commit, cancel), not to the result list.
+    var isComposingText: Bool {
+        (firstResponder as? NSTextInputClient)?.hasMarkedText() ?? false
     }
 
     /// Esc (when the field editor does not consume it).

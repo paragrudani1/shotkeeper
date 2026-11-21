@@ -86,6 +86,7 @@ enum AnalyzerFactory {
             guard !token.isEmpty else {
                 return UnconfiguredAnalyzer(backendID: "clairic", reason: "Cloudflare API token is not set")
             }
+            guard settings.hasSeenPrivacyNotice else { return awaitingConsent(backendID: "clairic") }
             return CloudflareClairicAnalyzer(credentials: ClairicCredentials(accountID: accountID, apiToken: token))
 
         case .customEndpoint:
@@ -97,6 +98,7 @@ enum AnalyzerFactory {
             guard !model.isEmpty else {
                 return UnconfiguredAnalyzer(backendID: "local-openai", reason: "Custom endpoint model name is not set")
             }
+            guard settings.hasSeenPrivacyNotice else { return awaitingConsent(backendID: "local-openai") }
             let key = (try? credentials.secret(for: .customEndpointAPIKey))?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return LocalOpenAICompatibleAnalyzer(configuration: .init(
@@ -109,6 +111,14 @@ enum AnalyzerFactory {
             return ManagedLocalAnalyzer(variant: localVariant(for: settings, physicalMemoryBytes: physicalMemoryBytes),
                                         runtime: runtime)
         }
+    }
+
+    static let consentReason = "Finish setup to accept where screenshots are sent (menu → Finish Setup…)"
+
+    /// Backends that send screenshots off this Mac stay held until setup's privacy notice was accepted, even when
+    /// Settings already holds working credentials: nothing leaves the Mac before that.
+    private static func awaitingConsent(backendID: String) -> UnconfiguredAnalyzer {
+        UnconfiguredAnalyzer(backendID: backendID, reason: consentReason)
     }
 
     /// The saved variant, else the recommender's local pick, else the smallest build (the user chose local anyway).

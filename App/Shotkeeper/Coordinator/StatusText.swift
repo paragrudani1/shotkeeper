@@ -62,22 +62,34 @@ enum StatusText {
 }
 
 /// "Process existing screenshots": screenshots in the watched folder (top level only, like the watcher) that
-/// the index does not already hold as done/skipped.
+/// the index does not already hold as done/skipped, and whose data is on this Mac. Files evicted by iCloud Drive
+/// ("Desktop & Documents") or another File Provider are skipped: reading them would download the whole backlog.
 enum ExistingScreenshotScanner {
     static func candidates(in folder: URL, detector: ScreenshotDetector,
-                           isIndexed: (URL) -> Bool, fileManager: FileManager = .default) -> [URL] {
+                           isIndexed: (URL) -> Bool, isStoredLocally: (URL) -> Bool = ExistingScreenshotScanner.isStoredLocally,
+                           fileManager: FileManager = .default) -> [URL] {
         let keys: [URLResourceKey] = [.isRegularFileKey, .creationDateKey]
         guard let items = try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys,
                                                                options: [.skipsHiddenFiles]) else { return [] }
         let screenshots = items.filter { url in
             guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return false }
-            return detector.isScreenshot(url) && !isIndexed(url)
+            return detector.isScreenshot(url) && !isIndexed(url) && isStoredLocally(url)
         }
         // Oldest first, so the queue works through them in capture order.
         func created(_ url: URL) -> Date {
             (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
         }
         return screenshots.sorted { (created($0), $0.lastPathComponent) < (created($1), $1.lastPathComponent) }
+    }
+
+    /// False for a dataless placeholder: iCloud says `.notDownloaded`, or `st_flags` has `SF_DATALESS`
+    /// (0x40000000 in <sys/stat.h>; set on evicted iCloud Drive and File Provider files).
+    static func isStoredLocally(_ url: URL) -> Bool {
+        if let values = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]),
+           values.ubiquitousItemDownloadingStatus == .notDownloaded { return false }
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return true }
+        return info.st_flags & 0x4000_0000 == 0
     }
 
     /// `isIndexed` backed by the real index: a row at this path with a final status.
