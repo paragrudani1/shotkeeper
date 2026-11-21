@@ -8,3 +8,7 @@
 - 2026-11-21: `gh` authenticated as paragrudani1 (fine-grained PAT). User authorized a PRIVATE repo `shotkeeper`.
 - 2026-11-21: Cloudflare credentials were absent (env and `.env.local`) at session start.
 - macOS app build/test happens only in GitHub Actions (`macos-latest`).
+- 2026-11-21: the default `gh` PAT could not create repos. The user supplied a second token via a T3 secret file; with it the private
+  repo https://github.com/paragrudani1/shotkeeper was created. Access for agents (token never printed):
+  `git push` works through a credential helper in this clone's local `.git/config`; for API/CI use
+  `/root/local-dev/shotkeeper-llm/bin/gh-shotkeeper <gh args>` (plain `gh` cannot see this repo).
