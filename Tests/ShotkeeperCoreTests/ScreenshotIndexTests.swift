@@ -46,6 +46,23 @@ final class ScreenshotIndexTests: XCTestCase {
         XCTAssertEqual(try index.search("alpha").map(\.path), ["/b.png"])
     }
 
+    func testUpdatePathOntoStaleRowReplacesIt() throws {
+        // A row whose file is gone still holds "/b.png"; a new file now lives there. The UNIQUE path must not
+        // make the update fail, and the stale row must leave the FTS index too.
+        let index = try ScreenshotIndex.inMemory()
+        try index.save(entry("/b.png", title: "Stale"))
+        try index.save(entry("/a.png", title: "Fresh"))
+        XCTAssertTrue(try index.updatePath(from: "/a.png", to: "/b.png"))
+        XCTAssertEqual(try index.lookup(byPath: "/b.png")?.title, "Fresh")
+        XCTAssertEqual(try index.stats().count, 1)
+        XCTAssertEqual(try index.search("stale"), [])
+        XCTAssertEqual(try index.search("fresh").map(\.path), ["/b.png"])
+        // Same path or a missing source leaves the target alone.
+        XCTAssertTrue(try index.updatePath(from: "/b.png", to: "/b.png"))
+        XCTAssertFalse(try index.updatePath(from: "/missing.png", to: "/b.png"))
+        XCTAssertEqual(try index.lookup(byPath: "/b.png")?.title, "Fresh")
+    }
+
     func testRecentAndStats() throws {
         let index = try ScreenshotIndex.inMemory()
         try index.save(entry("/old.png", minutes: 0, tokens: 100))

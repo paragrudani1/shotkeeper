@@ -68,6 +68,22 @@ final class UndoLogTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: elsewhere.path))
     }
 
+    func testOlderRecordRefusesWhenALaterMoveReusedItsDestination() throws {
+        // A's file was deleted by the user, then B was renamed to the same (free) name. Undoing A must not move B.
+        let log = UndoLog(fileURL: logURL)
+        let a = try renamed("Screenshot A.png", to: "Invoice", log: log)
+        try FileManager.default.removeItem(at: a.to)
+        let b = try renamed("Screenshot B.png", to: "Invoice", log: log)
+        XCTAssertEqual(b.to, a.to)
+        XCTAssertThrowsError(try log.undo(id: a.record.id)) {
+            XCTAssertEqual($0 as? UndoError, .fileNotAtDestination(a.to.path))
+        }
+        XCTAssertEqual(read(b.to), "Screenshot B.png")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: a.from.path))
+        XCTAssertEqual(try log.undoLast(), b.record)
+        XCTAssertEqual(read(b.from), "Screenshot B.png")
+    }
+
     func testSurvivesRestart() throws {
         let move = try renamed("Screenshot.png", to: "Invoice", log: UndoLog(fileURL: logURL))
         let reopened = UndoLog(fileURL: logURL)

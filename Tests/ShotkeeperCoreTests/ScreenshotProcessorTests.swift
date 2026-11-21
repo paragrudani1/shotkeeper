@@ -213,6 +213,24 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(try index.lookup(byPath: source.standardizedFileURL.path)?.title, "Invoice From Acme")
     }
 
+    func testRenameOntoPathOfDeletedIndexedFileIndexesNewFile() async throws {
+        // The user deleted an already processed "Invoice From Acme.png"; its row stays in the index. The next
+        // screenshot with the same title gets that (now free) name and must be indexed there, not fail half-way.
+        let stalePath = dir.url.appendingPathComponent("Desktop/Invoice From Acme.png").standardizedFileURL.path
+        try index.save(IndexedScreenshot(path: stalePath, originalFilename: "old.png", contentHash: "old-hash",
+                                         title: "Old Title", status: .done))
+        let source = try screenshot()
+        let outcome = try await processor(StubAnalyzer(analysis(title: "Invoice From Acme"))).process(source)
+
+        XCTAssertEqual(outcome, .processed(finalURL: URL(fileURLWithPath: stalePath), renamed: true, moved: false))
+        let row = try XCTUnwrap(index.lookup(byPath: stalePath))
+        XCTAssertEqual(row.status, .done)
+        XCTAssertEqual(row.title, "Invoice From Acme")
+        XCTAssertEqual(row.originalFilename, shotName)
+        XCTAssertNil(try index.lookup(byPath: source.standardizedFileURL.path))
+        XCTAssertEqual(try index.stats().count, 1)
+    }
+
     func testPassthroughPreparerReadsFixture() throws {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "tiny-3x2", withExtension: "png", subdirectory: "Fixtures"))
         let payload = try PassthroughImagePreparer().prepare(url)
