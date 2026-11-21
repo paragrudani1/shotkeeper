@@ -16,3 +16,8 @@
 - 2026-11-21: pushing `.github/workflows/*` needs the token's **Workflows: Read and write** permission; without it GitHub rejects the push
   ("refusing to allow a Personal Access Token to create or update workflow … without workflow scope"). The user added it to the
   same token the same day; the credential helper and `gh-shotkeeper` now read a new secret-file path holding that token.
+- 2026-11-21: T3 Code's PR tools (`pull_request_merge` etc.) use the default credential and cannot see this repo
+  ("Could not resolve to a Repository"). PR #1 was merged with `gh-shotkeeper pr merge --match-head-commit` instead.
+- 2026-11-21 retro (phase-1/2 app sessions): the token permission gap surfaced only at push time, and a CI workaround was built
+  for a transient "no tests on main" state. Responses: `AGENTS.md` now names the repo tooling and a no-workarounds rule;
+  `CODING_STANDARDS.md` added for reviewers.

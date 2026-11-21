@@ -13,6 +13,8 @@ macOS menu-bar app that renames, tags and indexes new screenshots using a model 
 ## Commands (Linux box)
 - Test core: `scripts/test-linux.sh` (Docker, no network). Build only: `scripts/test-linux.sh build`.
 - Concurrent callers: set `SCRATCH=.build/linux-<you>`.
+- GitHub: only `/root/local-dev/shotkeeper-llm/bin/gh-shotkeeper` can see this private repo (plain `gh` and T3 PR tools cannot). `git push` works via the clone's credential helper.
+- macOS app code compiles only in CI (`.github/workflows/ci.yml`); read failures with `gh-shotkeeper run view <id> --log-failed`.
 - Never install a host Swift toolchain; never use `docker system/image/volume prune`. Keep ≥15 GB disk free.
 
 ## Rules
@@ -20,3 +22,5 @@ macOS menu-bar app that renames, tags and indexes new screenshots using a model 
 - No guessing external API schemas: cite `docs/research/` or the live docs in a comment next to request/response code.
 - Never print or commit secrets (`.env*` is gitignored). Cloudflare token lives in Keychain in the app.
 - Every behaviour in core gets a unit test; tests must not need network.
+- No workarounds for a temporary state of `main` or the environment (missing permission, missing tests, flaky runner): report it instead.
+- Reviewers: check changes against `CODING_STANDARDS.md`.
