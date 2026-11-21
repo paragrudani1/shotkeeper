@@ -17,6 +17,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 ## Environment
 - [environment](environment.md): Linux build box, Docker Swift image, disk limits, credentials (2026-11-21).
 - [macos-ci](macos-ci.md): GitHub Actions for the macOS app: Xcode selection, signing, artifact, UI snapshot PNGs, gotchas (2026-11-21).
+- [appkit-gotchas](appkit-gotchas.md): panel, keyboard, Quick Look, pasteboard and drag bugs CI cannot catch; read before AppKit UI work (2026-11-21).
 
 ## Research
 - [../research/model-backends.md](../research/model-backends.md): Clairic REST schema and Inkling 2 Mini facts with sources.
