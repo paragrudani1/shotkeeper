@@ -156,102 +156,189 @@ final class ServerPIDFileTests: XCTestCase {
 }
 
 final class SearchKeyTests: XCTestCase {
-    func testMapping() {
-        XCTAssertEqual(SearchKey.from(keyCode: 126, modifiers: [], characters: nil), .up)
-        XCTAssertEqual(SearchKey.from(keyCode: 125, modifiers: [], characters: nil), .down)
-        XCTAssertEqual(SearchKey.from(keyCode: 36, modifiers: [], characters: "\r"), .open)
-        XCTAssertEqual(SearchKey.from(keyCode: 76, modifiers: [], characters: nil), .open)
-        XCTAssertEqual(SearchKey.from(keyCode: 53, modifiers: [], characters: nil), .close)
-        XCTAssertEqual(SearchKey.from(keyCode: 8, modifiers: [.command], characters: "c"), .copyImage)
-        XCTAssertEqual(SearchKey.from(keyCode: 15, modifiers: [.command], characters: "r"), .reveal)
+    func testPlainKeys() {
+        XCTAssertEqual(SearchKey.plain(keyCode: 126, modifiers: []), .up)
+        XCTAssertEqual(SearchKey.plain(keyCode: 125, modifiers: []), .down)
+        XCTAssertEqual(SearchKey.plain(keyCode: 36, modifiers: []), .open)
+        XCTAssertEqual(SearchKey.plain(keyCode: 76, modifiers: []), .open)
+        XCTAssertEqual(SearchKey.plain(keyCode: 53, modifiers: []), .close)
+        XCTAssertEqual(SearchKey.plain(keyCode: 49, modifiers: []), .space)
         // Arrow keys carry .function/.numericPad flags on real events; those must not block the match.
-        XCTAssertEqual(SearchKey.from(keyCode: 126, modifiers: [.function, .numericPad], characters: nil), .up)
-        XCTAssertNil(SearchKey.from(keyCode: 8, modifiers: [], characters: "c"), "plain c is typing")
-        XCTAssertNil(SearchKey.from(keyCode: 8, modifiers: [.command, .shift], characters: "c"))
-        XCTAssertNil(SearchKey.from(keyCode: 126, modifiers: [.shift], characters: nil), "⇧↑ extends the text selection")
+        XCTAssertEqual(SearchKey.plain(keyCode: 126, modifiers: [.function, .numericPad]), .up)
+        XCTAssertNil(SearchKey.plain(keyCode: 8, modifiers: []), "plain c is typing")
+        XCTAssertNil(SearchKey.plain(keyCode: 126, modifiers: [.shift]), "⇧↑ extends the text selection")
+        XCTAssertNil(SearchKey.plain(keyCode: 49, modifiers: [.shift]), "⇧Space is typing")
+        XCTAssertNil(SearchKey.plain(keyCode: 8, modifiers: [.command]), "⌘ keys go through performKeyEquivalent")
+    }
+
+    func testCommandKeys() {
+        XCTAssertEqual(SearchKey.command(keyCode: 8, modifiers: [.command], characters: "c"), .copyImage)
+        XCTAssertEqual(SearchKey.command(keyCode: 15, modifiers: [.command], characters: "r"), .reveal)
+        XCTAssertEqual(SearchKey.command(keyCode: 16, modifiers: [.command], characters: "y"), .quickLook)
+        XCTAssertEqual(SearchKey.command(keyCode: 18, modifiers: [.command], characters: "1"), .chip(.all))
+        XCTAssertEqual(SearchKey.command(keyCode: 26, modifiers: [.command], characters: "7"), .chip(.design))
+        XCTAssertNil(SearchKey.command(keyCode: 28, modifiers: [.command], characters: "8"))
+        XCTAssertNil(SearchKey.command(keyCode: 8, modifiers: [.command, .shift], characters: "c"))
+        XCTAssertNil(SearchKey.command(keyCode: 8, modifiers: [], characters: "c"))
+    }
+
+    func testCommandKeysWorkOnOtherLayouts() {
+        // Russian: the C key types "с" (Cyrillic); the physical key decides.
+        XCTAssertEqual(SearchKey.command(keyCode: 8, modifiers: [.command], characters: "с"), .copyImage)
+        // AZERTY: the 1 key types "&" without Shift.
+        XCTAssertEqual(SearchKey.command(keyCode: 18, modifiers: [.command], characters: "&"), .chip(.all))
+        // Dvorak: the key labelled C is a different physical key; the typed letter decides.
+        XCTAssertEqual(SearchKey.command(keyCode: 34, modifiers: [.command], characters: "c"), .copyImage)
+        XCTAssertNil(SearchKey.command(keyCode: 8, modifiers: [.command], characters: "j"), "Dvorak J on the QWERTY C key")
+    }
+}
+
+final class SearchCopyTests: XCTestCase {
+    @MainActor
+    func testCopyWritesOneItemWithThePNGBytesAndTheFileURL() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("copy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8,
+                                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        let file = directory.appendingPathComponent("Shot.png")
+        try png.write(to: file)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("shotkeeper-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+
+        XCTAssertTrue(SearchActions.copyImage(file, to: pasteboard))
+        XCTAssertEqual(pasteboard.pasteboardItems?.count, 1)
+        let item = try XCTUnwrap(pasteboard.pasteboardItems?.first)
+        XCTAssertEqual(item.data(forType: .png), png, "the file's own bytes")
+        XCTAssertEqual(item.string(forType: .fileURL), file.absoluteString)
+        XCTAssertFalse(SearchActions.copyImage(directory.appendingPathComponent("gone.png"), to: pasteboard))
     }
 }
 
 @MainActor
 final class SearchViewModelTests: XCTestCase {
-    nonisolated private static func row(_ name: String) -> IndexedScreenshot {
-        IndexedScreenshot(path: "/tmp/\(name).png", originalFilename: name, contentHash: name, title: name, status: .done)
+    nonisolated private static func row(_ name: String, type: ContentType = .other) -> IndexedScreenshot {
+        IndexedScreenshot(path: "/tmp/\(name).png", originalFilename: name, contentHash: name, processedAt: Date(),
+                          title: name, contentType: type, status: .done)
+    }
+
+    nonisolated private static func page(_ names: [String], total: Int? = nil) -> ScreenshotSearchResult {
+        ScreenshotSearchResult(rows: names.map { row($0) }, matchCount: names.count, totalCount: total ?? names.count)
     }
 
     func testEmptyQueryShowsRecentAndSelectsTheFirstRow() async {
-        let queries = LockedValue<[String]>([])
-        let rows = [Self.row("a"), Self.row("b")]
-        let model = SearchViewModel(debounce: .milliseconds(10)) { query in
+        let queries = LockedValue<[ScreenshotQuery]>([])
+        let model = SearchViewModel(debounce: .milliseconds(10)) { query, _ in
             queries.withValue { $0.append(query) }
-            return rows
+            return Self.page(["a", "b"], total: 214)
         }
         model.refresh()
         await model.waitForPendingSearch()
-        XCTAssertEqual(queries.value, [""])
-        XCTAssertEqual(model.results.map(\.path), rows.map(\.path))
-        XCTAssertEqual(model.selectedIndex, 0)
+        XCTAssertEqual(queries.value, [ScreenshotQuery()])
+        XCTAssertEqual(model.state.items.map(\.path), ["/tmp/a.png", "/tmp/b.png"])
+        XCTAssertEqual(model.state.selectedIndex, 0)
+        XCTAssertEqual(model.state.footerText, "Recent · 214 screenshots")
     }
 
     func testTypingIsDebouncedToTheLastQuery() async {
         let queries = LockedValue<[String]>([])
-        let model = SearchViewModel(debounce: .milliseconds(200)) { query in
-            queries.withValue { $0.append(query) }
-            return []
+        let model = SearchViewModel(debounce: .milliseconds(200)) { query, _ in
+            queries.withValue { $0.append(query.text) }
+            return Self.page([])
         }
-        model.setQuery("r")
-        model.setQuery("re")
-        model.setQuery("rec")
+        model.setText("r")
+        model.setText("re")
+        model.setText("rec")
         await model.waitForPendingSearch()
         XCTAssertEqual(queries.value, ["rec"])
         XCTAssertEqual(model.searchesRun, 1)
     }
 
-    func testSelectionMovesAndClamps() async {
-        let model = SearchViewModel(debounce: .zero) { _ in [Self.row("a"), Self.row("b"), Self.row("c")] }
-        model.refresh()
+    func testChipTagEscapeAndBatchRunTheRightQueries() async {
+        let queries = LockedValue<[ScreenshotQuery]>([])
+        let limits = LockedValue<[Int]>([])
+        let model = SearchViewModel(debounce: .zero) { query, limit in
+            queries.withValue { $0.append(query) }
+            limits.withValue { $0.append(limit) }
+            return Self.page(["a"], total: 5)
+        }
+        model.setText("coffee")
         await model.waitForPendingSearch()
-        model.moveSelection(by: 1)
-        model.moveSelection(by: 1)
-        model.moveSelection(by: 1)
-        XCTAssertEqual(model.selectedIndex, 2)
-        XCTAssertEqual(model.selectedURL, URL(fileURLWithPath: "/tmp/c.png"))
-        model.moveSelection(by: -5)
-        XCTAssertEqual(model.selectedIndex, 0)
+        model.selectChip(.receipt)
+        await model.waitForPendingSearch()
+        XCTAssertEqual(queries.value.last, ScreenshotQuery(text: "coffee", contentType: .receipt))
+        model.clickTag("#beans")
+        await model.waitForPendingSearch()
+        XCTAssertEqual(queries.value.last, ScreenshotQuery(text: "beans"))
+        XCTAssertFalse(model.escape(), "the first esc clears the search")
+        await model.waitForPendingSearch()
+        XCTAssertEqual(queries.value.last, ScreenshotQuery())
+        XCTAssertTrue(model.escape(), "the second esc closes")
+        model.showBatch(["/tmp/a.png"])
+        await model.waitForPendingSearch()
+        XCTAssertEqual(queries.value.last, ScreenshotQuery(paths: ["/tmp/a.png"]))
+        XCTAssertEqual(model.state.footerText, "This batch · 1 screenshot")
+        XCTAssertEqual(limits.value.last, SearchWindowState.pageSize)
+        model.windowHidden()
+        XCTAssertNil(model.state.batchPaths, "the next open shows recent screenshots")
     }
 
-    func testSelectionFollowsTheSameRowAcrossSearches() async {
-        let results = LockedValue([Self.row("a"), Self.row("b")])
-        let model = SearchViewModel(debounce: .zero) { _ in results.value }
+    func testIndexUnavailableShowsTheErrorStateNotTheEmptyState() async {
+        let model = SearchViewModel(debounce: .zero) { _, _ in
+            throw IndexUnavailableError(problem: UserFacingProblem(message: "the index file is damaged"))
+        }
         model.refresh()
         await model.waitForPendingSearch()
-        model.moveSelection(by: 1)
-        results.value = [Self.row("x"), Self.row("b")]
-        model.setQuery("b")
-        await model.waitForPendingSearch()
-        XCTAssertEqual(model.selected?.path, "/tmp/b.png")
-    }
-
-    func testErrorsAreShownNotThrown() async {
-        struct Boom: Error {}
-        let model = SearchViewModel(debounce: .zero) { _ in throw Boom() }
-        model.setQuery("x")
-        await model.waitForPendingSearch()
-        XCTAssertTrue(model.results.isEmpty)
-        XCTAssertNotNil(model.errorMessage)
+        guard case .error(let message) = model.state.phase else { return XCTFail("got \(model.state.phase)") }
+        XCTAssertEqual(message.title, "The screenshot index could not be opened")
+        XCTAssertTrue(message.message.hasPrefix("The index file is damaged."))
         XCTAssertNil(model.selectedURL)
+    }
+
+    func testPillsHideAgain() async throws {
+        let model = SearchViewModel(debounce: .zero) { _, _ in Self.page([]) }
+        model.showCopied()
+        XCTAssertEqual(model.pill, .copied)
+        try await Task.sleep(for: .seconds(SearchWindowState.copiedPillDuration + 0.4))
+        XCTAssertNil(model.pill)
+        model.showProblem(SearchWindowState.missingFileMessage)
+        XCTAssertEqual(model.pill, .problem(SearchWindowState.missingFileMessage))
+        model.windowHidden()
+        XCTAssertNil(model.pill)
+    }
+
+    func testHidingABatchViewSearchesAgain() async {
+        let queries = LockedValue<[ScreenshotQuery]>([])
+        let model = SearchViewModel(debounce: .zero) { query, _ in
+            queries.withValue { $0.append(query) }
+            return query.paths == nil ? Self.page(["recent"]) : Self.page(["batch"])
+        }
+        model.showBatch(["/tmp/batch.png"])
+        await model.waitForPendingSearch()
+        model.windowHidden()
+        await model.waitForPendingSearch()
+        XCTAssertEqual(queries.value.last, ScreenshotQuery())
+        XCTAssertEqual(model.state.items.map(\.title), ["recent"], "the batch rows are gone")
     }
 
     func testSearchesTheRealIndex() async throws {
         let index = try ScreenshotIndex.inMemory()
-        var receipt = Self.row("receipt")
+        var receipt = Self.row("receipt", type: .receipt)
         receipt.title = "Coffee receipt"
         receipt.keyText = "Total 8.25"
         try index.save(receipt)
-        try index.save(Self.row("diagram"))
-        let model = SearchViewModel(debounce: .zero) { try index.search($0, limit: 50) }
-        model.setQuery("coffee")
+        try index.save(Self.row("diagram", type: .design))
+        let model = SearchViewModel(debounce: .zero) { try index.search($0, limit: $1) }
+        model.setText("coffee")
         await model.waitForPendingSearch()
-        XCTAssertEqual(model.results.map(\.path), ["/tmp/receipt.png"])
+        XCTAssertEqual(model.state.items.map(\.path), ["/tmp/receipt.png"])
+        XCTAssertEqual(model.state.footerText, "1 of 2 screenshots")
+        model.setText("")
+        model.selectChip(.design)
+        await model.waitForPendingSearch()
+        XCTAssertEqual(model.state.items.map(\.path), ["/tmp/diagram.png"])
     }
 }
 

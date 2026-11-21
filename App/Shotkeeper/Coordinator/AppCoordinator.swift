@@ -18,6 +18,8 @@ final class AppCoordinator {
     private(set) var runtimePhase: RuntimePhase = .notInstalled
     /// Set when the index could not be opened; the app keeps running but does not process.
     private(set) var startupError: String?
+    /// Why the index could not be opened, as short readable text (the search window's error state).
+    @ObservationIgnored private(set) var indexProblem: UserFacingProblem?
     /// Last user-facing result (undo, process existing, errors from settings changes). Expires after 30 s or
     /// when the next action succeeds (core `ExpiringMessage`), so the menu never shows stale text.
     var lastMessage: String? {
@@ -139,6 +141,7 @@ final class AppCoordinator {
                 index: index, undoLog: undoLog,
                 settings: { store.current })
         } catch {
+            indexProblem = UserFacingError.problem(for: error)
             startupError = "Could not open the index: \(StatusText.describe(error))"
         }
     }

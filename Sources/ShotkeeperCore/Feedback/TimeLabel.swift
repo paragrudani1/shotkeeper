@@ -41,6 +41,27 @@ public struct TimeLabel: Sendable {
         calendar.isDate(date, inSameDayAs: now) ? format(date, template: "jmm") : format(date, template: "MMMdjmm")
     }
 
+    /// Relative label for search rows: "Just now" (under a minute, or a date in the future), "12 min ago",
+    /// "3 h ago" (earlier today), then like `short` ("Yesterday", "Mon", "Nov 14", "Nov 14, 2025").
+    public func relative(_ date: Date, now: Date) -> String {
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return "Just now" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) min ago" }
+        if calendar.isDate(date, inSameDayAs: now) { return "\(Int(seconds / 3600)) h ago" }
+        return short(date, now: now)
+    }
+
+    /// Full date and time for the preview's "Taken" row: "Nov 21, 2026 at 4:24 PM" in en_US (locale-dependent).
+    public func dateTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
     private enum Day { case today, yesterday, thisWeek, thisYear, older }
 
     private func day(of date: Date, now: Date) -> Day {

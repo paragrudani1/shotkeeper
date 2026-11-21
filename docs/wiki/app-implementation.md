@@ -64,6 +64,8 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
   2026-11-21 (review): not while an input method has marked text (`SearchPanel.isComposingText`): ↑/↓/Return/Esc then
   pick, commit or cancel the Japanese/Chinese/Korean composition instead of moving, opening or closing. ⌘C writes the image and its
   file URL to the pasteboard. Thumbnails come from `QLThumbnailGenerator`, cached in an `NSCache`.
+  2026-11-21 (UI polish PR 2, `590d438`): rebuilt as the spec's search window (chips, preview, Quick Look, drag,
+  batch view); the rules moved to core `SearchWindowState`. Details: [ui-polish](ui-polish.md).
 
 ## Not verifiable without a Mac (2026-11-21)
 CI builds and runs headless unit tests only. Unverified: menu-bar rendering, window focus/activation, the search panel's

@@ -75,6 +75,38 @@ public struct IndexedScreenshot: Equatable, Sendable {
     }
 }
 
+/// What the search window asks the index for (see `ScreenshotIndex.search(_:limit:)`).
+public struct ScreenshotQuery: Equatable, Sendable {
+    /// Free text; empty = no text filter (recent first).
+    public var text: String
+    /// The selected type chip; nil = All.
+    public var contentType: ContentType?
+    /// Only these paths (a batch from the toast); nil = the whole index.
+    public var paths: [String]?
+
+    public init(text: String = "", contentType: ContentType? = nil, paths: [String]? = nil) {
+        self.text = text
+        self.contentType = contentType
+        self.paths = paths
+    }
+}
+
+/// One page of search results plus the counts the footer shows ("6 of 214 screenshots").
+public struct ScreenshotSearchResult: Equatable, Sendable {
+    /// At most `limit` rows, best match (or newest) first.
+    public var rows: [IndexedScreenshot]
+    /// All rows matching the query (can exceed `rows.count`).
+    public var matchCount: Int
+    /// All analyzed (`done`) screenshots in the index.
+    public var totalCount: Int
+
+    public init(rows: [IndexedScreenshot], matchCount: Int, totalCount: Int) {
+        self.rows = rows
+        self.matchCount = matchCount
+        self.totalCount = totalCount
+    }
+}
+
 public struct IndexStats: Equatable, Sendable {
     public var count: Int
     public var done: Int
@@ -183,6 +215,46 @@ public final class ScreenshotIndex: @unchecked Sendable {
                 LIMIT ?
                 """, [.text(match), .int(Int64(limit))]) { rows.append(Self.row($0)) }
             return rows
+        }
+    }
+
+    /// The search window's query: free text (same rules as `search(_:limit:)`), an optional content-type chip and an
+    /// optional set of paths (a batch from the toast's "View in Search"), all combined with AND. Only `done` rows
+    /// (analyzed screenshots) are considered, so `totalCount` matches the menu's "214 screenshots in the index".
+    /// Text → bm25 rank; no text → most recently processed first.
+    public func search(_ query: ScreenshotQuery, limit: Int = 50) throws -> ScreenshotSearchResult {
+        var conditions = ["s.status = 'done'"]
+        var bindings: [SQLiteValue] = []
+        let match = Self.ftsQuery(query.text)
+        if let match {
+            conditions.append("screenshots_fts MATCH ?")
+            bindings.append(.text(match))
+        }
+        if let type = query.contentType {
+            conditions.append("s.content_type = ?")
+            bindings.append(.text(type.rawValue))
+        }
+        if let paths = query.paths {
+            // One JSON-array binding instead of one `?` per path: a batch can hold hundreds of files.
+            // json_each: https://www.sqlite.org/json1.html#jeach (built into SQLite since 3.38).
+            let json = (try? JSONEncoder().encode(paths)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+            conditions.append("s.path IN (SELECT value FROM json_each(?))")
+            bindings.append(.text(json))
+        }
+        let from = match == nil
+            ? "FROM screenshots s"
+            : "FROM screenshots_fts JOIN screenshots s ON s.id = screenshots_fts.rowid"
+        let whereClause = "WHERE " + conditions.joined(separator: " AND ")
+        let order = match == nil
+            ? "ORDER BY COALESCE(s.processed_at, s.captured_at, 0) DESC, s.id DESC"
+            : "ORDER BY bm25(screenshots_fts, \(Self.bm25Weights)), s.id DESC"
+        return try lock.withLock {
+            var result = ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0)
+            try db.query("SELECT \(Self.selectColumns("s")) \(from) \(whereClause) \(order) LIMIT ?",
+                         bindings + [.int(Int64(max(0, limit)))]) { result.rows.append(Self.row($0)) }
+            try db.query("SELECT COUNT(*) \(from) \(whereClause)", bindings) { result.matchCount = Int($0.int64(0)) }
+            try db.query("SELECT COUNT(*) FROM screenshots WHERE status = 'done'") { result.totalCount = Int($0.int64(0)) }
+            return result
         }
     }
 
