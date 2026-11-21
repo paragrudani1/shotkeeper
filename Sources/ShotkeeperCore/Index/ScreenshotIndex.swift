@@ -115,11 +115,20 @@ public final class ScreenshotIndex: @unchecked Sendable {
     }
 
     /// After a rename/move/undo. Returns false when no row had `oldPath`.
+    /// A row already at `newPath` is stale (its file was deleted or moved away, since our file now lives there) and is
+    /// replaced; without that the UNIQUE path would make the update fail after the file was already moved.
     @discardableResult
     public func updatePath(from oldPath: String, to newPath: String) throws -> Bool {
         try lock.withLock {
-            try db.run("UPDATE screenshots SET path = ? WHERE path = ?", [.text(newPath), .text(oldPath)])
-            return db.changes > 0
+            try db.transaction {
+                var exists = false
+                try db.query("SELECT 1 FROM screenshots WHERE path = ? LIMIT 1", [.text(oldPath)]) { _ in exists = true }
+                guard exists else { return false }
+                if oldPath == newPath { return true }
+                try db.run("DELETE FROM screenshots WHERE path = ?", [.text(newPath)])
+                try db.run("UPDATE screenshots SET path = ? WHERE path = ?", [.text(newPath), .text(oldPath)])
+                return db.changes > 0
+            }
         }
     }
 
