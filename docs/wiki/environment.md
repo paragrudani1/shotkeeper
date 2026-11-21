@@ -6,7 +6,8 @@
 - 2026-11-21: disk at 93–95% used. User rule: keep ≥15 GB free at all times; delete large downloads and any images added for experiments.
   The pre-existing `ghcr.io/ggml-org/llama.cpp:server-b11669` image is not ours; leave it.
 - 2026-11-21: `gh` authenticated as paragrudani1 (fine-grained PAT). User authorized a PRIVATE repo `shotkeeper`.
-- 2026-11-21: Cloudflare credentials were absent (env and `.env.local`) at session start.
+- 2026-11-21: Cloudflare credentials were absent (env and `.env.local`) at session start; still absent when the analyzers landed,
+  so no live Clairic call has run. `shotkeeper-cli analyze` is ready for one (`SHOTKEEPER_DOCKER_NETWORK=bridge scripts/test-linux.sh run shotkeeper-cli analyze <png>`).
 - macOS app build/test happens only in GitHub Actions (`macos-latest`).
 - 2026-11-21: the default `gh` PAT could not create repos. The user supplied a second token via a T3 secret file; with it the private
   repo https://github.com/paragrudani1/shotkeeper was created. Access for agents (token never printed):
