@@ -138,7 +138,8 @@ final class AppCoordinator {
 
         if new.backend != old.backend || new.clairicAccountID != old.clairicAccountID
             || new.customEndpointURL != old.customEndpointURL || new.customModelName != old.customModelName
-            || new.localModelVariantID != old.localModelVariantID {
+            || new.localModelVariantID != old.localModelVariantID
+            || new.hasSeenPrivacyNotice != old.hasSeenPrivacyNotice { // accepting consent un-holds cloud backends
             rebuildAnalyzer()
             Task { await localRuntime.refresh(for: localVariant) }
             if new.backend != .localInkling, old.backend == .localInkling { Task { await localRuntime.stop() } }

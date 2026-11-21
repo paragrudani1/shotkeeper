@@ -71,3 +71,6 @@ builds; see the open question in [core-implementation](core-implementation.md)).
 ## Process existing screenshots
 - 2026-11-21 (review): the scan skips dataless files (iCloud `.notDownloaded`, or `SF_DATALESS` in `st_flags`), so an
   iCloud "Desktop & Documents" backlog is not downloaded and uploaded just because the button was pressed.
+- 2026-11-21 (PR #2): accepting the privacy notice now rebuilds the analyzer. Before, with the consent gate in place,
+  a user on the default Clairic backend who accepted the notice stayed held until another analyzer setting changed or
+  the app restarted. Caught by `testAnalyzerIsRebuiltWhenSettingsOrSecretsChange`.
