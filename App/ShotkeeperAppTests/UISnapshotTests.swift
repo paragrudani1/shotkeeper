@@ -267,7 +267,7 @@ enum Fixtures {
         let isError: Bool = { if case .error = status { return true } else { return false } }()
         let state = MenuViewState(
             status: MenuText.status(queue: status, watchedFolderName: "Desktop", indexedCount: count, failure: failure,
-                                    now: now, time: time),
+                                    notWatchingReason: setup ? "Setup is not finished" : nil, now: now, time: time),
             message: message,
             showsFixSettings: isError,
             showsFinishSetup: setup,

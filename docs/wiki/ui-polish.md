@@ -195,3 +195,101 @@ values clipped by the button row; spacing was tightened so a 2-line description 
 - Multi-screen placement.
 - VoiceOver reading rows, chips (selected state) and buttons.
 - The material look (snapshots draw an opaque background).
+
+## PR 3: first-run setup (branch `t3/ui-pr3-setup`)
+
+Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). App, gate wiring and snapshots: `65add2b`.
+
+### Core rules (Linux-tested, `SetupTests.swift`)
+- 2026-11-21 (`6afa5aa`): `SetupFlow` is the step machine. Back on steps 2–4 only. Primary button per step:
+  "Get Started"; "I Agree" (disabled until the box is ticked); step 3 "Continue" once the selected card's input is
+  complete, else "Skip" (the spec names no step-3 button; "Skip" is the user's "Skip on step 3"); step 4 "Skip"
+  while waiting or after a problem, "Continue" after a result or when no model is connected; "Finish".
+  Step 3 is complete for Clairic with an account ID and a token (typed now or already in the Keychain), for local
+  once the install was started (it finishes in the background).
+- 2026-11-21 (`6afa5aa`): consent gate = core `BackendGate`. Clairic and custom endpoints need account/token or
+  URL/model AND `hasSeenPrivacyNotice`; local needs nothing (nothing leaves the Mac). A custom endpoint on 127.0.0.1
+  still needs consent (the app cannot tell where a URL ends up). `AnalyzerFactory` now asks the gate instead of
+  repeating the checks. The flag keeps its name (no migration, so existing consents stay valid); it now means
+  "accepted", and only step 2's "I Agree" sets it. Before, the old single-page setup set it on "Use …" for any
+  backend, including local.
+- 2026-11-21 (`6afa5aa`): the Clairic card's cost is computed, not copied: `ClairicPricing` = the measured
+  8,242 tokens for a 1280×800 screenshot ([clairic-field-schema](clairic-field-schema.md)) × $0.24/M (standard
+  price after the promo ends 2026-12-01) = $1.98 → **"About $2 for 1,000 screenshots"**. Deviation: the spec's
+  mockup says "$1"; the task said to compute it from the measured cost. It follows `maxImageLongSide`.
+- 2026-11-21 (`6afa5aa`): `SetupCards` words the two cards from `BackendRecommender` (recommendation by RAM as
+  before) and `ModelCatalog` (disk "about N GB" = download size rounded). 16–23 GB: Clairic [Recommended]
+  "Best for this Mac (16 GB)…", local [Experimental] "Private, but slow and lower quality on 16 GB…". ≥ 24 GB: local
+  [Recommended] (+ [Experimental] while the build is not verified with mlx-lm), Clairic "Fast, nothing to download…".
+  Below 16 GB the local card is shown disabled with "Needs a Mac with at least 16 GB of memory. This Mac has 8 GB."
+  A custom endpoint has no card; it stays in Settings → Model.
+- 2026-11-21 (`6afa5aa`): `TryIt` maps the coordinator's pipeline events (the same `ScreenshotEvent`s the toast
+  gets) to step 4: a processed file → result card (tags from the index row; a kept name shows "kept its name"
+  instead of a struck-through old name); a failed file, an excluded or a paused one → a readable problem while it
+  keeps waiting; missing/already indexed/restored files change nothing. A shown result stays.
+- 2026-11-21 (`6afa5aa`): `ConnectionTestText` maps Test Connection errors to sentences ("Cloudflare did not accept
+  the token. Check the account ID, and that the token has Workers AI Read and Edit permissions.", "Could not reach
+  Cloudflare…", HTTP 404 → "could not find this account"). Server messages never reach the text. Settings' test
+  buttons use it too.
+- 2026-11-21 (`6afa5aa`): `IconGeometry` holds the icon shape as unit-square numbers: squircle radius 22.5%, corner
+  stroke 5.6%, sparkle 27% (spec), corner inset 22% and arm 16% (not in the spec; chosen to match the mockup's
+  proportions). The menu bar glyph's PR 1 numbers moved into `IconGeometry.menuBarGlyph` unchanged. The icon fill is
+  #5856D6 in both appearances (an app icon does not follow dark mode). PR 4 should export the SVG and the asset
+  catalog from this type.
+
+### App
+- 2026-11-21 (`65add2b`): **watching waits for a usable backend.** The coordinator starts the folder watcher (and
+  re-queues `pending` rows) only when `BackendGate` says ready, re-checked after every settings or secret change.
+  Before, the watcher ran from launch and screenshots taken before setup waited in a held queue, to be uploaded
+  once credentials appeared. Once started it keeps running for the session, so a token removed later still shows
+  "Needs attention" and the error toast. "Process Existing Screenshots…" also refuses before setup ("Finish setup
+  first: …"). While not watching, the menu shows an orange "Not watching yet" + the reason, and "Finish Setup…"
+  (also after consent when step 3 was skipped).
+- 2026-11-21 (`65add2b`): setup is `SetupView` + `SetupModel` over `SetupServices` (closures; `live` wires the
+  coordinator, snapshots pass fixed values). A fixed 720×520 window titled "Set Up Shotkeeper", opened at first
+  launch while `hasSeenPrivacyNotice` is false (as before), from the menu's "Finish Setup…" and from Settings →
+  General "Run setup again…" (moved there from the Model tab). Every open starts at step 1; a re-run pre-ticks
+  step 2's box, preselects the configured card and shows the current login-item setting.
+- 2026-11-21 (`65add2b`): the token is held only in the window's `tokenDraft` and goes to the Keychain on step 3's
+  Continue (`AppCoordinator.saveClairicSetup`); the draft is then cleared. Test Connection sends the typed account
+  ID and token with the generated test image only and stores nothing.
+- 2026-11-21 (`65add2b`): step 4 listens through `AppCoordinator.addEventObserver` (called from `handle(_:)`, next to
+  the toast), registered while the window is open. The rename toast still shows too. When step 3 was skipped (no
+  usable backend), step 4 shows "No model connected" with "Go Back to connect one, or do it later in Settings →
+  Model." and the primary button reads "Continue". With the local model downloading, the waiting zone shows the
+  download progress. The dashed zone is not a drop target: the spec only describes its look, and the result must
+  come from a real new screenshot.
+- 2026-11-21 (`65add2b`): keys. Return = primary (when enabled), Esc = Back on steps 2–4 (deviation: steps 1 and 5
+  have no Esc action; the window's close button closes). The cards are `Button`s with `.isSelected`; ←/→/↑/↓ switch
+  the card that has focus. As in every Mac app, Tab reaches buttons, checkboxes and the cards only with System
+  Settings → Keyboard → "Keyboard navigation" on; text fields are always in the Tab loop.
+- 2026-11-21 (`65add2b`): "Change Shortcut…" opens Settings → General (where PR 4's recorder goes), which now shows a
+  read-only "Search shortcut ⌥⌘S" row. `SettingsNavigation` switches the tab even when Settings is already open.
+- 2026-11-21 (`65add2b`): "Open Shotkeeper when I log in" is applied on Finish through `updateSettings`, which calls
+  `LaunchAtLogin` (SMAppService). It is on for a first run. A failure (app not in /Applications) shows as the menu
+  message, not in the closed window.
+- 2026-11-21 (`65add2b`): `AppIconView` (72 pt in step 1) and `MenuBarGlyphView` (step 5) are SwiftUI shapes over
+  `IconGeometry`; `MenuBarGlyph` (the status item's template image) draws the same geometry with AppKit.
+- 2026-11-21 (`65add2b`): text colours added for 4.5:1: error text light #C4281C / dark #FF7B72 (systemRed is 3.6:1
+  on white), warning text (Experimental badge, local note) light #8A4600 / dark #FFB340.
+
+### What CI cannot check (Parag, on a real Mac)
+- First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
+  app (no Dock icon) while it is open.
+- Return = primary, Esc = Back; Return in the token field continues. With "Keyboard navigation" on: Tab reaches the
+  cards, checkboxes and buttons, Space selects a card, ←/→ switch cards; VoiceOver reads "selected" on the chosen card,
+  "Setup progress, Step 3 of 5" on the dots.
+- Test Connection with a real account ID and token (success line), with a wrong token (red text).
+- Continue: the token is in the Keychain (Keychain Access, service `dev.shotkeeper.Shotkeeper`), then a ⌘⇧4
+  screenshot shows the result card in step 4 (and the toast). Before setup is done, a screenshot is not renamed
+  and the menu says "Not watching yet".
+- Local on a 16 GB Mac: Install and Download, progress, Cancel; Continue while it downloads; step 4's download line.
+- "Change Shortcut…" brings Settings → General to the front over setup; "Run setup again…" there opens step 1.
+- "Open Shotkeeper when I log in": with the app in /Applications, it appears in System Settings → General → Login Items.
+- The 72 pt icon and the menu bar glyph in step 5 look sharp on a Retina screen.
+
+### Snapshot review
+- 2026-11-21: run 44945029445 (21 setup/icon images × light/dark) matched the spec except the 8 GB state: the
+  unavailable local card was a disabled button, and its reason text was dimmed twice to unreadable. It is now a
+  plain view with secondary text; VoiceOver reads "…, not available on this Mac. Needs a Mac with at least 16 GB…".
+  The `menu-setup-unfinished` fixture now shows the "Not watching yet" header the real menu shows.

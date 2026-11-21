@@ -255,42 +255,51 @@ private struct ModelCardButton: View {
     let select: () -> Void
 
     var body: some View {
-        Button(action: select) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isSelected ? Brand.indigo : Color.secondary)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 6) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) { title; badges }
-                        VStack(alignment: .leading, spacing: 4) { title; HStack(spacing: 6) { badges } }
-                    }
-                    Text(card.subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? Brand.indigo.opacity(0.10) : Color.primary.opacity(0.03)))
-            .overlay(RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(isSelected ? Brand.indigo : Color.primary.opacity(0.15), lineWidth: isSelected ? 2 : 1))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-            .opacity(card.isAvailable ? 1 : 0.55)
+        if card.isAvailable {
+            Button(action: select) { content }
+                .buttonStyle(.plain)
+                .accessibilityLabel(card.accessibilityLabel)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+        } else {
+            // Not a disabled button: a disabled label is dimmed below 4.5:1, and the reason must stay readable.
+            content
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(card.title), not available on this Mac. \(card.subtitle)")
         }
-        .buttonStyle(.plain)
-        .disabled(!card.isAvailable)
-        .accessibilityLabel(card.accessibilityLabel)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var content: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                .font(.system(size: 14))
+                .foregroundStyle(isSelected ? Brand.indigo : Color.secondary)
+                .opacity(card.isAvailable ? 1 : 0.4)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 6) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { title; badges }
+                    VStack(alignment: .leading, spacing: 4) { title; HStack(spacing: 6) { badges } }
+                }
+                Text(card.subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 10)
+            .fill(isSelected ? Brand.indigo.opacity(0.10) : Color.primary.opacity(0.03)))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(isSelected ? Brand.indigo : Color.primary.opacity(0.15), lineWidth: isSelected ? 2 : 1))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var title: some View {
         Text(card.title).font(.system(size: 14, weight: .semibold)).fixedSize()
+            .foregroundStyle(card.isAvailable ? Color.primary : Color.secondary)
     }
 
     @ViewBuilder private var badges: some View {

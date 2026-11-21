@@ -31,6 +31,9 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
   where screenshots are sent") until `hasSeenPrivacyNotice`, which only setup's "Use …" button sets. Before, a token and
   account ID entered in Settings → Model after "Later" made queued screenshots upload without the notice being accepted.
   "Test connection" is exempt: it sends only the generated image. Keychain items: service `dev.shotkeeper.Shotkeeper`, account `CredentialKey.rawValue`.
+  2026-11-21 (UI polish PR 3, `6afa5aa`/`65add2b`): the checks moved to core `BackendGate`; only setup step 2's
+  "I Agree" sets the flag now (the "Use …" button is gone). The folder watcher also waits for a usable backend.
+  Details: [ui-polish](ui-polish.md).
 - 2026-11-21: setup labels the reduced-quality local option "Use local anyway (2-bit, lower quality, high memory use)"
   (app-side wording over the recommender's title; core unchanged). The Clairic token link is the Workers AI REST API
   guide, which says a custom token needs Workers AI Read + Edit (`docs/research/clairic/workers-ai-rest-api-2026-11-21.md`).

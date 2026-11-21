@@ -24,3 +24,7 @@ fixed in `paragrudani1/shotkeeper@544e24a`.
   interval. `.textSelection(.enabled)` on a label lets a click take focus from the field.
 - 2026-11-21: "every control works with the keyboard" in a panel that keeps focus in one field means every
   other control needs a key equivalent (e.g. ⌘1–7 for chips), or a recorded deviation.
+- 2026-11-21 (PR 3 setup): with macOS's default "Keyboard navigation" off, Tab moves only between text fields
+  and lists. SwiftUI `Button`s (also with a custom style), checkboxes and selectable cards are not in the Tab
+  loop then, so `onKeyPress` on them never fires. Give the screen a `.defaultAction` (Return) and a
+  `.cancelAction` (Esc) so it works without Tab, and check both settings of "Keyboard navigation" on a Mac.

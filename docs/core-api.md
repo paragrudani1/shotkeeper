@@ -91,6 +91,14 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `SearchResultItem`: title (file stem), `subtitle(now:time:)` ("x.com · 5 min ago"), `accessibilityLabel(now:time:)`,
     `hashtags`, `metadata(time:)` (Source / Type / Taken / Folder). `IndexUnavailableError` → the error state.
   - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`.
+- **Setup/** (first-run setup; the app renders it)
+  - `BackendGate.readiness(settings:hasClairicToken:) -> BackendReadiness` (`.ready`, `.needsConsent`,
+    `.notConfigured(reason)`): the consent gate for the analyzer factory, and `mayWatch` for the folder watcher.
+  - `SetupFlow` (5 `SetupStep`s, `showsBack`, `primary` title/enabled/`SetupPrimaryAction`, `advance()`, `back()`,
+    `choose(_:)`), `SetupCards.make(physicalMemoryBytes:)` (the two step-3 cards), `ClairicPricing.perThousandText()`,
+    `TryIt.apply(_:entry:to:)` (step 4 from a `ScreenshotEvent`), `ConnectionTestText.failure(_:backend:)`.
+- **Brand/**
+  - `IconGeometry.appIcon` / `.menuBarGlyph`: unit-square corners and sparkle of the app icon and the menu bar glyph.
 - **Settings/**
   - `AppSettings`: all settings with defaults; `encoded()` / `AppSettings.decode(_:)` (missing/bad keys → defaults).
     `showRenameToast` (default true) and `playRenameSound` (default false) drive the toast and the sound.
