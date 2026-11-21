@@ -20,3 +20,6 @@
 - 2026-11-21 (app phase 2, PR #1): the platform types now declare conformance (`ImageIODownscaler: ImagePreparer`,
   `XattrMetadataWriter: FileMetadataWriter` using core's `FinderMetadata` payloads, `KeychainCredentialStore:
   CredentialStore` keyed by `CredentialKey`). App wiring: [app-implementation](app-implementation.md).
+- 2026-11-21: first complete version on `main` at `c53afa2` (PRs #1 app, #2 app review fixes). CI run 44908642660 green:
+  `linux-core` (170 core tests) and `macos-app` (package tests + app tests, artifact `Shotkeeper-unsigned`).
+  Not yet verified: a live Clairic call (no credentials), any run on a real Mac, the local MLX runtime.
