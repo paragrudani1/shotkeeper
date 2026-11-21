@@ -82,3 +82,80 @@ Focus staying in the front app while a toast shows and after editing a name; pla
 pausing the countdown; the edit field selecting the whole name, Return/Esc and IME input; the first click on toast
 buttons; the menu panel's hover highlight, keyboard navigation and closing; the glyph pulse; the sound; VoiceOver
 reading the recent rows and icon buttons.
+
+## PR 2: search window (branch `t3/ui-pr2-search`)
+
+Core: `f713f00`. App, panel, Quick Look and snapshots: `590d438`; fixture compile fix `c45f342`; preview layout fix
+after the snapshot review `c73d98e`. The first snapshots (run 44938009639) showed the preview's Source/Type/Taken/Folder
+values clipped by the button row; spacing was tightened so a 2-line description plus the grid fits in 540 pt
+(checked in run 44938734784, all 7 search states × light/dark).
+
+### Core rules (`Sources/ShotkeeperCore/Search/`, `Index/ScreenshotIndex.swift`, Linux-tested)
+- 2026-11-21 (`f713f00`): `ScreenshotIndex.search(ScreenshotQuery)` combines the FTS text, the chip's `content_type`
+  and an optional list of batch paths with AND (paths go in as one JSON array via `json_each`, so a batch of hundreds
+  of files is one binding). It returns the page plus `matchCount` and `totalCount` for the footer.
+- 2026-11-21 (`f713f00`): search shows `done` rows only. `totalCount` is therefore the menu's "N screenshots in the
+  index". Pending, failed and minimal restored-by-undo rows have no analysis to show. Before, the empty query listed
+  them through `recent()`. `ContentType.other` has no chip and shows under All.
+- 2026-11-21 (`f713f00`): the row and preview title is the file's current name (stem), like the menu's recent rows,
+  not the model's title. After an Undo or with rename off, the user sees the name Finder shows. The model's title
+  still matches in the search.
+- 2026-11-21 (`f713f00`): `SearchWindowState` holds the window's rules:
+  - Esc clears the text and the chip first and closes only when both are empty. The spec says "clears the query
+    first". The chip counts as part of the query, matching "Clear search", which clears both.
+  - Ignores stale answers.
+  - A new query selects the best match; the same query run again (reopen) keeps the selected file.
+- 2026-11-21 (`f713f00`): row time is relative ("Just now", "12 min ago", "3 h ago", then "Yesterday"/"Mon"/"Nov 14").
+  The source falls back to the type name ("Receipt") when the model reported none. The VoiceOver name is the spec's
+  "Tweet semiconductor flashcards, x.com, today 4:24 PM" (`TimeLabel.spoken`).
+- 2026-11-21 (`f713f00`): the batch toast's "View in Search" shows that batch: "This batch · 37 screenshots", newest
+  first, all of its files (up to 1000). Any edit of the text or chip leaves the batch and searches the whole index.
+  Esc in the batch view closes. Hiding the window ends it. Files moved or undone since are no longer in the batch
+  (their paths changed).
+- 2026-11-21 (`f713f00`): Space vs typing. The field keeps focus (spec), so Space opens Quick Look only when the field
+  is empty or the user just moved the selection (↑/↓ or a click). Otherwise it types a space; typing switches back.
+  ⌘Y (the Finder shortcut) always toggles Quick Look.
+- 2026-11-21 (`f713f00`): index errors are a real state, never the empty state. `UserFacingError` maps SQLite result
+  codes ("the index file is damaged", "the disk is full", "the index is busy…"), never SQLite's own message (it can
+  hold SQL or a path). The menu's "Could not open the index: …" uses the same text.
+
+### App
+- 2026-11-21 (`590d438`): `SearchPanel` is now borderless (no traffic lights) + non-activating, 880×540, radius 16,
+  `.popover` material through `MaterialContainerView` (extracted from the toast's container). Not resizable, not
+  movable by its background (a drag on a result drags the file).
+- 2026-11-21 (`590d438`): placement. Horizontally centered on the screen under the pointer, with the panel's center
+  one third down from the top of the visible frame, moved only as far as needed to stay on screen
+  (`SearchPlacement`). "Upper third" cannot hold a 540 pt panel on most screens, so the center sits on that line.
+- 2026-11-21 (`590d438`): the list is a `ScrollView` + `LazyVStack` with our own selection, not `List(selection:)`.
+  A List draws the system accent selection, and clicking it moves the keyboard focus out of the field; the spec wants
+  the indigo tint (14% / 34%) and ↑/↓ with the focus in the field. `scrollTo` without an anchor keeps the selection
+  visible. Rows expose `.isSelected`, a select default action and an "Open" action to VoiceOver.
+- 2026-11-21 (`590d438`): Quick Look is `QLPreviewPanel`, ordered front without taking the keyboard, one level above
+  the floating panel. The search panel is its controller (informal protocol overrides on `SearchPanel`, `nonisolated`
+  + `MainActor.assumeIsolated` because the category is not main-actor annotated). If the user clicks into Quick Look,
+  that is not a focus loss: focus loss is checked on the next run-loop turn and ignores a key `QLPreviewPanel`.
+- 2026-11-21 (`590d438`): keys. ⌘C copies the image unless the field has selected text (then the text is copied).
+  Return and Space go to a focused button instead when Full Keyboard Access has moved focus out of the field. ⌘R
+  reveal stays as an unlisted shortcut. The footer shows exactly the spec's five hints. The IME guard (`sendEvent`)
+  also covers Space.
+- 2026-11-21 (`590d438`): drag. A row or the preview image gives `NSItemProvider(contentsOf:)` for the file (Finder
+  copies it, Mail attaches it).
+- 2026-11-21 (`590d438`): Copy also posts a VoiceOver announcement "Copied"; the pill itself is hidden from
+  accessibility. "Process Existing Screenshots…" in the empty state hides the panel and starts the scan (the batch
+  toast reports progress).
+- 2026-11-21 (`590d438`): when the index failed to open at launch, the search function throws `IndexUnavailableError`
+  with the coordinator's `indexProblem`, and the window shows "The screenshot index could not be opened".
+
+### What CI cannot check (Parag, on a real Mac)
+- Focus: the panel takes the keyboard without activating Shotkeeper, and clicking another app hides it.
+- Quick Look:
+  - Space/⌘Y open it above the panel.
+  - ↑/↓ update it.
+  - Space/Esc close it.
+  - Clicking into it does not hide search.
+- Dragging a row or the preview into Finder/Mail.
+- ⌘C pastes the image into Preview/Slack.
+- Japanese/Chinese input with Return/Space.
+- Multi-screen placement.
+- VoiceOver reading rows, chips (selected state) and buttons.
+- The material look (snapshots draw an opaque background).
