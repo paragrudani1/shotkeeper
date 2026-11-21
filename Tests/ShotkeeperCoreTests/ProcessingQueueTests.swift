@@ -227,17 +227,43 @@ final class ProcessingQueueTests: XCTestCase {
         await queue.waitUntilIdle()
     }
 
+    /// Rendezvous instead of timing: the first job waits until a second job is running at the same time. With
+    /// concurrency 1 the fallback releases it after 5 s and `peak` stays 1. (Was `settle(50)`, which was flaky on a
+    /// 2-core CI runner: the first job could finish its yields before the second worker started.)
     func testConcurrencyRunsJobsInParallel() async {
+        struct Rendezvous { var arrived = 0; var waiter: CheckedContinuation<Void, Never>?; var released = false }
         let running = Locked(0)
         let peak = Locked(0)
+        let state = Locked(Rendezvous())
+        @Sendable func release() {
+            state.mutate { s -> CheckedContinuation<Void, Never>? in
+                s.released = true
+                defer { s.waiter = nil }
+                return s.waiter
+            }?.resume()
+        }
+        let fallback = Task { try? await Task.sleep(nanoseconds: 5_000_000_000); release() }
         let queue = ProcessingQueue(configuration: .init(concurrency: 2, requestsPerMinute: 0), clock: FakeClock()) { _ in
             let now = running.mutate { $0 += 1; return $0 }
             peak.mutate { $0 = max($0, now) }
-            await settle(50)
+            let arrival = state.mutate { $0.arrived += 1; return $0.arrived }
+            if arrival == 1 {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    let releasedAlready = state.mutate { s -> Bool in
+                        if s.released { return true }
+                        s.waiter = continuation
+                        return false
+                    }
+                    if releasedAlready { continuation.resume() }
+                }
+            } else if arrival == 2 {
+                release()
+            }
             running.mutate { $0 -= 1 }
         }
         for url in [a, b, c] { await queue.enqueue(url) }
         await queue.waitUntilIdle()
+        fallback.cancel()
         XCTAssertEqual(peak.get, 2)
     }
 }
