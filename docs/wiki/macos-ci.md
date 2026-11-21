@@ -11,6 +11,23 @@ Workflow: `.github/workflows/ci.yml` (added on branch `app/phase1`, 2026-11-21).
   `ditto -c -k --keepParent` → artifact `Shotkeeper-unsigned`.
 - Caches: SwiftPM `.build` only (keyed by Xcode version and source hashes). DerivedData is not cached.
 
+## UI snapshots (added 2026-11-21, UI polish PR 1)
+No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the artifact `Shotkeeper-ui-snapshots`.
+- Where: `App/ShotkeeperAppTests/UISnapshotTests.swift`. `UISnapshotCatalog.all` lists the views; **adding a view is one
+  line**: `UISnapshot("search-empty") { SearchView(...) },`. Each entry is rendered in light and dark mode
+  (`<name>-light.png`, `<name>-dark.png`) at 2×, on a neutral backdrop with a soft shadow.
+- How: `NSHostingView` in an offscreen borderless `NSWindow` with the appearance set, then
+  `cacheDisplay(in:to:)` into a 2× `NSBitmapImageRep` (`SnapshotRenderer`). This draws AppKit-backed controls
+  (TextField, ProgressView, buttons) too, which `ImageRenderer` does not. Behind-window materials cannot be captured
+  offscreen, so views take an `opaqueBackground` flag that draws `windowBackgroundColor` instead of the panel's blur.
+- Fake data only: `Fixtures` (fixed date 2026-11-21 16:24 UTC, en_US) and `FakeThumbnails` (generated images injected via
+  the `thumbnailSource` environment value; `cached` returns them synchronously so the first render shows them).
+- Output dir: env `SHOTKEEPER_SNAPSHOT_DIR`, which the workflow sets as `TEST_RUNNER_SHOTKEEPER_SNAPSHOT_DIR` (xcodebuild
+  strips the prefix for the test process); fallback `/tmp/shotkeeper-ui-snapshots`, which the "Collect UI snapshots"
+  step copies if the env did not arrive. The test fails if an image looks blank (fewer than 9 colors on a sample grid).
+- Look at them: `mkdir -p /tmp/sk-snap-<run> && gh-shotkeeper run download <run-id> -n Shotkeeper-ui-snapshots -D
+  /tmp/sk-snap-<run>`, open the PNGs with the Read tool, then delete the folder.
+
 ## Lessons
 - 2026-11-21: `swift test` fails with "no tests found" while `Tests/ShotkeeperCoreTests` holds no Swift files (true on
   main then). `scripts/ci-swift-test.sh` fell back to `swift build --build-tests` in that case only.

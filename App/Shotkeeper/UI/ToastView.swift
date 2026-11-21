@@ -77,7 +77,7 @@ struct ToastView: View {
                     ThumbnailView(path: toast.currentURL.path, side: 52, cornerRadius: 9)
                         .accessibilityLabel("Screenshot preview")
                     VStack(alignment: .leading, spacing: 3) {
-                        brandLabel(toast.label, symbol: "sparkle")
+                        brandLabel(toast.label, symbol: "sparkle").padding(.trailing, 22)
                         if model.isEditing {
                             TextField("Name", text: $model.editText)
                                 .textFieldStyle(.roundedBorder)
@@ -100,7 +100,6 @@ struct ToastView: View {
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                             .lineLimit(1).truncationMode(.middle)
                     }
-                    .padding(.trailing, 18)
                     Spacer(minLength: 0)
                 }
                 if model.isEditing {
@@ -127,13 +126,12 @@ struct ToastView: View {
             HStack(alignment: .top, spacing: 12) {
                 thumbnails(toast.restoredPaths, side: 52)
                 VStack(alignment: .leading, spacing: 3) {
-                    brandLabel(toast.label, symbol: "arrow.uturn.backward")
+                    brandLabel(toast.label, symbol: "arrow.uturn.backward").padding(.trailing, 22)
                     Text(toast.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(toast.subline).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.trailing, 18)
                 Spacer(minLength: 0)
             }
         case .batch(let toast):
@@ -142,11 +140,11 @@ struct ToastView: View {
                     thumbnails(toast.thumbnailPaths, side: 52)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(toast.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                            .padding(.trailing, 22)
                         if let subline = toast.subline {
                             Text(subline).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    .padding(.trailing, 18)
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 8) {
