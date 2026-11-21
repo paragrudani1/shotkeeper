@@ -173,6 +173,13 @@ public struct TryItResult: Equatable, Sendable {
     public var newName: String?
     public var hashtags: [String]
 
+    public init(path: String, oldName: String, newName: String?, hashtags: [String]) {
+        self.path = path
+        self.oldName = oldName
+        self.newName = newName
+        self.hashtags = hashtags
+    }
+
     public var headline: String { "It works" }
     /// Under the names when the name was kept.
     public var detail: String? {
