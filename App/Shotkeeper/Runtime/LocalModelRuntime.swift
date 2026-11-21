@@ -66,6 +66,8 @@ actor LocalModelRuntime: LocalModelServing {
     private var inFlight = 0
     private var lastActivity = Date()
     private var idleTask: Task<Void, Never>?
+    /// Delayed restart after a crash; `stop()` cancels it so a backend switch or quit cannot relaunch the server.
+    private var restartTask: Task<Void, Never>?
     private var installTask: Task<Void, Error>?
 
     init(applicationSupport: URL = AppPaths.applicationSupport, logDirectory: URL = LogLocation.directory,
@@ -138,7 +140,14 @@ actor LocalModelRuntime: LocalModelServing {
         idleTask = nil
         startTask?.cancel()
         startTask = nil
-        guard let server else { return }
+        restartTask?.cancel()
+        restartTask = nil
+        guard let server else {
+            // A crash restart may have been pending ("starting" with no process).
+            serverVariant = nil
+            if phase == .starting { setPhase(.ready) }
+            return
+        }
         stopping = true
         server.terminate()
         self.server = nil
@@ -363,9 +372,11 @@ actor LocalModelRuntime: LocalModelServing {
         case .restart(let delay):
             guard let variant = serverVariant else { return }
             setPhase(.starting)
-            Task {
+            restartTask?.cancel()
+            restartTask = Task {
                 try? await Task.sleep(for: .seconds(delay))
-                _ = try? await self.ensureRunning(variant)
+                guard !Task.isCancelled else { return }
+                await self.restartAfterCrash(variant)
             }
         case .giveUp:
             serverVariant = nil
@@ -373,6 +384,14 @@ actor LocalModelRuntime: LocalModelServing {
             setPhase(.failed(giveUpMessage ?? ""))
         }
     }
+
+    private func restartAfterCrash(_ variant: ModelVariant) async {
+        restartTask = nil
+        _ = try? await ensureRunning(variant)
+    }
+
+    /// Test hook: true while a crash restart is scheduled.
+    var hasPendingRestart: Bool { restartTask != nil }
 
     private func scheduleIdleCheck() {
         idleTask?.cancel()
