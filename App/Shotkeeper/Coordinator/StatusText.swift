@@ -55,9 +55,10 @@ enum StatusText {
             case .notConfigured(let message): return message
             }
         }
-        if let error = error as? UndoError { return "Cannot undo: \(error)" }
+        if error is UndoError { return "Cannot undo: \(UserFacingError.message(for: error))." }
         if let error = error as? LocalizedError, let description = error.errorDescription { return description }
-        return String(describing: error)
+        // Never `String(describing:)` in the UI: core maps its own errors to short sentences.
+        return UserFacingError.problem(for: error).sentence
     }
 }
 

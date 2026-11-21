@@ -76,7 +76,7 @@ final class SearchViewModel {
             }
             guard !Task.isCancelled else { return }
             let outcome = await Task.detached { () -> SearchOutcome in
-                do { return .found(Array(try search(text).prefix(limit))) } catch { return .failed(String(describing: error)) }
+                do { return .found(Array(try search(text).prefix(limit))) } catch { return .failed(StatusText.describe(error)) }
             }.value
             guard !Task.isCancelled, let self else { return }
             self.apply(outcome, for: text)

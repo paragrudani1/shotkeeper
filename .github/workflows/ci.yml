@@ -84,12 +84,37 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: xcodebuild test (Debug)
+        env:
+          # xcodebuild passes TEST_RUNNER_* to the test process without the prefix; UISnapshotTests writes the PNGs
+          # there (fallback /tmp/shotkeeper-ui-snapshots). See docs/wiki/macos-ci.md, "UI snapshots".
+          TEST_RUNNER_SHOTKEEPER_SNAPSHOT_DIR: ${{ github.workspace }}/build/ui-snapshots
         run: |
           set -o pipefail
           xcodebuild test \
             -project App/Shotkeeper.xcodeproj -scheme Shotkeeper -configuration Debug \
             -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Collect UI snapshots
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/build/ui-snapshots"
+          mkdir -p "$OUT"
+          if ! ls "$OUT"/*.png >/dev/null 2>&1 && ls /tmp/shotkeeper-ui-snapshots/*.png >/dev/null 2>&1; then
+            echo "TEST_RUNNER_ env did not reach the test host; using the /tmp fallback"
+            cp /tmp/shotkeeper-ui-snapshots/*.png "$OUT"/
+          fi
+          ls -l "$OUT"
+
+      - name: Upload UI snapshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shotkeeper-ui-snapshots
+          path: build/ui-snapshots/*.png
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Ad-hoc sign and zip the app
         run: |
