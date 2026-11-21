@@ -49,6 +49,14 @@ enum UISnapshotCatalog {
             UISnapshot("menu-setup-unfinished") { Fixtures.menu(.idle, recents: false, setup: true) },
             // Menu bar glyph (template): normal and pulse frame, at menu bar size and enlarged.
             UISnapshot("menubar-glyph") { Fixtures.glyphs() },
+            // Search window (PR 2)
+            UISnapshot("search-results") { Fixtures.search(selected: 1) },
+            UISnapshot("search-chip-selected") { Fixtures.search(text: "receipt", chip: .receipt) },
+            UISnapshot("search-copied") { Fixtures.search(copied: true) },
+            UISnapshot("search-batch") { Fixtures.search(batch: true, selected: 2) },
+            UISnapshot("search-no-match") { Fixtures.search(text: "zebra crossing", rows: []) },
+            UISnapshot("search-empty-index") { Fixtures.search(rows: [], total: 0) },
+            UISnapshot("search-index-error") { Fixtures.searchIndexError() },
         ]
     }
 
@@ -149,21 +157,24 @@ enum FakeThumbnails {
     static let source = ThumbnailSource(cached: { path, side in image(for: path, side: side) },
                                         load: { path, side, _ in image(for: path, side: side) })
 
+    /// Square for thumbnails; landscape (16:10) for large previews (side > 100), like a real screenshot.
     @MainActor
     static func image(for path: String, side: CGFloat) -> NSImage? {
         guard !path.isEmpty else { return nil }
         let hues: [CGFloat] = [0.58, 0.08, 0.36, 0.75, 0.95]
         let hue = hues[path.unicodeScalars.reduce(0) { $0 + Int($1.value) } % hues.count]  // stable across runs
-        let size = NSSize(width: 120, height: 120)
+        let size = side > 100 ? NSSize(width: 320, height: 200) : NSSize(width: 120, height: 120)
         return NSImage(size: size, flipped: true) { rect in
+            let unit = rect.height / 120
             NSColor.white.setFill()
             rect.fill()
             NSColor(calibratedHue: hue, saturation: 0.55, brightness: 0.85, alpha: 1).setFill()
-            NSRect(x: 0, y: 0, width: rect.width, height: 26).fill()
+            NSRect(x: 0, y: 0, width: rect.width, height: 26 * unit).fill()
             NSColor(white: 0.75, alpha: 1).setFill()
             for (row, width) in [0.8, 0.6, 0.9, 0.5, 0.7].enumerated() {
-                NSBezierPath(roundedRect: NSRect(x: 10, y: 38 + CGFloat(row) * 15, width: (rect.width - 20) * width,
-                                                 height: 7), xRadius: 3, yRadius: 3).fill()
+                NSBezierPath(roundedRect: NSRect(x: 10 * unit, y: (38 + CGFloat(row) * 15) * unit,
+                                                 width: (rect.width - 20 * unit) * width, height: 7 * unit),
+                             xRadius: 3 * unit, yRadius: 3 * unit).fill()
             }
             return true
         }
@@ -244,6 +255,67 @@ enum Fixtures {
         highlight.row = highlighted
         return MenuContentView(state: state, actions: .none, highlight: highlight, opaqueBackground: true)
             .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: Search window
+
+    private static func shot(_ title: String, folder: String = "/Users/parag/Desktop", source: String?, type: ContentType,
+                             minutes: Double, tags: [String], description: String) -> IndexedScreenshot {
+        IndexedScreenshot(path: "\(folder)/\(title).png",
+                          originalFilename: "Screenshot.png", contentHash: title,
+                          capturedAt: now.addingTimeInterval(minutes * 60), processedAt: now.addingTimeInterval(minutes * 60 + 4),
+                          title: title, titleConfidence: 0.9, sourceAppOrSite: source, contentType: type,
+                          description: description, tags: tags, status: .done)
+    }
+
+    static let searchRows: [IndexedScreenshot] = [
+        shot("Tweet semiconductor flashcards", source: "x.com", type: .tweet, minutes: -6,
+             tags: ["semiconductor", "flashcards", "chips"],
+             description: "A thread of flashcards that explains how chips are made, from wafers to packaging."),
+        shot("Invoice from Acme Cloud Services for November", source: "Mail", type: .receipt, minutes: -74,
+             tags: ["invoice", "acme", "billing"], description: "November invoice for cloud hosting, total $248.12, due December 5."),
+        shot("Swift concurrency error in Xcode", source: "Xcode", type: .code, minutes: -1_440,
+             tags: ["swift", "xcode", "concurrency"], description: "Compiler error: sending 'fm' risks causing data races."),
+        shot("Slack thread about the launch plan", source: "Slack", type: .chat, minutes: -5 * 1_440,
+             tags: ["launch", "planning"], description: "Team discussion of the launch date and who writes the release notes."),
+        shot("Figma onboarding mockup", folder: "/Users/parag/Pictures/Screenshots", source: "Figma", type: .design,
+             minutes: -7 * 1_440, tags: ["onboarding", "mockup"], description: "Five-step setup flow with indigo step dots."),
+        shot("Blue Bottle coffee receipt", source: "Wallet", type: .receipt, minutes: -8 * 1_440,
+             tags: ["coffee", "receipt"], description: "Receipt for two lattes and a pastry, total $14.75."),
+        shot("How SQLite FTS5 ranks results", source: "sqlite.org", type: .article, minutes: -12 * 1_440,
+             tags: ["sqlite", "search"], description: "Documentation page about the bm25 ranking function."),
+        shot("Uber receipt from SFO", source: nil, type: .receipt, minutes: -20 * 1_440,
+             tags: ["travel", "receipt"], description: "Ride from SFO to downtown San Francisco, total $52.30."),
+    ].enumerated().map { offset, row in
+        var row = row
+        row.id = Int64(offset + 1)  // ids identify list rows
+        return row
+    }
+
+    static func search(text: String = "", chip: SearchChip = .all, batch: Bool = false, rows: [IndexedScreenshot]? = nil,
+                       total: Int = 214, selected: Int = 0, copied: Bool = false) -> some View {
+        var state = SearchWindowState()
+        if batch { state.showBatch(Array(searchRows.prefix(4)).map(\.path)) }
+        state.setText(text)
+        if chip != .all { state.selectChip(chip) }
+        var shown = rows ?? (batch ? Array(searchRows.prefix(4)) : searchRows)
+        if rows == nil, let type = chip.contentType { shown = shown.filter { $0.contentType == type } }
+        state.apply(ScreenshotSearchResult(rows: shown, matchCount: shown.count, totalCount: total), for: state.query)
+        for _ in 0..<selected { state.moveSelection(by: 1) }
+        return searchView(state, copied: copied)
+    }
+
+    static func searchIndexError() -> some View {
+        var state = SearchWindowState()
+        let problem = UserFacingError.problem(for: SQLiteError(code: 26, message: "file is not a database"))
+        state.fail(IndexUnavailableError(problem: problem), for: state.query)
+        return searchView(state, copied: false)
+    }
+
+    private static func searchView(_ state: SearchWindowState, copied: Bool) -> some View {
+        let model = SearchViewModel(state: state, now: { now }, time: time) { _, _ in throw CancellationError() }
+        if copied { model.showCopied() }
+        return SearchView(model: model, actions: .none, opaqueBackground: true)
     }
 
     static func glyphs() -> some View {

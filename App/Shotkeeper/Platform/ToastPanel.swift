@@ -38,17 +38,16 @@ final class ToastPanel: NSPanel {
     }
 }
 
-/// Material background (rounded, `.active` so it does not dim while the panel is not key), the SwiftUI toast on
-/// top, and a tracking area that reports hover even though the app is never active.
-final class ToastContainerView: NSView {
-    var onHoverChange: ((Bool) -> Void)?
+/// A rounded behind-window material (`.active`, so it does not dim while the panel is not key) with a hosting
+/// view on top. Shared by the toast and the search panel.
+class MaterialContainerView: NSView {
     let hostingView: NSView
 
-    init(hostingView: NSView, cornerRadius: CGFloat) {
+    init(hostingView: NSView, cornerRadius: CGFloat, material: NSVisualEffectView.Material = .popover) {
         self.hostingView = hostingView
         super.init(frame: .zero)
         let effect = NSVisualEffectView()
-        effect.material = .popover
+        effect.material = material
         effect.blendingMode = .behindWindow
         effect.state = .active
         effect.maskImage = Self.roundedMask(radius: cornerRadius)
@@ -65,16 +64,6 @@ final class ToastContainerView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
-        // `.activeAlways`: Shotkeeper is never the active app while a toast shows.
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                       owner: self))
-    }
-
-    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
-    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     static func roundedMask(radius: CGFloat) -> NSImage {
@@ -88,6 +77,22 @@ final class ToastContainerView: NSView {
         image.resizingMode = .stretch
         return image
     }
+}
+
+/// The toast's material background plus a tracking area that reports hover even though the app is never active.
+final class ToastContainerView: MaterialContainerView {
+    var onHoverChange: ((Bool) -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        // `.activeAlways`: Shotkeeper is never the active app while a toast shows.
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
 }
 
 /// The toast is never key, so the first click must reach the SwiftUI buttons instead of being swallowed.

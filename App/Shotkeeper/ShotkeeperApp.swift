@@ -44,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let rename: (RenamedToast, String) -> Result<RenamedToast, UserFacingProblem> = { toast, name in
             coordinator.renameFromToast(toast, to: name)
         }
-        let viewInSearch: ([String]) -> Void = { [weak self] _ in self?.showSearch() }  // PR 2 filters to the batch
+        let viewInSearch: ([String]) -> Void = { [weak self] paths in self?.searchPanel.showBatch(paths) }
         let fixSettings: () -> Void = { [weak self] in self?.showSettings() }
         let toast = ToastController(handlers: ToastController.Handlers(undo: undo, rename: rename,
                                                                        viewInSearch: viewInSearch, fixSettings: fixSettings))
@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                           searchShortcut: GlobalHotKey.Shortcut.defaultSearch.displayString) { [weak self] row, reveal in
             self?.perform(row, reveal: reveal)
         }
+        searchPanel.onProcessExisting = { Task { _ = await coordinator.processExistingScreenshots() } }
         coordinator.startServices()
         do {
             hotKey = try GlobalHotKey(shortcut: .defaultSearch) { [weak self] in self?.searchPanel.toggle() }
@@ -108,9 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeSearchModel() -> SearchViewModel {
         let index = coordinator.index
-        return SearchViewModel { query in
-            guard let index else { return [] }
-            return try index.search(query, limit: 50)
+        // The index opens once at launch; when it failed, search shows the error state, never the empty state.
+        let problem = coordinator.indexProblem ?? UserFacingProblem(message: "the index is not open")
+        return SearchViewModel { query, limit in
+            guard let index else { throw IndexUnavailableError(problem: problem) }
+            return try index.search(query, limit: limit)
         }
     }
 }

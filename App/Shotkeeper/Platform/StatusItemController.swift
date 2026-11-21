@@ -183,7 +183,7 @@ final class StatusItemController: NSObject {
         effect.material = .menu
         effect.blendingMode = .behindWindow
         effect.state = .active
-        effect.maskImage = ToastContainerView.roundedMask(radius: 10)
+        effect.maskImage = MaterialContainerView.roundedMask(radius: 10)
         hosting.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(hosting)
         NSLayoutConstraint.activate([
