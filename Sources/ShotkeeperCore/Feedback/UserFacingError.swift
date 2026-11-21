@@ -2,7 +2,7 @@ import Foundation
 
 /// A short, readable problem for the UI (toast, menu). Never contains a raw `String(describing: error)`, a path
 /// or a secret.
-public struct UserFacingProblem: Equatable, Sendable {
+public struct UserFacingProblem: Error, Equatable, Sendable {
     /// Sentence fragment without a trailing period, e.g. "Cloudflare API token is not set".
     public var message: String
     /// True when the fix is in Settings (missing or rejected credentials, missing endpoint): the toast offers

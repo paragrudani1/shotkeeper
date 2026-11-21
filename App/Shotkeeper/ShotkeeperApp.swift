@@ -39,13 +39,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Unit tests run inside this app (TEST_HOST); do not grab the hotkey or watch folders then.
         guard !RuntimeEnvironment.isRunningUnitTests else { return }
-        let toast = ToastController(handlers: .init(
-            undo: { [weak self] ids in self?.coordinator.undoFromToast(ids: ids) ?? .restored(RestoredToast(restoredPaths: [])) },
-            rename: { [weak self] toast, name in
-                self?.coordinator.renameFromToast(toast, to: name) ?? .failure(UserFacingProblem(message: "Shotkeeper is quitting"))
-            },
-            viewInSearch: { [weak self] _ in self?.showSearch() },  // PR 2 filters search to the batch
-            fixSettings: { [weak self] in self?.showSettings() }))
+        let coordinator = self.coordinator
+        let undo: ([UUID]) -> ToastContent = { ids in coordinator.undoFromToast(ids: ids) }
+        let rename: (RenamedToast, String) -> Result<RenamedToast, UserFacingProblem> = { toast, name in
+            coordinator.renameFromToast(toast, to: name)
+        }
+        let viewInSearch: ([String]) -> Void = { [weak self] _ in self?.showSearch() }  // PR 2 filters to the batch
+        let fixSettings: () -> Void = { [weak self] in self?.showSettings() }
+        let toast = ToastController(handlers: ToastController.Handlers(undo: undo, rename: rename,
+                                                                       viewInSearch: viewInSearch, fixSettings: fixSettings))
         self.toast = toast
         coordinator.onToast = { content in toast.show(content, on: ToastPlacement.screenForNewScreenshot()) }
         coordinator.onRenameSound = { NSSound(named: "Pop")?.play() }
