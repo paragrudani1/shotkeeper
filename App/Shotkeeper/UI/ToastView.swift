@@ -73,7 +73,7 @@ struct ToastView: View {
         switch content {
         case .renamed(let toast):
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
                     ThumbnailView(path: toast.currentURL.path, side: 52, cornerRadius: 9)
                         .accessibilityLabel("Screenshot preview")
                     VStack(alignment: .leading, spacing: 3) {
@@ -98,7 +98,7 @@ struct ToastView: View {
                         }
                         Text(toast.subline)
                             .font(.system(size: 11)).foregroundStyle(.secondary)
-                            .lineLimit(1).truncationMode(.middle)
+                            .lineLimit(1).allowsTightening(true).truncationMode(.middle)
                     }
                     Spacer(minLength: 0)
                 }
@@ -123,7 +123,7 @@ struct ToastView: View {
                 }
             }
         case .restored(let toast):
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
                 thumbnails(toast.restoredPaths, side: 52)
                 VStack(alignment: .leading, spacing: 3) {
                     brandLabel(toast.label, symbol: "arrow.uturn.backward").padding(.trailing, 22)
@@ -136,7 +136,7 @@ struct ToastView: View {
             }
         case .batch(let toast):
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
                     thumbnails(toast.thumbnailPaths, side: 52)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(toast.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
@@ -159,7 +159,7 @@ struct ToastView: View {
             }
         case .error(let toast):
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 26))
                         .foregroundStyle(Color(nsColor: .systemOrange))
