@@ -2,6 +2,7 @@ import AppKit
 import Quartz
 import ShotkeeperCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Floating Raycast-style panel: borderless (no traffic lights), `.nonactivatingPanel` so the frontmost app stays
 /// active (the menu-bar app never steals activation), while `canBecomeKey` lets the search field take the keyboard.
@@ -9,8 +10,11 @@ final class SearchPanel: NSPanel {
     /// Called when the panel hides itself (Esc, or focus loss).
     var onDismiss: (() -> Void)?
     /// Sees every key-down first (except while an input method is composing). Return true to consume it
-    /// (↑/↓/Return/Esc/⌘C/… never reach the text field then).
+    /// (↑/↓/Return/Esc/Space never reach the text field then).
     var keyHandler: ((NSEvent) -> Bool)?
+    /// Sees ⌘ shortcuts (⌘C, ⌘R, ⌘Y, ⌘1…⌘7) in `performKeyEquivalent`, before the main menu's Edit > Copy can take
+    /// them (except while an input method is composing). Return true to consume.
+    var commandKeyHandler: ((NSEvent) -> Bool)?
     /// Quick Look asks the responder chain who controls it; the key panel answers with this.
     var quickLook: SearchQuickLook?
 
@@ -41,6 +45,12 @@ final class SearchPanel: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, !isComposingText, keyHandler?(event) == true { return }
         super.sendEvent(event)
+    }
+
+    /// AppKit routes ⌘ keys through key equivalents (and the main menu), not through `sendEvent`'s key-down path.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, !isComposingText, commandKeyHandler?(event) == true { return true }
+        return super.performKeyEquivalent(with: event)
     }
 
     /// True while an input method (Japanese, Chinese, Korean…) holds uncommitted marked text in the focused field.
@@ -108,26 +118,42 @@ final class SearchPanel: NSPanel {
 
 /// Keys the panel handles itself. Pure mapping, unit-tested.
 enum SearchKey: Equatable {
-    case up, down, open, close, copyImage, reveal, space, quickLook
+    case up, down, open, close, space, copyImage, reveal, quickLook, chip(SearchChip)
 
-    static func from(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, characters: String?) -> SearchKey? {
-        let mods = modifiers.intersection([.command, .option, .control, .shift])
-        switch (keyCode, mods) {
-        case (126, []): return .up            // ↑
-        case (125, []): return .down          // ↓
-        case (36, []), (76, []): return .open // Return, keypad Enter
-        case (53, []): return .close          // Esc
-        case (49, []): return .space          // Space (Quick Look or a typed space, see SearchWindowState)
-        default: break
-        }
-        guard mods == [.command] else { return nil }
-        switch characters?.lowercased() {
-        case "c": return .copyImage
-        case "r": return .reveal
-        case "y": return .quickLook           // ⌘Y, the Finder shortcut
+    /// Unmodified keys, seen in `sendEvent` (↑/↓/Return/Esc/Space).
+    static func plain(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> SearchKey? {
+        guard modifiers.intersection([.command, .option, .control, .shift]).isEmpty else { return nil }
+        switch keyCode {
+        case 126: return .up            // ↑
+        case 125: return .down          // ↓
+        case 36, 76: return .open       // Return, keypad Enter
+        case 53: return .close          // Esc
+        case 49: return .space          // Space (Quick Look or a typed space, see SearchWindowState)
         default: return nil
         }
     }
+
+    /// ⌘ shortcuts, seen in `performKeyEquivalent`. The key is the typed character when it is an ASCII letter or
+    /// digit (QWERTY, Dvorak, …), else the physical key (Cyrillic or Greek layouts type other letters; AZERTY types
+    /// "&" for 1).
+    static func command(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, characters: String?) -> SearchKey? {
+        guard modifiers.intersection([.command, .option, .control, .shift]) == [.command] else { return nil }
+        let typed = characters?.lowercased()
+        let key = typed.flatMap { $0.count == 1 && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) } ? $0 : nil }
+            ?? physicalKeys[keyCode]
+        switch key ?? "" {
+        case "c": return .copyImage
+        case "r": return .reveal
+        case "y": return .quickLook           // ⌘Y, the Finder shortcut
+        case let digit:
+            return Int(digit).flatMap(SearchChip.forShortcut).map { .chip($0) }
+        }
+    }
+
+    /// ANSI virtual key codes (Carbon `kVK_ANSI_*`) for the shortcut keys.
+    private static let physicalKeys: [UInt16: String] = [
+        8: "c", 15: "r", 16: "y", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7",
+    ]
 }
 
 /// Open / copy / reveal for a result.
@@ -141,13 +167,24 @@ enum SearchActions {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-    /// The image itself plus its file URL, so both image editors and Finder/Mail accept the paste.
+    /// One pasteboard item with the image as PNG (the file's own bytes when it is a PNG) and its file URL, so image
+    /// editors and chat apps paste the picture and Finder/Mail paste the file. False when the file cannot be read.
     @discardableResult
     static func copyImage(_ url: URL, to pasteboard: NSPasteboard = .general) -> Bool {
-        guard let image = NSImage(contentsOf: url) else { return false }
+        guard let data = try? Data(contentsOf: url) else { return false }
+        let png: Data
+        if UTType(filenameExtension: url.pathExtension)?.conforms(to: .png) == true {
+            png = data
+        } else if let rep = NSBitmapImageRep(data: data), let converted = rep.representation(using: .png, properties: [:]) {
+            png = converted  // JPEG/HEIC/TIFF screenshots (a `defaults write com.apple.screencapture type` choice)
+        } else {
+            return false
+        }
+        let item = NSPasteboardItem()
+        item.setData(png, forType: .png)
+        item.setString(url.absoluteString, forType: .fileURL)
         pasteboard.clearContents()
-        let items: [any NSPasteboardWriting] = [image, url as NSURL]
-        return pasteboard.writeObjects(items)
+        return pasteboard.writeObjects([item])
     }
 }
 
@@ -202,6 +239,9 @@ final class SearchPanelController {
     /// "Process Existing Screenshots…" in the empty state (the app delegate starts the scan).
     var onProcessExisting: () -> Void = {}
     private(set) lazy var panel: SearchPanel = makePanel()
+    /// The app that was in front when the panel opened. A click into Quick Look activates Shotkeeper (Quick Look's
+    /// panel is a normal panel); hiding the search window gives the focus back to this app.
+    private var previousApp: NSRunningApplication?
     private lazy var quickLook = SearchQuickLook(
         selectedURL: { [weak self] in self?.model.selectedURL },
         keyHandler: { [weak self] event in self?.handleQuickLookKey(event) ?? false })
@@ -217,6 +257,7 @@ final class SearchPanelController {
     }
 
     func show() {
+        rememberFrontApp()
         positionOnActiveScreen()
         model.refresh()
         panel.makeKeyAndOrderFront(nil)
@@ -226,6 +267,7 @@ final class SearchPanelController {
 
     /// The batch toast's "View in Search": that batch's files, newest first.
     func showBatch(_ paths: [String]) {
+        rememberFrontApp()
         model.showBatch(paths)
         if !panel.isVisible { positionOnActiveScreen() }
         panel.makeKeyAndOrderFront(nil)
@@ -235,6 +277,12 @@ final class SearchPanelController {
 
     func hide() {
         panel.dismiss()
+    }
+
+    private func rememberFrontApp() {
+        if let front = NSWorkspace.shared.frontmostApplication, front != NSRunningApplication.current {
+            previousApp = front
+        }
     }
 
     /// Returns true when the key was handled.
@@ -271,6 +319,8 @@ final class SearchPanelController {
         case .quickLook:
             guard model.selectedURL != nil else { return false }
             toggleQuickLook()
+        case .chip(let chip):
+            model.selectChip(chip)
         }
         return true
     }
@@ -289,20 +339,44 @@ final class SearchPanelController {
     }
 
     private func open(_ url: URL) {
+        guard fileStillExists(url) else { return }
         SearchActions.open(url)
         hide()
     }
 
     private func reveal(_ url: URL) {
+        guard fileStillExists(url) else { return }
         SearchActions.reveal(url)
         hide()
     }
 
     private func copy(_ url: URL) {
-        guard SearchActions.copyImage(url) else { return }
+        guard fileStillExists(url) else { return }
+        guard SearchActions.copyImage(url) else {
+            report(SearchWindowState.copyFailedMessage)
+            return
+        }
         model.showCopied()
+        announce("Copied")
+    }
+
+    /// A file moved or deleted after it was indexed: say so instead of failing silently; the panel stays open.
+    private func fileStillExists(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            report(SearchWindowState.missingFileMessage)
+            return false
+        }
+        return true
+    }
+
+    private func report(_ message: String) {
+        model.showProblem(message)
+        announce(message)
+    }
+
+    private func announce(_ text: String) {
         NSAccessibility.post(element: panel, notification: .announcementRequested,
-                             userInfo: [.announcement: "Copied", .priority: NSAccessibilityPriorityLevel.high.rawValue])
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
     // MARK: Quick Look
@@ -321,7 +395,23 @@ final class SearchPanelController {
         preview.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         preview.updateController()
         preview.reloadData()
-        preview.orderFront(nil)
+        preview.orderFrontRegardless()  // Shotkeeper is not the active app
+    }
+
+    /// Quick Look asks the responder chain for a controller. While its own panel is key (the user clicked into it),
+    /// the search panel is not in that chain, so the app delegate answers through these.
+    var acceptsQuickLookControl: Bool { panel.isVisible }
+
+    func beginQuickLookControl() {
+        let preview = QLPreviewPanel.shared()
+        preview?.dataSource = quickLook
+        preview?.delegate = quickLook
+    }
+
+    func endQuickLookControl() {
+        let preview = QLPreviewPanel.shared()
+        preview?.dataSource = nil
+        preview?.delegate = nil
     }
 
     private func closeQuickLook() {
@@ -336,8 +426,9 @@ final class SearchPanelController {
 
     /// Keys while Quick Look's own panel is key (the user clicked into it).
     private func handleQuickLookKey(_ event: NSEvent) -> Bool {
-        guard let key = SearchKey.from(keyCode: event.keyCode, modifiers: event.modifierFlags,
-                                       characters: event.charactersIgnoringModifiers) else { return false }
+        guard let key = SearchKey.plain(keyCode: event.keyCode, modifiers: event.modifierFlags)
+                ?? SearchKey.command(keyCode: event.keyCode, modifiers: event.modifierFlags,
+                                     characters: event.charactersIgnoringModifiers) else { return false }
         switch key {
         case .up, .down:
             return handle(key)
@@ -352,7 +443,7 @@ final class SearchPanelController {
             guard let url = model.selectedURL else { return false }
             copy(url)
             return true
-        case .reveal:
+        case .reveal, .chip:
             return handle(key)
         }
     }
@@ -371,11 +462,23 @@ final class SearchPanelController {
             guard let self else { return }
             if self.isQuickLookVisible { QLPreviewPanel.shared().orderOut(nil) }
             self.model.windowHidden()
+            // Only when Shotkeeper became active (a click into Quick Look); otherwise the front app still has focus.
+            if NSApp.isActive, let previous = self.previousApp, !previous.isTerminated {
+                previous.activate(options: [])
+            }
+            self.previousApp = nil
         }
         panel.keyHandler = { [weak self] event in
-            guard let self,
-                  let key = SearchKey.from(keyCode: event.keyCode, modifiers: event.modifierFlags,
-                                           characters: event.charactersIgnoringModifiers) else { return false }
+            guard let self, let key = SearchKey.plain(keyCode: event.keyCode, modifiers: event.modifierFlags) else {
+                return false
+            }
+            return MainActor.assumeIsolated { self.handle(key) }
+        }
+        panel.commandKeyHandler = { [weak self] event in
+            guard let self, let key = SearchKey.command(keyCode: event.keyCode, modifiers: event.modifierFlags,
+                                                        characters: event.charactersIgnoringModifiers) else {
+                return false
+            }
             return MainActor.assumeIsolated { self.handle(key) }
         }
         return panel

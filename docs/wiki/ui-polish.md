@@ -146,7 +146,43 @@ values clipped by the button row; spacing was tightened so a 2-line description 
 - 2026-11-21 (`590d438`): when the index failed to open at launch, the search function throws `IndexUnavailableError`
   with the coordinator's `indexProblem`, and the window shows "The screenshot index could not be opened".
 
+### Review fixes (review of `685c06c`, commit REVIEWSHA)
+- 2026-11-21: ⌘ keys moved to `SearchPanel.performKeyEquivalent` (`commandKeyHandler`). AppKit routes ⌘ keys through key
+  equivalents and the main menu (SwiftUI's Edit > Copy owns ⌘C), so the `sendEvent` key-down path could miss them.
+  `sendEvent` now handles only unmodified keys (↑/↓/Return/Esc/Space). The IME guard is on both paths. A ⌘ shortcut
+  matches the typed character when it is an ASCII letter or digit (QWERTY, Dvorak), else the physical key (Cyrillic
+  and Greek layouts, AZERTY "&" for 1). ⌘C still copies text when the field has a selection.
+- 2026-11-21: ⌘1…⌘7 select the chips (All…Design); the chip tooltips show the shortcut (core `SearchChip.help`).
+- 2026-11-21: focus after Quick Look. A click into Quick Look's panel activates Shotkeeper.
+  - `show()` remembers the front app, and hiding the window re-activates it when Shotkeeper is active.
+  - The app delegate also answers Quick Look's controller lookup while the search panel is visible. When Quick Look
+    is key, the search panel (never main) is not in the chain Quick Look searches.
+  - Quick Look is shown with `orderFrontRegardless()`.
+- 2026-11-21: Copy Image writes ONE pasteboard item with `.png` and `.fileURL`. A PNG file goes in as its own bytes;
+  JPEG/HEIC/TIFF screenshots are converted to PNG. Before, the image was an NSImage (TIFF) plus a URL as two items.
+- 2026-11-21: drag is an AppKit drag source (`FileDragArea`/`FileDragView`) over the row and the preview image.
+  - It writes `public.file-url` (an `NSURL` writer) and offers only `.copy`, ignoring modifier keys, so Finder never
+    moves the user's file (CODING_STANDARDS #1).
+  - It replaces SwiftUI `NSItemProvider(contentsOf:)`, which becomes a file promise that Slack desktop and Chrome often
+    refuse.
+  - The same view handles clicks: select on the first mouse-down (no double-click delay) and open on the second.
+    This replaces the SwiftUI tap gestures that the review's nit was about.
+- 2026-11-21: Open, Copy and Reveal check that the file still exists. A file moved or deleted after indexing shows
+  "This file is no longer there. It was moved or deleted after it was indexed." on the image for 3 s (VoiceOver
+  announces it). A failed copy says "The image could not be copied.". The panel stays open.
+- 2026-11-21: hiding a batch view searches again at once, so its rows are not what the next open shows first. The
+  scroll-into-view follows the selected row's id. The preview title is no longer selectable (text selection took the
+  keyboard focus from the field).
+- 2026-11-21 (`f713f00`, deviation): with only a chip set, no match reads "No Tweet screenshots" / "Choose All to see
+  every screenshot." The spec's "No screenshots match “<query>”" needs typed text; a chip alone has none.
+
 ### What CI cannot check (Parag, on a real Mac)
+- ⌘C copies the image (paste into Preview or Slack), and copies the text when field text is selected. Same for ⌘R and
+  ⌘Y, also on a Russian layout.
+- ⌘1…⌘7 switch the chips.
+- After clicking into Quick Look and closing search, the app that was in front gets the keyboard back.
+- Dragging a row or the preview into Slack desktop and Chrome attaches the file. Into Finder it copies, never moves,
+  even with ⌘ held.
 - Focus: the panel takes the keyboard without activating Shotkeeper, and clicking another app hides it.
 - Quick Look:
   - Space/⌘Y open it above the panel.

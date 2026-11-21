@@ -11,8 +11,8 @@ final class SearchViewModel {
     typealias SearchFunction = @Sendable (ScreenshotQuery, Int) throws -> ScreenshotSearchResult
 
     private(set) var state: SearchWindowState
-    /// "✓ Copied" on the preview image, for `SearchWindowState.copiedPillDuration` after ⌘C / Copy Image.
-    private(set) var showsCopiedPill = false
+    /// A short message on the preview image: "✓ Copied" after ⌘C / Copy Image, or a problem (file gone).
+    private(set) var pill: SearchPill?
     /// Bumped when the panel is shown; the view focuses the search field.
     private(set) var focusRequest = 0
     /// Number of searches whose answer was applied (debounce check in tests).
@@ -78,9 +78,10 @@ final class SearchViewModel {
     }
 
     func windowHidden() {
-        state.windowHidden()
+        // Leaving a batch view: search again now, so its rows are not what the next open shows first.
+        if state.windowHidden() { schedule(after: .zero) }
         pillTask?.cancel()
-        showsCopiedPill = false
+        pill = nil
     }
 
     func requestFocus() {
@@ -100,12 +101,20 @@ final class SearchViewModel {
     // MARK: Feedback
 
     func showCopied() {
+        showPill(.copied, for: SearchWindowState.copiedPillDuration)
+    }
+
+    func showProblem(_ message: String) {
+        showPill(.problem(message), for: SearchWindowState.problemPillDuration)
+    }
+
+    private func showPill(_ newPill: SearchPill, for seconds: TimeInterval) {
         pillTask?.cancel()
-        showsCopiedPill = true
+        pill = newPill
         pillTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(SearchWindowState.copiedPillDuration))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
-            self?.showsCopiedPill = false
+            self?.pill = nil
         }
     }
 
@@ -143,4 +152,10 @@ final class SearchViewModel {
         case found(ScreenshotSearchResult)
         case failed(any Error)  // Error is Sendable
     }
+}
+
+/// The message shown on the preview image.
+enum SearchPill: Equatable {
+    case copied
+    case problem(String)
 }

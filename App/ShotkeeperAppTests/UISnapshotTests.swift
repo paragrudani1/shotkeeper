@@ -53,6 +53,7 @@ enum UISnapshotCatalog {
             UISnapshot("search-results") { Fixtures.search(selected: 1) },
             UISnapshot("search-chip-selected") { Fixtures.search(text: "receipt", chip: .receipt) },
             UISnapshot("search-copied") { Fixtures.search(copied: true) },
+            UISnapshot("search-file-missing") { Fixtures.search(problem: SearchWindowState.missingFileMessage) },
             UISnapshot("search-batch") { Fixtures.search(batch: true, selected: 2) },
             UISnapshot("search-no-match") { Fixtures.search(text: "zebra crossing", rows: []) },
             UISnapshot("search-empty-index") { Fixtures.search(rows: [], total: 0) },
@@ -293,7 +294,7 @@ enum Fixtures {
     }
 
     static func search(text: String = "", chip: SearchChip = .all, batch: Bool = false, rows: [IndexedScreenshot]? = nil,
-                       total: Int = 214, selected: Int = 0, copied: Bool = false) -> some View {
+                       total: Int = 214, selected: Int = 0, copied: Bool = false, problem: String? = nil) -> some View {
         var state = SearchWindowState()
         if batch { state.showBatch(Array(searchRows.prefix(4)).map(\.path)) }
         state.setText(text)
@@ -302,19 +303,20 @@ enum Fixtures {
         if rows == nil, let type = chip.contentType { shown = shown.filter { $0.contentType == type } }
         state.apply(ScreenshotSearchResult(rows: shown, matchCount: shown.count, totalCount: total), for: state.query)
         for _ in 0..<selected { state.moveSelection(by: 1) }
-        return searchView(state, copied: copied)
+        return searchView(state, copied: copied, problem: problem)
     }
 
     static func searchIndexError() -> some View {
         var state = SearchWindowState()
         let problem = UserFacingProblem(message: "the index file is damaged")  // core maps SQLITE_NOTADB to this
         state.fail(IndexUnavailableError(problem: problem), for: state.query)
-        return searchView(state, copied: false)
+        return searchView(state, copied: false, problem: nil)
     }
 
-    private static func searchView(_ state: SearchWindowState, copied: Bool) -> some View {
+    private static func searchView(_ state: SearchWindowState, copied: Bool, problem: String?) -> some View {
         let model = SearchViewModel(state: state, now: { now }, time: time) { _, _ in throw CancellationError() }
         if copied { model.showCopied() }
+        if let problem { model.showProblem(problem) }
         return SearchView(model: model, actions: .none, opaqueBackground: true)
     }
 

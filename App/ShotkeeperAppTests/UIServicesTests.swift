@@ -89,6 +89,24 @@ final class SearchPanelTests: XCTestCase {
         controller.hide()
     }
 
+    func testCommandKeysArriveThroughPerformKeyEquivalent() throws {
+        let panel = SearchPanel(contentSize: SearchPanel.defaultContentSize)
+        var seen: [UInt16] = []
+        panel.commandKeyHandler = { event in seen.append(event.keyCode); return true }
+        let commandC = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
+                                                      timestamp: 0, windowNumber: panel.windowNumber, context: nil,
+                                                      characters: "c", charactersIgnoringModifiers: "c",
+                                                      isARepeat: false, keyCode: 8))
+        XCTAssertTrue(panel.performKeyEquivalent(with: commandC))
+        XCTAssertEqual(seen, [8])
+    }
+
+    func testChipShortcutSelectsTheChip() {
+        let controller = SearchPanelController()
+        XCTAssertTrue(controller.handle(.chip(.receipt)))
+        XCTAssertEqual(controller.model.state.chip, .receipt)
+    }
+
     func testControllerTogglesVisibility() {
         let controller = SearchPanelController()
         XCTAssertFalse(controller.isVisible)

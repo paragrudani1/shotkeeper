@@ -77,6 +77,23 @@ final class ScreenshotQueryIndexTests: XCTestCase {
         XCTAssertEqual(try index.search(ScreenshotQuery(paths: ["/Users/parag/Desktop/Café \"menu\".png"])).rows.count, 1)
     }
 
+    func testHostileTextWithAChipAndBatchPathsNeverThrows() throws {
+        let index = try makeIndex()
+        let paths = ["/Users/parag/Desktop/Tweet about chips.png", "/Users/parag/Desktop/Chip design review.png"]
+        let hostile = ["\"", "\"\"", "near(x", "chips OR coffee", "*", "-chips", "title:chips", ")", "'", "\\",
+                       "chips\"*", "^chips", "NOT", "AND OR", "{title}: x", "[", "chips' --"]
+        for text in hostile {
+            XCTAssertNoThrow(try index.search(ScreenshotQuery(text: text, contentType: .tweet, paths: paths)), text)
+            XCTAssertNoThrow(try index.search(ScreenshotQuery(text: text, contentType: .design)), text)
+        }
+        // Operators are searched as plain words: "chips OR coffee" needs all three words.
+        XCTAssertEqual(try index.search(ScreenshotQuery(text: "chips OR coffee")).rows, [])
+        XCTAssertEqual(try index.search(ScreenshotQuery(text: "-chips", contentType: .tweet, paths: paths)).rows.map(\.title),
+                       ["Tweet about chips"])
+        // "title:chips" is the phrase "title chips", not a column filter (which would match "Chip design review").
+        XCTAssertEqual(try index.search(ScreenshotQuery(text: "title:chips", contentType: .design, paths: paths)).rows, [])
+    }
+
     func testEmptyIndex() throws {
         let result = try ScreenshotIndex.inMemory().search(ScreenshotQuery(text: "anything"))
         XCTAssertEqual(result, ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0))
@@ -125,6 +142,16 @@ final class SearchResultItemTests: XCTestCase {
         XCTAssertEqual(us.relative(now.addingTimeInterval(-3 * 3600), now: now), "3 h ago")
         XCTAssertEqual(us.relative(now.addingTimeInterval(-17 * 3600), now: now), "Yesterday", "23:24 the day before")
         XCTAssertEqual(us.relative(now.addingTimeInterval(-7 * 86_400), now: now), "Nov 14")
+    }
+
+    func testChipShortcutsAndTooltips() {
+        XCTAssertEqual(SearchChip.allCases.map(\.shortcutNumber), [1, 2, 3, 4, 5, 6, 7])
+        XCTAssertEqual(SearchChip.forShortcut(1), .all)
+        XCTAssertEqual(SearchChip.forShortcut(7), .design)
+        XCTAssertNil(SearchChip.forShortcut(0))
+        XCTAssertNil(SearchChip.forShortcut(8))
+        XCTAssertEqual(SearchChip.tweet.help, "Show only tweet screenshots (⌘2)")
+        XCTAssertEqual(SearchChip.all.help, "Show every type (⌘1)")
     }
 
     func testChipsAndTypeNames() {
@@ -314,6 +341,8 @@ final class SearchWindowStateTests: XCTestCase {
             title: "These screenshots are no longer in the index",
             message: "They were moved, renamed or restored since. Clear the search to see recent screenshots.")))
 
+        state.showBatch((0..<1500).map { "/\($0).png" })
+        XCTAssertEqual(state.resultLimit, SearchWindowState.maxResults, "capped at 1000")
         XCTAssertTrue(state.setText("a"))
         XCTAssertNil(state.batchPaths, "typing searches the whole index")
         state.showBatch(["/a.png"])

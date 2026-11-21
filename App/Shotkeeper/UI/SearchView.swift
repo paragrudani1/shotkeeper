@@ -87,7 +87,7 @@ struct SearchView: View {
                 Button(chip.title) { model.selectChip(chip) }
                     .buttonStyle(SearchChipStyle(isSelected: selected))
                     .accessibilityAddTraits(selected ? .isSelected : [])
-                    .help(chip == .all ? "Show every type" : "Show only \(chip.title.lowercased()) screenshots")
+                    .help(chip.help)
             }
             Spacer(minLength: 0)
         }
@@ -238,20 +238,20 @@ struct SearchResultList: View {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(model.state.items.enumerated()), id: \.element.id) { offset, item in
                         SearchResultRow(item: item, isSelected: offset == model.state.selectedIndex,
-                                        now: model.now(), time: model.time)
-                            .id(item.id)
-                            .onTapGesture(count: 2) { actions.open(URL(fileURLWithPath: item.path)) }
-                            .onTapGesture { model.select(offset) }
-                            .onDrag { FileDrag.provider(for: item.path) }
-                            .accessibilityAction { model.select(offset) }
-                            .accessibilityAction(named: "Open") { actions.open(URL(fileURLWithPath: item.path)) }
+                                        now: model.now(), time: model.time) { clickCount in
+                            // AppKit clicks: select on the first mouse-down (no double-click delay), open on the second.
+                            if clickCount >= 2 { actions.open(URL(fileURLWithPath: item.path)) } else { model.select(offset) }
+                        }
+                        .id(item.id)
+                        .accessibilityAction { model.select(offset) }
+                        .accessibilityAction(named: "Open") { actions.open(URL(fileURLWithPath: item.path)) }
                     }
                 }
                 .padding(8)
             }
-            .onChange(of: model.state.selectedIndex) { _, index in
-                guard let index, model.state.items.indices.contains(index) else { return }
-                proxy.scrollTo(model.state.items[index].id)  // no anchor: scrolls only as far as needed
+            .onChange(of: model.state.selected?.id) { _, id in
+                guard let id else { return }
+                proxy.scrollTo(id)  // no anchor: scrolls only as far as needed
             }
         }
         .accessibilityLabel("Results")
@@ -263,7 +263,10 @@ struct SearchResultRow: View {
     let isSelected: Bool
     let now: Date
     let time: TimeLabel
+    /// Mouse-down on the row with its click count (1 = select, 2 = open).
+    var onMouseDown: (Int) -> Void = { _ in }
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.thumbnailSource) private var thumbnails
 
     var body: some View {
         HStack(spacing: 10) {
@@ -287,7 +290,9 @@ struct SearchResultRow: View {
                     .fill(Brand.indigo.opacity(colorScheme == .dark ? 0.34 : 0.14))
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            FileDragArea(path: item.path, dragImage: { thumbnails.cached(item.path, 44) }, onMouseDown: onMouseDown)
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.accessibilityLabel(now: now, time: time))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -309,14 +314,13 @@ struct SearchPreview: View {
         VStack(alignment: .leading, spacing: 8) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    PreviewImageView(path: item.path, title: item.title, showsCopiedPill: model.showsCopiedPill)
-                        .onDrag { FileDrag.provider(for: item.path) }
+                    PreviewImageView(path: item.path, title: item.title, pill: model.pill,
+                                     onDoubleClick: { actions.open(url) })
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.title)
                             .font(.system(size: 18, weight: .semibold))
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
                         if let description = item.description {
                             Text(description)
                                 .font(.system(size: 13))
@@ -402,7 +406,8 @@ struct PreviewImageView: View {
 
     let path: String
     let title: String
-    let showsCopiedPill: Bool
+    let pill: SearchPill?
+    var onDoubleClick: () -> Void = {}
     @Environment(\.thumbnailSource) private var source
     @Environment(\.displayScale) private var displayScale
     @State private var loaded: (path: String, image: NSImage)?
@@ -416,23 +421,24 @@ struct PreviewImageView: View {
             } else {
                 Image(systemName: "photo").font(.system(size: 40)).foregroundStyle(.tertiary)
             }
-            if showsCopiedPill {
-                Label("Copied", systemImage: "checkmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 30)
-                    .background(Capsule().fill(Color.black.opacity(0.72)))
-                    .transition(.opacity)
-                    .accessibilityHidden(true)  // announced by the controller
+            switch pill {
+            case .copied?:
+                pillLabel("Copied", symbol: "checkmark")
+            case .problem(let message)?:
+                pillLabel(message, symbol: "exclamationmark.triangle.fill")
+            case nil:
+                EmptyView()
             }
+        }
+        .overlay {
+            FileDragArea(path: path, dragImage: { loadedImage }, onMouseDown: { if $0 >= 2 { onDoubleClick() } })
         }
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-        .animation(.easeOut(duration: 0.15), value: showsCopiedPill)
+        .animation(.easeOut(duration: 0.15), value: pill)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Preview of \(title)")
         .accessibilityAddTraits(.isImage)
@@ -441,14 +447,91 @@ struct PreviewImageView: View {
             if let image = await source.load(path, Self.requestSide, displayScale) { loaded = (path, image) }
         }
     }
+
+    private var loadedImage: NSImage? {
+        loaded?.path == path ? loaded?.image : source.cached(path, Self.requestSide)
+    }
+
+    /// "✓ Copied", or a short problem ("This file is no longer there…"). Announced by the controller, so hidden here.
+    private func pillLabel(_ text: String, symbol: String) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(minHeight: 30)
+            .background(Capsule().fill(Color.black.opacity(0.72)))
+            .padding(.horizontal, 24)
+            .transition(.opacity)
+            .accessibilityHidden(true)
+    }
 }
 
-/// Dragging a result into another app hands over the file itself (Finder copies it, Mail attaches it).
-enum FileDrag {
-    static func provider(for path: String) -> NSItemProvider {
-        let url = URL(fileURLWithPath: path)
-        return NSItemProvider(contentsOf: url) ?? NSItemProvider(object: url as NSURL)
+/// A transparent AppKit view over a result (row or preview image) that drags the file and reports clicks.
+/// The drag puts `public.file-url` on the pasteboard (an `NSURL` writer), which Finder, Mail, Slack and browsers accept;
+/// a SwiftUI `NSItemProvider(contentsOf:)` becomes a file promise, which Slack and Chrome often refuse. The only
+/// operation offered is `.copy`, whatever modifier keys are held, so Finder never moves the user's file.
+struct FileDragArea: NSViewRepresentable {
+    let path: String
+    var dragImage: () -> NSImage?
+    var onMouseDown: (Int) -> Void
+
+    func makeNSView(context: Context) -> FileDragView {
+        let view = FileDragView()
+        view.setAccessibilityElement(false)  // the SwiftUI element above carries the label and actions
+        return view
     }
+
+    func updateNSView(_ view: FileDragView, context: Context) {
+        view.path = path
+        view.dragImage = dragImage
+        view.onMouseDown = onMouseDown
+    }
+}
+
+final class FileDragView: NSView, NSDraggingSource {
+    var path = ""
+    var dragImage: () -> NSImage? = { nil }
+    var onMouseDown: (Int) -> Void = { _ in }
+    private var mouseDownLocation: NSPoint?
+    /// Points the mouse must move with the button down before a drag starts.
+    static let dragThreshold: CGFloat = 4
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownLocation = event.locationInWindow
+        onMouseDown(event.clickCount)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        mouseDownLocation = nil
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = mouseDownLocation else { return }
+        let location = event.locationInWindow
+        guard hypot(location.x - start.x, location.y - start.y) >= Self.dragThreshold else { return }
+        mouseDownLocation = nil
+        guard !path.isEmpty else { return }
+        let url = URL(fileURLWithPath: path)
+        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        let image = dragImage() ?? NSWorkspace.shared.icon(forFile: path)
+        let side: CGFloat = 64
+        let point = convert(location, from: nil)
+        item.setDraggingFrame(NSRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side),
+                              contents: image)
+        beginDraggingSession(with: [item], event: event, source: self).animatesToStartingPositionsOnCancelOrFail = true
+    }
+
+    nonisolated func draggingSession(_ session: NSDraggingSession,
+                                     sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .copy
+    }
+
+    nonisolated func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
 }
 
 /// Wraps children onto new lines (tag chips).

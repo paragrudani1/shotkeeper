@@ -156,22 +156,64 @@ final class ServerPIDFileTests: XCTestCase {
 }
 
 final class SearchKeyTests: XCTestCase {
-    func testMapping() {
-        XCTAssertEqual(SearchKey.from(keyCode: 126, modifiers: [], characters: nil), .up)
-        XCTAssertEqual(SearchKey.from(keyCode: 125, modifiers: [], characters: nil), .down)
-        XCTAssertEqual(SearchKey.from(keyCode: 36, modifiers: [], characters: "\r"), .open)
-        XCTAssertEqual(SearchKey.from(keyCode: 76, modifiers: [], characters: nil), .open)
-        XCTAssertEqual(SearchKey.from(keyCode: 53, modifiers: [], characters: nil), .close)
-        XCTAssertEqual(SearchKey.from(keyCode: 49, modifiers: [], characters: " "), .space)
-        XCTAssertEqual(SearchKey.from(keyCode: 8, modifiers: [.command], characters: "c"), .copyImage)
-        XCTAssertEqual(SearchKey.from(keyCode: 15, modifiers: [.command], characters: "r"), .reveal)
-        XCTAssertEqual(SearchKey.from(keyCode: 16, modifiers: [.command], characters: "y"), .quickLook)
+    func testPlainKeys() {
+        XCTAssertEqual(SearchKey.plain(keyCode: 126, modifiers: []), .up)
+        XCTAssertEqual(SearchKey.plain(keyCode: 125, modifiers: []), .down)
+        XCTAssertEqual(SearchKey.plain(keyCode: 36, modifiers: []), .open)
+        XCTAssertEqual(SearchKey.plain(keyCode: 76, modifiers: []), .open)
+        XCTAssertEqual(SearchKey.plain(keyCode: 53, modifiers: []), .close)
+        XCTAssertEqual(SearchKey.plain(keyCode: 49, modifiers: []), .space)
         // Arrow keys carry .function/.numericPad flags on real events; those must not block the match.
-        XCTAssertEqual(SearchKey.from(keyCode: 126, modifiers: [.function, .numericPad], characters: nil), .up)
-        XCTAssertNil(SearchKey.from(keyCode: 8, modifiers: [], characters: "c"), "plain c is typing")
-        XCTAssertNil(SearchKey.from(keyCode: 8, modifiers: [.command, .shift], characters: "c"))
-        XCTAssertNil(SearchKey.from(keyCode: 126, modifiers: [.shift], characters: nil), "⇧↑ extends the text selection")
-        XCTAssertNil(SearchKey.from(keyCode: 49, modifiers: [.shift], characters: " "), "⇧Space is typing")
+        XCTAssertEqual(SearchKey.plain(keyCode: 126, modifiers: [.function, .numericPad]), .up)
+        XCTAssertNil(SearchKey.plain(keyCode: 8, modifiers: []), "plain c is typing")
+        XCTAssertNil(SearchKey.plain(keyCode: 126, modifiers: [.shift]), "⇧↑ extends the text selection")
+        XCTAssertNil(SearchKey.plain(keyCode: 49, modifiers: [.shift]), "⇧Space is typing")
+        XCTAssertNil(SearchKey.plain(keyCode: 8, modifiers: [.command]), "⌘ keys go through performKeyEquivalent")
+    }
+
+    func testCommandKeys() {
+        XCTAssertEqual(SearchKey.command(keyCode: 8, modifiers: [.command], characters: "c"), .copyImage)
+        XCTAssertEqual(SearchKey.command(keyCode: 15, modifiers: [.command], characters: "r"), .reveal)
+        XCTAssertEqual(SearchKey.command(keyCode: 16, modifiers: [.command], characters: "y"), .quickLook)
+        XCTAssertEqual(SearchKey.command(keyCode: 18, modifiers: [.command], characters: "1"), .chip(.all))
+        XCTAssertEqual(SearchKey.command(keyCode: 26, modifiers: [.command], characters: "7"), .chip(.design))
+        XCTAssertNil(SearchKey.command(keyCode: 28, modifiers: [.command], characters: "8"))
+        XCTAssertNil(SearchKey.command(keyCode: 8, modifiers: [.command, .shift], characters: "c"))
+        XCTAssertNil(SearchKey.command(keyCode: 8, modifiers: [], characters: "c"))
+    }
+
+    func testCommandKeysWorkOnOtherLayouts() {
+        // Russian: the C key types "с" (Cyrillic); the physical key decides.
+        XCTAssertEqual(SearchKey.command(keyCode: 8, modifiers: [.command], characters: "с"), .copyImage)
+        // AZERTY: the 1 key types "&" without Shift.
+        XCTAssertEqual(SearchKey.command(keyCode: 18, modifiers: [.command], characters: "&"), .chip(.all))
+        // Dvorak: the key labelled C is a different physical key; the typed letter decides.
+        XCTAssertEqual(SearchKey.command(keyCode: 34, modifiers: [.command], characters: "c"), .copyImage)
+        XCTAssertNil(SearchKey.command(keyCode: 8, modifiers: [.command], characters: "j"), "Dvorak J on the QWERTY C key")
+    }
+}
+
+final class SearchCopyTests: XCTestCase {
+    @MainActor
+    func testCopyWritesOneItemWithThePNGBytesAndTheFileURL() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("copy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8,
+                                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        let file = directory.appendingPathComponent("Shot.png")
+        try png.write(to: file)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("shotkeeper-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+
+        XCTAssertTrue(SearchActions.copyImage(file, to: pasteboard))
+        XCTAssertEqual(pasteboard.pasteboardItems?.count, 1)
+        let item = try XCTUnwrap(pasteboard.pasteboardItems?.first)
+        XCTAssertEqual(item.data(forType: .png), png, "the file's own bytes")
+        XCTAssertEqual(item.string(forType: .fileURL), file.absoluteString)
+        XCTAssertFalse(SearchActions.copyImage(directory.appendingPathComponent("gone.png"), to: pasteboard))
     }
 }
 
@@ -255,15 +297,30 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertNil(model.selectedURL)
     }
 
-    func testCopiedPillHidesAgain() async throws {
+    func testPillsHideAgain() async throws {
         let model = SearchViewModel(debounce: .zero) { _, _ in Self.page([]) }
         model.showCopied()
-        XCTAssertTrue(model.showsCopiedPill)
+        XCTAssertEqual(model.pill, .copied)
         try await Task.sleep(for: .seconds(SearchWindowState.copiedPillDuration + 0.4))
-        XCTAssertFalse(model.showsCopiedPill)
-        model.showCopied()
+        XCTAssertNil(model.pill)
+        model.showProblem(SearchWindowState.missingFileMessage)
+        XCTAssertEqual(model.pill, .problem(SearchWindowState.missingFileMessage))
         model.windowHidden()
-        XCTAssertFalse(model.showsCopiedPill)
+        XCTAssertNil(model.pill)
+    }
+
+    func testHidingABatchViewSearchesAgain() async {
+        let queries = LockedValue<[ScreenshotQuery]>([])
+        let model = SearchViewModel(debounce: .zero) { query, _ in
+            queries.withValue { $0.append(query) }
+            return query.paths == nil ? Self.page(["recent"]) : Self.page(["batch"])
+        }
+        model.showBatch(["/tmp/batch.png"])
+        await model.waitForPendingSearch()
+        model.windowHidden()
+        await model.waitForPendingSearch()
+        XCTAssertEqual(queries.value.last, ScreenshotQuery())
+        XCTAssertEqual(model.state.items.map(\.title), ["recent"], "the batch rows are gone")
     }
 
     func testSearchesTheRealIndex() async throws {

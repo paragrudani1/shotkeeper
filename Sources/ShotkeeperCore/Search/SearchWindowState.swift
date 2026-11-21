@@ -9,6 +9,22 @@ public enum SearchChip: String, CaseIterable, Equatable, Sendable {
         contentType?.displayName ?? "All"
     }
 
+    /// ⌘1…⌘7 select the chips in order (All = 1).
+    public var shortcutNumber: Int {
+        (Self.allCases.firstIndex(of: self) ?? 0) + 1
+    }
+
+    /// The chip for ⌘`number`, nil outside 1…7.
+    public static func forShortcut(_ number: Int) -> SearchChip? {
+        allCases.indices.contains(number - 1) ? allCases[number - 1] : nil
+    }
+
+    /// Chip tooltip: "Show only tweet screenshots (⌘2)".
+    public var help: String {
+        let action = self == .all ? "Show every type" : "Show only \(title.lowercased()) screenshots"
+        return "\(action) (⌘\(shortcutNumber))"
+    }
+
     /// The content_type filter; nil for All.
     public var contentType: ContentType? {
         switch self {
@@ -149,6 +165,12 @@ public struct SearchWindowState: Equatable, Sendable {
     public static let maxResults = 1000
     /// How long "✓ Copied" stays on the image.
     public static let copiedPillDuration: TimeInterval = 1.4
+    /// How long a problem message (file gone, copy failed) stays on the image.
+    public static let problemPillDuration: TimeInterval = 3
+    /// Open, Copy or Reveal on a file that was moved or deleted after it was indexed.
+    public static let missingFileMessage = "This file is no longer there. It was moved or deleted after it was indexed."
+    /// Copy Image could not read the image data.
+    public static let copyFailedMessage = "The image could not be copied."
 
     public private(set) var text = ""
     public private(set) var chip: SearchChip = .all
