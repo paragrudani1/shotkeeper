@@ -13,3 +13,6 @@
   repo https://github.com/paragrudani1/shotkeeper was created. Access for agents (token never printed):
   `git push` works through a credential helper in this clone's local `.git/config`; for API/CI use
   `/root/local-dev/shotkeeper-llm/bin/gh-shotkeeper <gh args>` (plain `gh` cannot see this repo).
+- 2026-11-21: pushing `.github/workflows/*` needs the token's **Workflows: Read and write** permission; without it GitHub rejects the push
+  ("refusing to allow a Personal Access Token to create or update workflow … without workflow scope"). The user added it to the
+  same token the same day; the credential helper and `gh-shotkeeper` now read a new secret-file path holding that token.
