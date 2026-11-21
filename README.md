@@ -17,7 +17,8 @@ Status: version 0.1.0, early. Read [Known limits](#known-limits) before relying 
   in Settings → General. A custom screenshot name prefix (`com.apple.screencapture name`) is recognized too.
 - **Renames** each new screenshot to a short title (up to 60 characters from the model, then cleaned up for use as a
   filename). It only renames when the model's title confidence is at least the **Minimum title confidence** setting
-  (default 0.50). Below that, the original name stays and the index records why. Renames and moves never replace an
+  (default 0.50). For Clairic this is the average per-token probability of the title, not the probability of the
+  whole title (which shrinks with length). Below that, the original name stays and the index records why. Renames and moves never replace an
   existing file: a name clash becomes "Title 2.png".
 - **Finder tags and Spotlight comment:** up to 8 tags, plus the description (up to 240 characters) as the Finder
   comment. Both are written as extended attributes. You can turn this off with "Write Finder tags and comment".
@@ -169,43 +170,50 @@ SHOTKEEPER_DOCKER_NETWORK=bridge scripts/test-linux.sh run shotkeeper-cli analyz
 
 For a local server that needs a bearer token, set `SHOTKEEPER_LOCAL_API_KEY`.
 
-## Cost estimate (Clairic)
+## Cost (Clairic)
 
-These numbers are **calculated from Cloudflare's documentation, not measured**: no live call has been made yet. What
-you are actually billed is reported in `usage.input_tokens` in each response. Shotkeeper stores that number per
-screenshot in the index (`billed_input_tokens`).
+These numbers are **measured** from live calls on 2026-11-21 (three sample screenshots; the raw responses are in
+`Tests/ShotkeeperCoreTests/Fixtures/clairic-live-2026-11-21-*.json`). What you are actually billed is reported in
+`usage.input_tokens` in each response. Shotkeeper stores that number per screenshot in the index
+(`billed_input_tokens`).
 
-Inputs:
+How a call is billed (only input tokens are billed; output tokens are free):
 
-- **Image tokens.** From the model page: round each side to a multiple of 32, then `(w/32) × (h/32) + 2`. Example: a
-  full-screen 16:10 Retina screenshot (2880×1800), downscaled to the default 1280 px long side, becomes 1280×800, so
-  40 × 25 + 2 = **1,002 tokens per pass**.
-- **Passes.** Clairic answers each `text` field in its own pass, puts all other fields in one shared pass, and bills
-  the full image again on every pass. Shotkeeper's schema ([field schema](docs/wiki/clairic-field-schema.md)) has 3
-  text fields (`title`, `description`, `key_text`) plus one shared pass for the rest, so **4 passes**:
-  4 × 1,002 = 4,008 image tokens.
-- **Schema tokens:** about **600**. This is a guess, scaled from the 472 tokens the docs' 6-field example used. No
-  `state` text is sent.
-- **Output tokens** are not billed.
+- **Image tokens.** Round each side to a multiple of 32, then `(w/32) × (h/32)`. A full-screen 16:10 Retina
+  screenshot (2880×1800), downscaled to the default 1280 px long side, becomes 1280×800: **1,000 tokens** (live
+  `usage.image_tokens`; the model page's 2 extra marker tokens do not show up in `usage`).
+- **One image copy per field.** Every response so far satisfies
+  `input_tokens = schema_tokens + 7 × image_tokens` exactly: each of Shotkeeper's 7 fields re-bills the image once.
+  The docs say non-text fields share one pass; live, they did not, and a `list` field cost one copy per item. The
+  first schema (tags as an 8-item list) billed the image 16 times: 19,448 tokens for one screenshot. Tags and source
+  are now plain text fields. `usage.passes` counts decode steps (33 to 125 here), not billed image copies.
+- **Schema tokens:** **1,242** per call for the current fields. No `state` text is sent.
 
-Per screenshot: 4,008 + 600 ≈ **4,600 input tokens**. Per 1,000 screenshots: ≈ 4.6 M tokens.
+| Sample (long side 1280) | Image tokens | Input tokens | Latency |
+|---|---|---|---|
+| Tweet, 1280×800 | 1,000 | 8,242 | 2.7 s |
+| Code editor, 1280×831 | 1,040 | 8,522 | 5.6 s |
+| Receipt (portrait), 591×1280 | 720 | 6,282 | 2.3 s |
+
+A full-screen screenshot costs 1,242 + 7 × 1,000 = **8,242 input tokens**. For 1,000 of them, 8.24 M tokens:
 
 | Price | Per 1,000 full-screen screenshots |
 |---|---|
-| Promo, $0.10 / M input tokens (until 2026-12-01) | 4.608 × $0.10 ≈ **$0.46** |
-| Standard, $0.24 / M input tokens | 4.608 × $0.24 ≈ **$1.11** |
+| Promo, $0.10 / M input tokens (until 2026-12-01) | 8.242 × $0.10 ≈ **$0.82** |
+| Standard, $0.24 / M input tokens | 8.242 × $0.24 ≈ **$1.98** |
 
-Screenshots of part of the screen that are smaller than 1280 px cost less. Retries count toward `usage.input_tokens`.
-One assumption is unchecked: that the one-item `source_app_or_site` list shares a pass. If it gets its own pass,
-there are 5 passes, about 5,610 tokens per screenshot: ≈ $0.56 (promo) or $1.35 (standard) per 1,000.
-Setting the longest side to 1024 px cuts the cost to about 3,200 tokens per screenshot, but small text gets harder
-to read.
+The earlier estimate from the docs ($0.46 promo / $1.11 standard) assumed 4 image copies per call and was about
+1.8× too low. Screenshots of part of the screen that are smaller than 1280 px cost less, and retries count toward
+`usage.input_tokens`. Setting the longest side to 1024 px cuts a full-screen screenshot to 1,242 + 7 × 640 = 5,722
+tokens ($0.57 promo / $1.37 standard per 1,000), but small text gets harder to read. Each field costs about one image
+copy, so dropping a field (for example `description`) would save roughly an eighth.
 
 ## Known limits
 
-- **No live Clairic call has been verified.** There were no Cloudflare credentials during development. The request
-  and response code follows the published schema, and the tests use fixtures built from the docs. Still unknown: the
-  real `usage.passes` (expected 4), the real `schema_tokens`, and how the titles are capitalized.
+- **Clairic has been verified live on only three synthetic screenshots** (2026-11-21: a tweet, a code editor and a
+  receipt). The request was accepted and parsed, and titles came back in sentence case. Small samples: tags can be
+  sparse (one tag for the code screenshot), and US-style dates like `11/08/2026` came back invalid
+  (`invalid_printed_temporal`), so no date was stored.
 - **Clairic is a preview model.** Cloudflare's terms say they may stop offering it. The promo price ends 2026-12-01.
 - **The macOS app has been built and unit-tested in CI (`macos-latest`) but never run on a real Mac.** None of the
   following has been tried: menu-bar rendering, window focus, the search panel's keys on a real keyboard, FSEvents on

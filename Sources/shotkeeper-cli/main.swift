@@ -4,11 +4,14 @@
 // Foundation-only). The macOS app downscales to `maxImageLongSide` first, so CLI costs are an upper bound; Clairic
 // rejects images over 4 MiB. Credentials come from the environment and are never printed.
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import ShotkeeperCore
 
 let usage = """
 Usage:
-  shotkeeper-cli analyze <image> [--backend clairic|local] [--endpoint URL] [--model NAME]
+  shotkeeper-cli analyze <image> [--backend clairic|local] [--endpoint URL] [--model NAME] [--raw PATH]
 
 Backends:
   clairic (default)  Cloudflare Workers AI @cf/cloudflare/clairic.
@@ -16,6 +19,10 @@ Backends:
   local              OpenAI-compatible /v1/chat/completions server (mlx_lm.server, LM Studio, llama-server, Ollama).
                      --endpoint defaults to http://127.0.0.1:8080, --model to mlx-community/Inkling-2-Mini-4bit.
                      Optional bearer token: SHOTKEEPER_LOCAL_API_KEY.
+
+Options:
+  --raw PATH         Save the raw model output as pretty JSON (for Clairic: the envelope's `result`), with the
+                     account ID and token scrubbed, and print `usage` plus every field's value and confidence.
 
 The image (PNG, JPEG or WebP) is sent as-is, without downscaling.
 """
@@ -32,6 +39,7 @@ struct Options {
     var backend = "clairic"
     var endpoint = "http://127.0.0.1:8080"
     var model = "mlx-community/Inkling-2-Mini-4bit"
+    var rawPath: String?
 }
 
 func parse(_ args: [String]) throws -> Options {
@@ -48,6 +56,7 @@ func parse(_ args: [String]) throws -> Options {
         case "--backend": o.backend = try value("--backend")
         case "--endpoint": o.endpoint = try value("--endpoint")
         case "--model": o.model = try value("--model")
+        case "--raw": o.rawPath = try value("--raw")
         case "-h", "--help": throw CLIError(message: usage)
         case let a where a.hasPrefix("--"): throw CLIError(message: "Unknown option \(a)\n\n\(usage)")
         case let a:
@@ -61,20 +70,41 @@ func parse(_ args: [String]) throws -> Options {
     return o
 }
 
+/// Keeps the last response body so `--raw` can save exactly what the server returned.
+final class RecordingTransport: HTTPTransport, @unchecked Sendable {
+    private let inner: any HTTPTransport
+    private let lock = NSLock()
+    private var body: Data?
+
+    init(inner: any HTTPTransport = URLSessionTransport()) { self.inner = inner }
+
+    var lastBody: Data? { lock.withLock { body } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await inner.send(request)
+        lock.withLock { body = data }
+        return (data, response)
+    }
+}
+
+let recorder = RecordingTransport()
+
 func makeAnalyzer(_ o: Options) throws -> any ScreenshotAnalyzer {
     let env = ProcessInfo.processInfo.environment
     switch o.backend {
     case "local":
         guard let url = URL(string: o.endpoint), url.scheme != nil else { throw CLIError(message: "Invalid --endpoint \(o.endpoint)") }
         return LocalOpenAICompatibleAnalyzer(configuration: .init(baseURL: url, model: o.model,
-                                                                   apiKey: env["SHOTKEEPER_LOCAL_API_KEY"]))
+                                                                   apiKey: env["SHOTKEEPER_LOCAL_API_KEY"]),
+                                             transport: recorder)
     default:
         let account = env["CLOUDFLARE_ACCOUNT_ID"] ?? ""
         let token = env["CLOUDFLARE_API_TOKEN"] ?? ""
         guard !account.isEmpty, !token.isEmpty else {
             throw CLIError(message: "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN for the clairic backend.")
         }
-        return CloudflareClairicAnalyzer(credentials: ClairicCredentials(accountID: account, apiToken: token))
+        return CloudflareClairicAnalyzer(credentials: ClairicCredentials(accountID: account, apiToken: token),
+                                         transport: recorder)
     }
 }
 
@@ -87,6 +117,46 @@ func describe(_ error: AnalyzerError) -> String {
     case .badRequest(let s, let m): return s == 0 ? "rejected before sending: \(m)" : "bad request \(s): \(m)"
     case .invalidResponse(let m): return "invalid response: \(m)"
     case .notConfigured(let m): return "not configured: \(m)"
+    }
+}
+
+/// Removes every configured secret from `text` (the response should never contain one; this is belt and braces).
+func scrub(_ text: String) -> String {
+    let env = ProcessInfo.processInfo.environment
+    var out = text
+    for key in ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "SHOTKEEPER_LOCAL_API_KEY"] {
+        if let secret = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines), secret.count >= 4 {
+            out = out.replacingOccurrences(of: secret, with: "<\(key)>")
+        }
+    }
+    return out
+}
+
+func fmt(_ v: AnalysisJSON?) -> String {
+    guard let v else { return "-" }
+    if let d = v.doubleValue { return String(format: "%.4g", d) }
+    if let data = try? v.encoded(), let s = String(data: data, encoding: .utf8) { return s }
+    return "?"
+}
+
+/// Saves the raw output and prints usage and a per-field summary. Clairic: `result` of the REST envelope.
+func saveRaw(_ body: Data, to path: String, backend: String) throws {
+    var payload: Any = try JSONSerialization.jsonObject(with: body)
+    if backend == "clairic", let root = payload as? [String: Any], let result = root["result"], !(result is NSNull) { payload = result }
+    let pretty = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    try Data((scrub(String(decoding: pretty, as: UTF8.self)) + "\n").utf8).write(to: URL(fileURLWithPath: path))
+    print("Raw output saved to \(path)")
+    guard backend == "clairic", let inner = try? AnalysisJSON.parse(pretty) else { return }
+    if let usage = inner["usage"]?.objectValue {
+        print("Usage: " + usage.keys.sorted().map { "\($0)=\(fmt(usage[$0]))" }.joined(separator: " "))
+    }
+    print("Truncated: \(fmt(inner["truncated"]))")
+    for (name, a) in (inner["answers"]?.objectValue ?? [:]).sorted(by: { $0.key < $1.key }) {
+        var parts = ["value=\(scrub(fmt(a["value"])))", "confidence=\(fmt(a["confidence"]))"]
+        for key in ["confidences", "valid", "p_null", "p_nulls", "guess", "failure_reason"] where a[key] != nil {
+            parts.append("\(key)=\(scrub(fmt(a[key])))")
+        }
+        print("  \(name): " + parts.joined(separator: " "))
     }
 }
 
@@ -111,7 +181,9 @@ let context = AnalysisContext(originalFilename: fileURL.lastPathComponent,
 print("Image: \(fileURL.lastPathComponent) \(image.mimeType) \(image.pixelWidth)x\(image.pixelHeight), \(data.count) bytes (sent as-is)")
 if options.backend == "clairic" {
     let tokens = ClairicFieldSchema.estimatedImageTokens(width: image.pixelWidth, height: image.pixelHeight)
-    print("Estimated image tokens per pass: \(tokens), expected passes: \(ClairicFieldSchema.expectedPasses)")
+    let total = ClairicFieldSchema.estimatedInputTokens(width: image.pixelWidth, height: image.pixelHeight)
+    print("Estimated image tokens per copy: \(tokens) × \(ClairicFieldSchema.imageCopiesPerCall) copies"
+          + " + \(ClairicFieldSchema.measuredSchemaTokens) schema ≈ \(total) input tokens")
 }
 
 let clock = ContinuousClock()
@@ -131,7 +203,9 @@ do {
     let ms = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
     print("Latency: \(Int(ms.rounded())) ms")
     print("Billed input tokens: \(analysis.billedInputTokens.map(String.init) ?? "n/a")")
+    if let path = options.rawPath, let body = recorder.lastBody { try saveRaw(body, to: path, backend: options.backend) }
 } catch let e as AnalyzerError {
+    if let path = options.rawPath, let body = recorder.lastBody { try? saveRaw(body, to: path, backend: options.backend) }
     fail("Analysis failed (\(analyzer.backendID)): \(describe(e))")
 } catch {
     fail("Analysis failed (\(analyzer.backendID)): \(error)")

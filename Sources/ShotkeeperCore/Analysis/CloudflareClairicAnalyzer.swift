@@ -30,7 +30,7 @@ public struct CloudflareClairicAnalyzer: ScreenshotAnalyzer {
     public static let maxBodyBytes = 16 * 1024 * 1024
     /// schema-input.json `images`: "embedded PNG, JPEG or WebP images".
     public static let supportedMimeTypes: Set<String> = ["image/png", "image/jpeg", "image/webp"]
-    /// Per-item tag confidence below which a tag is dropped.
+    /// Per-item confidence below which a list item is dropped (only for list-shaped answers, e.g. older schemas).
     public static let minimumTagConfidence = 0.3
 
     public let backendID = "clairic"
@@ -166,15 +166,23 @@ public struct CloudflareClairicAnalyzer: ScreenshotAnalyzer {
             }
         }
 
+        /// Tags arrive as one comma-separated text answer (current schema) or as a list (older schema, fixtures).
+        func tags() -> [String] {
+            if let s = text(AnalysisFields.tags) {
+                return s.split(whereSeparator: { $0 == "," || $0 == ";" || $0.isNewline }).map(String.init)
+            }
+            return list(AnalysisFields.tags)
+        }
+
         var title: String?
         var titleConfidence = 0.0
         if let raw = text(AnalysisFields.title), let stem = FilenameSanitizer.stem(from: raw) {
             title = stem
-            titleConfidence = min(1, max(0, answers[AnalysisFields.title]?["confidence"]?.doubleValue ?? 0))
+            titleConfidence = min(1, max(0, perTokenConfidence(answers[AnalysisFields.title]) ?? 0))
         }
 
         let contentType = text(AnalysisFields.contentType).flatMap { ContentType(rawValue: $0.lowercased()) } ?? .other
-        let source = list(AnalysisFields.sourceAppOrSite).lazy
+        let source = (text(AnalysisFields.sourceAppOrSite).map { [$0] } ?? list(AnalysisFields.sourceAppOrSite)).lazy
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
         let date = text(AnalysisFields.dateMentioned).flatMap(AnalysisNormalize.isoDate)
 
@@ -184,12 +192,27 @@ public struct CloudflareClairicAnalyzer: ScreenshotAnalyzer {
             sourceAppOrSite: source,
             contentType: contentType,
             description: text(AnalysisFields.description),
-            tags: TagNormalizer.normalize(list(AnalysisFields.tags)),
+            tags: TagNormalizer.normalize(tags()),
             keyText: text(AnalysisFields.keyText),
             dateMentioned: date,
             producedBy: producedBy,
             billedInputTokens: usage?["input_tokens"]?.intValue
         )
+    }
+
+    /// Title confidence on a per-token scale: `exp(log_probability / tokens)`, the geometric mean token probability.
+    /// schema-output.json: `confidence` is the "probability of the returned value" (live: `confidence_method`
+    /// `ar_sequence_probability`), so it shrinks with length; a good 7-token title scored 0.38 on the first live call
+    /// and would never pass the 0.5 rename threshold. `log_probability` ("of the generated sequence. Present only when
+    /// valid") and `tokens` ("completion tokens, including retries") are documented there too. Falls back to
+    /// `confidence` when either is missing.
+    static func perTokenConfidence(_ answer: AnalysisJSON?) -> Double? {
+        guard let answer else { return nil }
+        if let logP = answer["log_probability"]?.doubleValue, let tokens = answer["tokens"]?.doubleValue,
+           tokens > 0, logP <= 0, logP.isFinite {
+            return exp(logP / tokens)
+        }
+        return answer["confidence"]?.doubleValue
     }
 
     /// Error text from the REST envelope's `errors` (and `messages`). The element shape is not in the saved docs

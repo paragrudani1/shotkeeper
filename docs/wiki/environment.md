@@ -21,3 +21,8 @@
 - 2026-11-21 retro (phase-1/2 app sessions): the token permission gap surfaced only at push time, and a CI workaround was built
   for a transient "no tests on main" state. Responses: `AGENTS.md` now names the repo tooling and a no-workarounds rule;
   `CODING_STANDARDS.md` added for reviewers.
+- 2026-11-21 (later): Cloudflare credentials now live in the main checkout's `/root/.t3/projects/shotkeeper/.env.local`
+  (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, mode 600). Load them only inside the command that needs them:
+  `(set -a; . /root/.t3/projects/shotkeeper/.env.local; set +a; SHOTKEEPER_DOCKER_NETWORK=bridge scripts/test-linux.sh run shotkeeper-cli analyze <png> --raw <out.json>)`.
+  `--raw` scrubs both values from the saved JSON. Sample screenshots were made in a throwaway `python:3.12-slim` + Pillow
+  container, which was removed afterwards.
