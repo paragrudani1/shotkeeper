@@ -1,0 +1,14 @@
+{
+  "model": "clairic-27b",
+  "answers": {
+    "title": {"type": "text", "value": "Stripe invoice for October", "valid": true, "complete": true, "confidence": 0.64, "p_null": 0.01, "span": null},
+    "description": {"type": "text", "value": null, "valid": true, "complete": true, "confidence": 0.55, "p_null": 0.6, "span": null},
+    "key_text": {"type": "text", "value": "Invoice INV-2291 Amount due $1,080.00", "valid": true, "complete": true, "confidence": 0.9, "p_null": 0.0, "span": null},
+    "source_app_or_site": {"type": "list", "value": [], "confidences": [], "spans": [], "valid": true, "complete": true},
+    "content_type": {"type": "enum", "value": "receipt", "valid": true, "complete": true, "confidence": 0.95, "p_null": 0},
+    "tags": {"type": "list", "value": ["invoice", "billing"], "confidences": [0.8, 0.7], "valid": true, "complete": true},
+    "date_mentioned": {"type": "date", "value": null, "guess": "2026-10-02", "confidence": 0.31, "p_null": 0.69}
+  },
+  "truncated": false,
+  "usage": {"state_tokens": 0, "image_tokens": 642, "schema_tokens": 610, "input_tokens": 3178, "output_tokens": 61, "passes": 4}
+}
