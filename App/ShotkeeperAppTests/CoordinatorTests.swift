@@ -191,8 +191,15 @@ final class AnalyzerFactoryTests: XCTestCase {
         XCTAssertEqual(analyzer.configuration.model, OpenRouterBackend.defaultModel)
         XCTAssertEqual(analyzer.configuration.apiKey, "sk-or-v1-key")
         settings.openRouterModel = "thinkingmachines/inkling-2-mini-20261120"
+        try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
+                                      contains: "Finish setup")  // another model needs its own grant (S1)
+        settings = BackendGate.granting(.openRouter, expectedOpenRouterModel: "thinkingmachines/inkling-2-mini-20261120",
+                                        in: settings)
         let custom = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
             as? OpenAICompatibleAnalyzer)
+        let body = try AnalysisJSON.parse(XCTUnwrap(custom.makeRequest(messages: [], includeExtras: true).httpBody))
+        XCTAssertNil(body["provider"]?["only"],
+                     "another model is not pinned to the default model's providers")
         XCTAssertEqual(custom.configuration.model, "thinkingmachines/inkling-2-mini-20261120")
     }
 
