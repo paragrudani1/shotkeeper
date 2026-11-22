@@ -468,8 +468,6 @@ struct LocalInstallView: View {
         var retry: () -> Void
         var test: () async -> Result<String, AnalyzerFailure>
 
-        static let none = Actions(install: {}, cancel: {}, remove: {}, stopServer: {}, retry: {},
-                                  test: { .success("") })
     }
 
     let state: LocalInstallState
