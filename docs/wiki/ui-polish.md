@@ -329,7 +329,7 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
 - 2026-11-22: `setup-3-custom-rerun` fits three cards; the host wraps inside the narrow card ("gpu-box.lan").
   `menu-setup-unfinished` now shows a real reason ("Cloudflare account ID is not set") instead of a fixture string.
 
-### Consent re-review fixes (review of `4472f0b`)
+### Consent re-review fixes (review of `4472f0b`; commit `7a605ef`, macOS build fix `4202a98`, test fixes `9a57edc`; green run 44974939592)
 - 2026-11-22: **one choke point with a grant time.** `AppSettings.uploadGrants` replaces the set: one
   `UploadGrant(destination, grantedAt, endpoint)` per destination. `ScreenshotProcessor` returns
   `.skipped(.awaitingConsent)` when the selected backend's destination is not allowed OR the file's `capturedAt`
@@ -353,6 +353,10 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
 - 2026-11-22: step 4 slack is 1 s (`TryIt.slack`): the file is created after ⌘⇧4, so its date cannot be earlier than
   the step; 1 s only absorbs clock rounding.
 - 2026-11-22: Test Connection's grants live on the candidate copy only; a test asserts nothing is saved.
+- 2026-11-22: lessons from the first macOS run of `7a605ef`: a test that needs the local backend to *hold* a job
+  must give it a real image (a 3-byte "PNG" fails in the image preparer, which is a final failure, not a hold);
+  on a re-run step 2's box is ticked only when Cloudflare was allowed before, so a Custom user ticks it again.
+  The re-run's custom card names the endpoint like the dialog ("Keeps using http://gpu-box.lan:8080").
 
 ### What CI cannot check (Parag, on a real Mac)
 - First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
