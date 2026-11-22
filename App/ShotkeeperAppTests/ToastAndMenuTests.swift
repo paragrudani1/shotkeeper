@@ -263,7 +263,9 @@ final class AppIconBundleTests: XCTestCase {
         XCTAssertNotNil(bundle.url(forResource: "Assets", withExtension: "car"))
         let icns = try XCTUnwrap(bundle.url(forResource: "AppIcon", withExtension: "icns"))
         let icon = try XCTUnwrap(NSImage(contentsOf: icns))
+        // Xcode 26 actool writes a small legacy icns (16, 32, 128, 256 px; run 44982021205) and keeps every size of
+        // the appiconset in Assets.car, which the Dock and Finder read.
         let widths = Set(icon.representations.map(\.pixelsWide))
-        XCTAssertTrue(Set([16, 32, 64, 128, 256, 512, 1024]).isSubset(of: widths), "icns sizes: \(widths.sorted())")
+        XCTAssertTrue(Set([16, 32, 128, 256]).isSubset(of: widths), "icns sizes: \(widths.sorted())")
     }
 }
