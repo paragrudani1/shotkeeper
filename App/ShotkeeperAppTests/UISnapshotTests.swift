@@ -82,11 +82,12 @@ enum UISnapshotCatalog {
             // OpenRouter (Inkling 2 Mini through OpenRouter): empty, and ready to continue after a test.
             UISnapshot("setup-3-openrouter") { Fixtures.setup(.connect, choice: .openRouter) },
             UISnapshot("setup-3-openrouter-ready") {
-                Fixtures.setup(.connect, choice: .openRouter, openRouterKey: "fake", acknowledged: true, test: .succeeded)
+                Fixtures.setup(.connect, choice: .openRouter, test: .succeeded, openRouterKey: "fake", acknowledged: true)
             },
             UISnapshot("setup-3-openrouter-out-of-credits") {
-                Fixtures.setup(.connect, choice: .openRouter, openRouterKey: "fake", acknowledged: true, test: .failed(
-                    ConnectionTestText.failure(AnalyzerError.badRequest(status: 402, message: "x"), backend: .openRouter)))
+                Fixtures.setup(.connect, choice: .openRouter, test: .failed(
+                    ConnectionTestText.failure(AnalyzerError.badRequest(status: 402, message: "x"), backend: .openRouter)),
+                               openRouterKey: "fake", acknowledged: true)
             },
             UISnapshot("setup-3-openrouter-8gb") { Fixtures.setup(.connect, choice: .openRouter, memoryGB: 8) },
             UISnapshot("setup-4-waiting") { Fixtures.setup(.tryIt) },
