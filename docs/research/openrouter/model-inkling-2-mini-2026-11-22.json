@@ -1,0 +1,98 @@
+{
+  "architecture": {
+    "input_modalities": [
+      "text",
+      "image"
+    ],
+    "instruct_type": null,
+    "modality": "text+image->text",
+    "output_modalities": [
+      "text"
+    ],
+    "tokenizer": "Other"
+  },
+  "benchmarks": {
+    "artificial_analysis": {
+      "agentic_index": null,
+      "coding_index": null,
+      "cyber_index": null,
+      "decision_index": null,
+      "economics_index": 33,
+      "engineering_index": 27.6,
+      "finance_and_accounting_index": 35.3,
+      "healthcare_and_medical_index": null,
+      "intelligence_index": 20.1,
+      "legal_index": 31,
+      "multilingual_index": null,
+      "openness_index": null,
+      "strategy_and_ops_index": 35.2
+    },
+    "design_arena": []
+  },
+  "canonical_slug": "thinkingmachines/inkling-2-mini-20261120",
+  "context_length": 1048576,
+  "created": 1795227585,
+  "default_parameters": {},
+  "description": "Inkling 2 Mini is an open-weight multimodal looped transformer from Thinking Machines Lab, with 3.4B active parameters out of 26.4B total (MoE). Its middle layers run three times with shared...",
+  "endpoints": [
+    "/api/v1/chat/completions",
+    "/api/v1/completions",
+    "/api/v1/messages",
+    "/api/v1/responses"
+  ],
+  "expiration_date": null,
+  "hugging_face_id": "thinkingmachines/Inkling-2-Mini",
+  "id": "thinkingmachines/inkling-2-mini",
+  "knowledge_cutoff": null,
+  "links": {
+    "details": "/api/v1/models/thinkingmachines/inkling-2-mini-20261120/endpoints"
+  },
+  "name": "Thinking Machines: Inkling 2 Mini",
+  "per_request_limits": null,
+  "pricing": {
+    "completion": "0.0000003",
+    "input_cache_read": "0.000000015",
+    "prompt": "0.000000075"
+  },
+  "reasoning": {
+    "default_effort": "high",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+      "max",
+      "high",
+      "medium",
+      "low",
+      "minimal",
+      "none"
+    ]
+  },
+  "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logprobs",
+    "max_completion_tokens",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+  ],
+  "supported_voices": null,
+  "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65536
+  }
+}
