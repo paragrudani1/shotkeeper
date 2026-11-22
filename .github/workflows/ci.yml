@@ -107,6 +107,24 @@ jobs:
           fi
           ls -l "$OUT"
 
+      - name: Check the app icon in the bundle
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # PR 4: AppIcon.appiconset (scripts/make-icons.sh) must reach the Release app as AppIcon.icns + Assets.car.
+          APP="$DERIVED_DATA/Build/Products/Release/Shotkeeper.app"
+          ls -l "$APP/Contents/Resources"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' -c 'Print :CFBundleIconName' "$APP/Contents/Info.plist"
+          test -s "$APP/Contents/Resources/Assets.car"
+          test -s "$APP/Contents/Resources/AppIcon.icns"
+          ICONSET="$RUNNER_TEMP/AppIcon.iconset"
+          iconutil -c iconset -o "$ICONSET" "$APP/Contents/Resources/AppIcon.icns"
+          ls -l "$ICONSET"
+          # Next to the UI snapshots, so the artifact shows what the Dock and Finder get.
+          OUT="$GITHUB_WORKSPACE/build/ui-snapshots"
+          mkdir -p "$OUT"
+          for f in "$ICONSET"/*.png; do cp "$f" "$OUT/bundle-$(basename "$f")"; done
+
       - name: Upload UI snapshots
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

@@ -12,6 +12,8 @@ import ShotkeeperCore
 let usage = """
 Usage:
   shotkeeper-cli analyze <image> [--backend clairic|local] [--endpoint URL] [--model NAME] [--raw PATH]
+  shotkeeper-cli icon-svg app|glyph     Print the app icon or menu bar glyph SVG (core IconSVG) to stdout.
+                                        scripts/make-icons.sh writes design/icon/ and the asset catalog from it.
 
 Backends:
   clairic (default)  Cloudflare Workers AI @cf/cloudflare/clairic.
@@ -158,6 +160,16 @@ func saveRaw(_ body: Data, to path: String, backend: String) throws {
         }
         print("  \(name): " + parts.joined(separator: " "))
     }
+}
+
+// `icon-svg`: no network, no credentials; stdout only (the script decides where the file goes).
+if CommandLine.arguments.dropFirst().first == "icon-svg" {
+    switch Array(CommandLine.arguments.dropFirst(2)) {
+    case ["app"]: print(IconSVG.appIcon(), terminator: "")
+    case ["glyph"]: print(IconSVG.menuBarGlyph(), terminator: "")
+    default: fail(usage, code: 2)
+    }
+    exit(0)
 }
 
 let options: Options

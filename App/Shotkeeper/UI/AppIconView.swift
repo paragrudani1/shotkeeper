@@ -3,23 +3,24 @@ import ShotkeeperCore
 import SwiftUI
 
 /// The app icon (spec PR 4 "App icon", option A) as a vector view: an indigo squircle with a faint lighter top half,
-/// four white viewfinder corners and a white sparkle. Geometry: core `IconGeometry.appIcon`, shared with the menu
-/// bar glyph and PR 4's SVG / asset catalog export. Setup shows it at 72 pt.
+/// four white viewfinder corners and a white sparkle. Geometry: core `IconGeometry.appIcon` paths, the same ones
+/// `IconSVG` writes to `design/icon/AppIcon.svg` and the AppIcon asset catalog (`scripts/make-icons.sh`). This view has
+/// no transparent margin; the asset does (Apple's icon grid). Setup shows it at 72 pt.
 struct AppIconView: View {
     var size: CGFloat = 72
 
     var body: some View {
         let geometry = IconGeometry.appIcon
-        let squircle = RoundedRectangle(cornerRadius: geometry.backgroundCornerRadius * size, style: .continuous)
+        let squircle = IconPathShape(elements: geometry.backgroundPath)
         ZStack {
             squircle.fill(Color(nsColor: NSColor(srgbHex: IconGeometry.backgroundRGB)))
             VStack(spacing: 0) {
                 Color.white.opacity(IconGeometry.topHighlightOpacity).frame(height: size / 2)
                 Spacer(minLength: 0)
             }
-            ViewfinderCornersShape(geometry: geometry)
+            IconPathShape(elements: geometry.viewfinderPath)
                 .stroke(.white, style: StrokeStyle(lineWidth: geometry.cornerStroke * size, lineCap: .round, lineJoin: .round))
-            SparkleShape(geometry: geometry).fill(.white)
+            IconPathShape(elements: geometry.sparklePath()).fill(.white)
         }
         .frame(width: size, height: size)
         .clipShape(squircle)
@@ -37,9 +38,9 @@ struct MenuBarGlyphView: View {
     var body: some View {
         let geometry = IconGeometry.menuBarGlyph
         ZStack {
-            ViewfinderCornersShape(geometry: geometry)
+            IconPathShape(elements: geometry.viewfinderPath)
                 .stroke(style: StrokeStyle(lineWidth: max(1, geometry.cornerStroke * size), lineCap: .round, lineJoin: .round))
-            SparkleShape(geometry: geometry)
+            IconPathShape(elements: geometry.sparklePath())
         }
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
@@ -48,33 +49,20 @@ struct MenuBarGlyphView: View {
     }
 }
 
-/// The four viewfinder corners of `IconGeometry`, scaled to the rect.
-struct ViewfinderCornersShape: Shape {
-    let geometry: IconGeometry
+/// A core `IconPathElement` path (unit square, y down) scaled to the rect.
+struct IconPathShape: Shape {
+    let elements: [IconPathElement]
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        for corner in geometry.viewfinderCorners {
-            path.addLines(corner.map { rect.point($0) })
+        for element in elements {
+            switch element {
+            case .move(let p): path.move(to: rect.point(p))
+            case .line(let p): path.addLine(to: rect.point(p))
+            case .curve(let p, let c1, let c2): path.addCurve(to: rect.point(p), control1: rect.point(c1), control2: rect.point(c2))
+            case .close: path.closeSubpath()
+            }
         }
-        return path
-    }
-}
-
-/// The 4-point sparkle of `IconGeometry` (concave sides), scaled to the rect.
-struct SparkleShape: Shape {
-    let geometry: IconGeometry
-    var scale: Double = 1
-
-    func path(in rect: CGRect) -> Path {
-        let (tips, controls) = geometry.sparkle(scale: scale)
-        var path = Path()
-        path.move(to: rect.point(tips[0]))
-        for index in 0..<4 {
-            let control = rect.point(controls[index])
-            path.addCurve(to: rect.point(tips[(index + 1) % 4]), control1: control, control2: control)
-        }
-        path.closeSubpath()
         return path
     }
 }
