@@ -125,6 +125,49 @@ jobs:
           mkdir -p "$OUT"
           for f in "$ICONSET"/*.png; do cp "$f" "$OUT/bundle-$(basename "$f")"; done
 
+      - name: Compile the Icon Composer icon (actool)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # PR 4: App/Shotkeeper/AppIcon.icon (macOS 26 layered icon, scripts/make-icons.sh) next to the AppIcon
+          # appiconset. docs/research/icon-composer.md. Fails on any actool warning or error in the "built" case,
+          # which compiles the same inputs as the app target.
+          xcodegen --version
+          xcrun actool --version
+          echo "--- project file references to AppIcon.icon (expect one file in Resources, no icon.json/SVG entries):"
+          grep -n "AppIcon.icon\|icon.json\|1-corners.svg" App/Shotkeeper.xcodeproj/project.pbxproj || true
+          OUT="$GITHUB_WORKSPACE/build/ui-snapshots"
+          mkdir -p "$OUT"
+          compile() {
+            local name="$1"; shift
+            local dir="$RUNNER_TEMP/actool-$name"
+            mkdir -p "$dir"
+            echo "=== actool: $name"
+            xcrun actool "$@" --compile "$dir" --output-format human-readable-text --notices --warnings --errors \
+              --output-partial-info-plist "$dir/partial-info.plist" --app-icon AppIcon --target-device mac \
+              --minimum-deployment-target 14.0 --platform macosx 2>&1 | tee "$dir/actool.log"
+            ls -l "$dir"
+            [ -f "$dir/partial-info.plist" ] && plutil -p "$dir/partial-info.plist"
+            if [ -f "$dir/AppIcon.icns" ]; then
+              iconutil -c iconset -o "$dir/AppIcon.iconset" "$dir/AppIcon.icns"
+              for f in "$dir/AppIcon.iconset"/*.png; do cp "$f" "$OUT/actool-$name-$(basename "$f")"; done
+            fi
+            [ -f "$dir/Assets.car" ] && xcrun assetutil --info "$dir/Assets.car" \
+              | grep -E '"(AssetType|Name|RenditionName|Appearance|PixelWidth|Idiom)"' | sort | uniq -c | head -60 || true
+          }
+          # Informational: the .icon alone, and with the (undocumented) flag that stops actool from generating
+          # the pre-26 fallback images from the .icon.
+          compile icon-only App/Shotkeeper/AppIcon.icon || true
+          compile no-fallback-generation App/Shotkeeper/AppIcon.icon App/Shotkeeper/Assets.xcassets \
+            --enable-icon-stack-fallback-generation=disabled || true
+          # The app target's inputs, as Xcode passes them. This one must be clean.
+          compile built App/Shotkeeper/AppIcon.icon App/Shotkeeper/Assets.xcassets
+          if grep -qiE 'warning|error' "$RUNNER_TEMP/actool-built/actool.log"; then
+            echo "::error::actool reported warnings or errors for AppIcon.icon + Assets.xcassets"
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/actool-built/Assets.car"
+
       - name: Upload UI snapshots
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

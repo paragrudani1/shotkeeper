@@ -1,0 +1,26 @@
+{
+  "fill" : {
+    "solid" : "srgb:0.34510,0.33725,0.83922,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "1-corners.svg",
+          "name" : "1-corners"
+        }
+      ]
+    },
+    {
+      "layers" : [
+        {
+          "image-name" : "2-sparkle.svg",
+          "name" : "2-sparkle"
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

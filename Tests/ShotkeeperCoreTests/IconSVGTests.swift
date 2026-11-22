@@ -117,3 +117,47 @@ final class IconSVGTests: XCTestCase {
         }
     }
 }
+
+final class IconComposerBundleTests: XCTestCase {
+    func testIconJSONHasTheBackgroundFillAndTwoGroupsBackToFront() throws {
+        let json = IconComposerBundle.iconJSON()
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let fill = try XCTUnwrap(object["fill"] as? [String: Any])
+        XCTAssertEqual(fill["solid"] as? String, "srgb:0.34510,0.33725,0.83922,1.00000", "#5856D6")
+        let groups = try XCTUnwrap(object["groups"] as? [[String: Any]])
+        let images = groups.map { (($0["layers"] as? [[String: Any]])?.map { $0["image-name"] as? String }) ?? [] }
+        XCTAssertEqual(images, [["1-corners.svg"], ["2-sparkle.svg"]], "corners behind, sparkle in front")
+        XCTAssertEqual((object["supported-platforms"] as? [String: String])?["squares"], "shared")
+        XCTAssertTrue(json.contains(#""fill" : {"#), "Icon Composer's `\"key\" : value` formatting")
+    }
+
+    func testLayersAreTheCoreShapesOnTheFullCanvas() {
+        let files = Dictionary(uniqueKeysWithValues: IconComposerBundle.files().map { ($0.path, $0.contents) })
+        XCTAssertEqual(Set(files.keys), ["icon.json", "Assets/1-corners.svg", "Assets/2-sparkle.svg"])
+        let geometry = IconGeometry.appIcon
+        let place = { (p: IconPoint) in IconPoint(p.x * 1024, p.y * 1024) }
+        let corners = files["Assets/1-corners.svg"] ?? ""
+        XCTAssertTrue(corners.contains(IconSVG.pathData(geometry.viewfinderPath, place)))
+        XCTAssertTrue(corners.contains(#"stroke-width="57.344""#), "5.6% of 1024")
+        XCTAssertTrue(files["Assets/2-sparkle.svg"]?.contains(IconSVG.pathData(geometry.sparklePath(), place)) ?? false)
+        XCTAssertFalse(corners.contains("5856D6"), "no background in the layers: the fill is the document's")
+    }
+
+    /// `App/Shotkeeper/AppIcon.icon` must be the current output, file for file: run `scripts/make-icons.sh`.
+    func testCommittedIconComposerPackageMatchesTheGeometry() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let package = root.appendingPathComponent("App/Shotkeeper/AppIcon.icon")
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: package, includingPropertiesForKeys: [.isRegularFileKey]))
+        var committed: [String: String] = [:]
+        for case let url as URL in enumerator where (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+            let relative = String(url.standardizedFileURL.path.dropFirst(package.standardizedFileURL.path.count + 1))
+            committed[relative] = try String(contentsOf: url, encoding: .utf8)
+        }
+        let expected = Dictionary(uniqueKeysWithValues: IconComposerBundle.files().map { ($0.path, $0.contents) })
+        XCTAssertEqual(Set(committed.keys), Set(expected.keys), "AppIcon.icon has extra or missing files")
+        for (path, contents) in expected {
+            XCTAssertEqual(committed[path], contents, "\(path) is stale: run scripts/make-icons.sh")
+        }
+    }
+}
