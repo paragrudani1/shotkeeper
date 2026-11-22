@@ -13,3 +13,8 @@
 Facts and sources: [../research/model-backends.md](../research/model-backends.md).
 - 2026-11-21: first live Clairic calls succeeded (3 samples). Cost is ~1.8× the docs-based estimate; schema changed to
   scalar fields. See [clairic-field-schema](clairic-field-schema.md).
+- 2026-11-22: **third cloud backend: Inkling 2 Mini through OpenRouter** (`.openRouter`, branch
+  `t3/openrouter-inkling`). It is not the default and not recommended on any Mac (Parag decides later); setup shows
+  it as a third card, Settings → Model as the "OpenRouter" segment. It shares one OpenAI-compatible client with the
+  local and custom backends. Not tested live (no key on 2026-11-22). Details:
+  [openrouter-backend](openrouter-backend.md); facts: [../research/openrouter.md](../research/openrouter.md).
