@@ -112,7 +112,9 @@ final class SetupModel {
     init(services: SetupServices, flow: SetupFlow? = nil) {
         self.services = services
         let settings = services.settings()
-        let customHost = settings.backend == .customEndpoint ? AppSettings.normalizedHost(settings.customEndpointURL) : nil
+        // Named like the Settings confirmation: "http://gpu-box.lan:8080".
+        let customHost = settings.backend == .customEndpoint
+            ? CustomEndpointIdentity(url: settings.customEndpointURL)?.display : nil
         let cards = SetupCards.make(physicalMemoryBytes: services.physicalMemoryBytes,
                                     clairicLongSide: settings.maxImageLongSide, customEndpointHost: customHost)
         self.flow = flow ?? SetupFlow(settings: settings, cards: cards, loginItemEnabled: services.loginItemEnabled())
