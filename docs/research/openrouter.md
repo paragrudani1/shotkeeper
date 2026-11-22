@@ -156,7 +156,8 @@ https://openrouter.ai/docs/cookbook/administration/usage-accounting.md:
   `safetyRetention: false` (model-page snapshot). `data_collection: "deny"` therefore excludes neither. (The docs do
   not spell out the exact filter behind `deny`; this is the published per-endpoint policy it is based on.)
 
-**Turned on in Shotkeeper:** `provider: {"data_collection": "deny", "zdr": true, "require_parameters": true}`.
+**Turned on in Shotkeeper:** `provider: {"data_collection": "deny", "zdr": true, "require_parameters": true}`, plus
+`only: ["primeintellect", "io-net"]` for the default model (section above).
 `require_parameters` is not a privacy option: it keeps a provider that would ignore `reasoning`, `response_format` or
 `logprobs` from serving the request; both providers support every parameter Shotkeeper sends (table above).
 Not sent: `order`/`only` (pinning a provider would lose the fallback), `allow_fallbacks` (default true).
@@ -164,6 +165,18 @@ Not sent: `order`/`only` (pinning a provider would lose the fallback), `allow_fa
 Within OpenRouter itself: "OpenRouter does not store your prompts or responses, *unless* you opt in" to private
 logging or to "OpenRouter Use of Inputs/Outputs" (both off by default), or content is flagged as potential CSAM. It
 stores request metadata (token counts, latency) (https://openrouter.ai/docs/guides/privacy/data-collection.md).
+
+### Pinning the providers (`provider.only`; added 2026-11-22, review S1)
+
+https://openrouter.ai/docs/guides/routing/provider-selection.md, "Allowing Only Specific Providers": `only` is a
+"List of provider slugs to allow for this request". "Base Slug Matching": a base provider slug "matches **all**
+eligible endpoints for that provider, including any variants or regions"; "Every endpoint slug has the shape
+`provider[/variant][/region][/tier]`". The live endpoints API (`GET /api/v1/models/thinkingmachines/inkling-2-mini/endpoints`,
+re-read 2026-11-22 ~08:00 UTC) gives the tags `primeintellect/fp4` (PrimeIntellect) and `io-net/nvfp4` (Io Net), so
+the base slugs are **`primeintellect`** and **`io-net`** (also the `slug`s in `GET /api/v1/providers`). Shotkeeper sends
+`only: ["primeintellect", "io-net"]` for the default model only: another model's providers are not known in advance,
+so its consent names "the provider that serves <model>". "If no provider satisfies both [account allow list and
+`only`], the request fails with a 404."
 
 Policy links (all returned HTTP 200 on 2026-11-22):
 - OpenRouter privacy policy: https://openrouter.ai/privacy (linked from the data-collection page); terms
@@ -200,10 +213,24 @@ https://openrouter.ai/docs/api_reference/limits.md:
   from the upstream provider, and "fallback routing retries other providers for the same model automatically before
   the error reaches you". "Successful inference responses do not include `X-RateLimit-*` headers."
 
-Shotkeeper's mapping (`OpenRouterBackend.refineError`, `HTTPErrorMapping`): 401/403 → `unauthorized` (holds the queue),
-except a 403 with `error_type` `content_policy_violation` or `refusal` → `badRequest(403)` (that one file fails);
-402 with `limit_source == openrouter_in_flight_budget` → `rateLimited(Retry-After)` (retried); other 402 →
-`badRequest(402)` ("out of credits", not retried); 429 → `rateLimited`; 408/5xx → `serverError` (retried).
+404 and 503 for routing (added 2026-11-22, review nit):
+- **503** "There is no available model provider that meets your routing requirements" (Errors page, "Error codes"):
+  documented. The typed `provider_overloaded` (503, "temporarily overloaded. Retry after a short delay") is the
+  transient case and carries `error_type`.
+- **404** when no allowed provider can serve the request: documented for `only` ("the request fails with a 404",
+  provider-selection page); the typed `not_found` is "The requested resource (model, file, etc.) does not exist".
+  **Unverified: the exact 404 message** (often quoted as "No endpoints found …"); Shotkeeper does not match on it.
+
+Shotkeeper's mapping (`OpenRouterBackend.refineError`, `HTTPErrorMapping`), as revised 2026-11-22 (review S4):
+- 402 with a `Retry-After` header (or `limit_source == openrouter_in_flight_budget`) → `rateLimited` (retried); any
+  other 402 → `accountState` "OpenRouter is out of credits. Add credits, then choose Resume" (holds the queue).
+- 403 with `metadata.limit_source` (a budget) → `accountState` "Your OpenRouter key reached its spending limit…"
+  (holds); 403 with `error_type` `content_policy_violation` or `refusal` → `badRequest(403)` (that one file fails);
+  other 401/403 → `unauthorized` (holds).
+- 404 (except `image_not_found`) → `accountState` "OpenRouter has no provider for this model that Shotkeeper may
+  use…" (holds). 503 without `provider_overloaded` → `accountState` "No OpenRouter provider for this model meets
+  Shotkeeper's privacy settings right now…" (holds); `provider_overloaded` → `serverError` (retried).
+- 429 → `rateLimited`; 408/other 5xx → `serverError` (retried).
 
 ## Where the docs are silent (2026-11-22)
 - Image size limits per request or per image, and how many prompt tokens an image costs for this model.

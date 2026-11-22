@@ -59,15 +59,16 @@ App data lives in `~/Library/Application Support/Shotkeeper/`: `settings.json`, 
   The API token is stored in the macOS Keychain (service `dev.shotkeeper.Shotkeeper`), not in `settings.json`.
 - **OpenRouter (cloud):** each screenshot is downscaled on your Mac (longest side 1280 px by default) and sent to
   **OpenRouter** with your OpenRouter API key. OpenRouter passes it to a third-party provider that serves Inkling 2
-  Mini, **Prime Intellect or io.net**, under their data policies. Every request asks OpenRouter for zero data
-  retention (`zdr: true`) and for providers that do not collect data (`data_collection: "deny"`); on 2026-11-22 both
-  providers met both (`docs/research/openrouter.md`). If no provider qualifies, OpenRouter refuses the request
+  Mini, **Prime Intellect or io.net**, under their data policies. With the default model, requests are pinned to
+  exactly those two (`provider.only`). Every request asks OpenRouter for zero data retention (`zdr: true`) and for
+  providers that do not collect data (`data_collection: "deny"`); on 2026-11-22 both providers met both
+  (`docs/research/openrouter.md`). If no provider qualifies, OpenRouter refuses the request
   instead of sending it elsewhere. OpenRouter itself does not store prompts unless you opt in to logging in your
   OpenRouter account; it keeps request metadata (token counts, latency), and it announced in-flight CSAM screening of
   all requests, ZDR included (planned from 2026-10-27). Read [OpenRouter's privacy policy](https://openrouter.ai/privacy) and the
   [provider data policies](https://openrouter.ai/docs/guides/privacy/provider-logging). OpenRouter is its own
-  destination: allowing Cloudflare does not allow OpenRouter, and Settings asks before the first screenshot goes
-  there. The key is stored in the Keychain, not in `settings.json`.
+  destination, allowed per model: allowing Cloudflare does not allow OpenRouter, and choosing another model ID asks
+  again ("…to the provider that serves <model>") before the first screenshot goes there. The key is stored in the Keychain, not in `settings.json`.
 - **Local Inkling 2 Mini:** analysis runs in an `mlx_lm.server` process on your Mac that only listens on 127.0.0.1.
   Screenshots never leave the Mac. The internet is used only for the one-time install and model download.
 - **Custom endpoint:** screenshots go to the URL you enter. If that server is on another machine, they leave your Mac.
@@ -105,11 +106,13 @@ On first launch the setup window opens. You can open it again later from Setting
    [openrouter.ai/keys](https://openrouter.ai/keys). You can give the key a credit limit there.
 2. Add **credits** at [openrouter.ai/settings/credits](https://openrouter.ai/settings/credits). OpenRouter is prepaid:
    without credits every request fails with HTTP 402, and Shotkeeper shows "out of credits".
-3. In the setup window choose **OpenRouter · Inkling 2 Mini**, paste the key, read where screenshots go and tick the
-   box, then Continue (or use Settings → Model → OpenRouter, which asks before the first screenshot is sent).
-   **Test Connection** sends a generated test image only. The key goes to the Keychain.
+3. In the setup window choose **OpenRouter · Inkling 2 Mini**, paste the key, read where screenshots go, then press
+   **Agree and Continue** (Return). That button is the permission to send screenshots to OpenRouter and its
+   providers. Or use Settings → Model → OpenRouter, which asks before the first screenshot is sent. **Test
+   Connection** sends a generated test image only. The key goes to the Keychain.
 4. Optional: Settings → Model → OpenRouter → **Advanced** changes the model ID (default
-   `thinkingmachines/inkling-2-mini`).
+   `thinkingmachines/inkling-2-mini`). It is used when you press Return or leave the field, and another model needs
+   its own "Allow…".
 
 Each request turns reasoning off (`reasoning: {"effort": "none"}`; the model reasons by default), asks for JSON that
 matches Shotkeeper's schema (`response_format` json_schema), and asks for token `logprobs`. Facts and sources:
@@ -255,7 +258,8 @@ charged in `usage.cost` (US dollars); `shotkeeper-cli analyze --backend openrout
 - **OpenRouter has not been tested live.** No key was available on 2026-11-22, so the backend is built and tested only
   against responses written from OpenRouter's docs. Unverified until the first live call: that both providers really
   skip reasoning with `effort: "none"`, that they return `logprobs`, how strictly they follow the JSON schema, and the
-  cost per screenshot. Out of credits (HTTP 402) fails each screenshot instead of pausing the queue.
+  cost per screenshot. Out of credits, a spending limit or no eligible provider pauses the queue ("Needs attention");
+  fix it on openrouter.ai, then choose Resume.
 - **Clairic has been verified live on only three synthetic screenshots** (2026-11-21: a tweet, a code editor and a
   receipt). The request was accepted and parsed, and titles came back in sentence case. Small samples: tags can be
   sparse (one tag for the code screenshot), and US-style dates like `11/08/2026` came back invalid

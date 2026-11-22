@@ -36,6 +36,7 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
   digits or a date (incl. month/weekday names: "Nov 22, 2026"), not mostly the app/site name (more than half the
   words are the `source_app_or_site` words, site noise like "com" or generic words). A failure drops the title
   ("kept name: no title"); the other fields are still indexed. Only the OpenRouter profile applies the rules.
+  *Revised by the review fixes below (S5 and nits): fallback 0.7, app-name rule, CJK/Cyrillic, UI nouns, bytes.*
 - 2026-11-22 (`71a97b5`): **errors** (`OpenRouterBackend.refineError`, documented codes): 402 with
   `limit_source: openrouter_in_flight_budget` → `rateLimited(Retry-After)`; any other 402 → `badRequest(402)`,
   not retried, text "the model backend is out of credits (HTTP 402). Add credits, then try again" (Test Connection:
@@ -45,11 +46,10 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
   200 body (top-level `error` without `choices`, or `choices[0].error`) is mapped by its `code` the same way.
   Messages come from `error.message` (+ `error_type`); `UserFacingError` never shows them.
   - Consequence: running out of credits fails each new screenshot (toast each time) instead of holding the queue.
-    The brief asked for `badRequest` + readable text; holding would need a new `AnalyzerError` case. Open question for
-    Parag.
+    *Superseded by S4 below: it holds the queue.*
 - 2026-11-22 (`71a97b5`): **consent.** OpenRouter is its own `UploadDestination` and `UploadTarget` (`.openRouter`,
   host `openrouter.ai`). `UploadConsent.decide` and `grant(for:in:)` gained one case each; there is no other copy of
-  the rule. Cloudflare or a custom endpoint grant does not cover it, nor does an OpenRouter grant cover a custom
+  the rule. *S1 below adds the model to the identity.* Cloudflare or a custom endpoint grant does not cover it, nor does an OpenRouter grant cover a custom
   endpoint at openrouter.ai. Migration: `migrateLegacyConsent` only ever creates a Cloudflare grant, so old settings
   never grant OpenRouter (tested). `BackendGate.readiness` takes `hasOpenRouterKey` (default false: a caller that does
   not pass it never makes OpenRouter ready). Settings prompt: "Screenshots will be sent to OpenRouter, then to Prime
@@ -68,6 +68,7 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
   - **Deviation from "granted the same way Cloudflare is":** Continue also needs step 3's checkbox "I understand that
     my screenshots are sent to OpenRouter and then to Prime Intellect or io.net." Step 2's wording is the spec's and
     names Cloudflare only, so it is not informed consent for a third party. Step 2 is unchanged.
+    *Superseded by S2/S3 below: one "Agree and Continue" button, no checkbox, no dependence on step 2.*
 - 2026-11-22 (`8bbabe5`): **Settings → Model.** Segments "Clairic / OpenRouter / Local / Custom". The key field is the
   same `SecretField` as the Clairic token (saved 1 s after typing, used only on commit; B1 in
   [ui-polish](ui-polish.md)), with "Get a key" / "Add credits" links, the price line only once measured, an
@@ -89,6 +90,68 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
   snapshots too. Commit `c4da140` only fixed an argument order in the snapshot catalog (run 44996008629 failed to
   compile the test target).
 
+## Review fixes (review of `6ac2a57`, no blockers; Parag's orchestrator picked the options)
+- 2026-11-22 (S1): **consent matches where screenshots go.**
+  - For the default model the request carries `provider.only: ["primeintellect", "io-net"]` (base slugs from the
+    live endpoints API tags `primeintellect/fp4`, `io-net/nvfp4`; research note, "Pinning the providers"), so the
+    two providers the consent names are the only ones allowed. Another model gets no `only`.
+  - The grant identity includes the model: `UploadTarget.openRouter(model:)`, `UploadGrant.openRouterModel`,
+    `OpenRouterBackend.effectiveModel` (trimmed, empty = default). The rule stays in `UploadConsent.decide` /
+    `grant(for:in:)` only. Another model needs its own "Allow…", worded "Screenshots will be sent to OpenRouter,
+    then to the provider that serves <model>". `BackendGate.granting(.openRouter, expectedOpenRouterModel:)` grants
+    only the model the dialog named.
+  - OpenRouter keeps **one grant per model** (other destinations keep one), so switching back to the default model
+    reuses its original grant time. A model change counts as a destination change (Process Existing requests are
+    invalidated).
+  - Tests: `UploadConsentTests.testAnOpenRouterGrantCoversOnlyItsModel` (model change, every typed prefix, back to
+    the default), app `testAModelNameIsUsedOnlyOnCommit`.
+- 2026-11-22 (S2, S3): **setup grants OpenRouter from its own action.** Step 3's checkbox is gone; with a key the
+  footer's default button reads **"Agree and Continue"** (Return presses it). The section above it says
+  "“Agree and Continue” allows Shotkeeper to send each new screenshot to OpenRouter, then to Prime Intellect or
+  io.net." (or "…the provider that serves <model>"), and the button's tooltip and VoiceOver hint say the same.
+  `saveOpenRouterSetup(key:)` grants for the configured model from this action alone; step 2's "I Agree" plays no
+  part for OpenRouter.
+  - **Deviation:** step 2 stays as the spec wrote it ("Your screenshots go to your Cloudflare account", Cloudflare
+    checkbox), although a user who then picks OpenRouter has read Cloudflare wording there. The OpenRouter consent is
+    step 3's button, whose own text names OpenRouter and the providers.
+- 2026-11-22 (S4): **account states hold the queue.** New `AnalyzerError.accountState(String)` (not retryable; the
+  queue holds in "Needs attention" like `unauthorized` until Resume; the text is Shotkeeper's own):
+  - 402 without `Retry-After` → "OpenRouter is out of credits. Add credits, then choose Resume." 402 with
+    `Retry-After` (in-flight budget) stays `rateLimited`.
+  - 403 with `metadata.limit_source` → "Your OpenRouter key reached its spending limit. Raise the limit on
+    openrouter.ai or wait until it resets, then choose Resume."
+  - 404 (not `image_not_found`) → "OpenRouter has no provider for this model that Shotkeeper may use. Check the model
+    in Settings → Model, then choose Resume." 503 without `provider_overloaded` → "No OpenRouter provider for this
+    model meets Shotkeeper's privacy settings right now. Choose Resume to try again." (The exact 404 message is
+    unverified; the research note says so.)
+  - The toast and Test Connection show the same sentence. Tests: `ProcessingQueueTests.testAccountStateHoldsUntilResume`,
+    `OpenRouterAnalyzerTests` (402 both ways, 403 budget, 404, 503 both ways).
+- 2026-11-22 (S5): **app-name rule** rejects only a title with no informative word besides the app/site name (and
+  site noise or generic words): "Google Chrome" fails; "Google Chrome settings", "Visual Studio Code build error",
+  "App Store listing" pass.
+- 2026-11-22 (nits):
+  - With the logprobs profile and no logprobs in the reply, a parsed title is 0.7 (`unmeasuredConfidence`); repaired
+    stays 0.6.
+  - Title rules: CJK/Korean (年月日, 년월일, weekday characters) and Russian (month/weekday names, "г.") date-only titles
+    fail; CJK ideographs, kana and Hangul count 2 toward the 3-character minimum ("設定" passes, "設" does not); a
+    single UI noun as the whole title ("Settings", "Error", "Dashboard", "Page", "Login"…) is generic.
+  - Logprob matching rebuilds the text from each token's `bytes` when present and weights a token that straddles the
+    value's edge by the share of its bytes inside it.
+  - Arrow keys on the cards follow core's grid (`SetupCards.columns`, `SetupFlow.choose(moving:)`): in two rows of
+    two, ←/→ move within the row and ↑/↓ between rows, wrapping and skipping unavailable cards; in one row all four
+    step through it.
+  - The OpenRouter model field and the custom endpoint's model name field (`ModelNameField`) are used only on commit
+    (Return, focus leaving, the field going away; closing Settings and quitting via `commitAllSecretDrafts`), like
+    secrets: no rebuild per keystroke (`AppCoordinator.commitModelNameDraft`). Before, the custom model name saved
+    on every keystroke.
+  - CLI: the failure line goes through `scrub`. Test renamed to `testErrorMessageIsTheErrorMessageOrElseTheBodyPrefix`.
+    Fixtures README lists the `openrouter-*.json` files (the earlier edit had not applied) and the new test name.
+- 2026-11-22: **what changed for the local / custom backend** with the shared client (`71a97b5`), recorded here:
+  the missing-model error reads "No model name configured" (was "No local model name configured"); `invalidResponse`
+  texts say "Local server …"; a 2xx body carrying an `error` object (top level without `choices`, or
+  `choices[0].error`) is now mapped by its `code` like an HTTP status instead of "no choices[0].message"; request,
+  parse, repair and the 400 fallback are unchanged (all `OpenAICompatibleAnalyzerTests` pass unchanged).
+
 ## Live test
 - 2026-11-22: **skipped**: `OPENROUTER_API_KEY` is not in `.env.local` (names checked only) nor in the environment.
   Fixtures are doc-based (`Tests/ShotkeeperCoreTests/Fixtures/README.md`). To run it: add the key to `.env.local`,
@@ -100,5 +163,5 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
 
 ## Open questions
 - 2026-11-22: does `effort: "none"` really skip reasoning at both providers, and do they return logprobs? (Live test.)
-- 2026-11-22: hold the queue on "out of credits" instead of failing each file? (Parag.)
+- 2026-11-22: hold the queue on "out of credits" instead of failing each file? Answered by the review: it holds (S4).
 - 2026-11-22: make OpenRouter the default or recommended backend? (Parag, after the live test.)
