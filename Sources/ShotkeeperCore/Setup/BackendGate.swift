@@ -11,27 +11,22 @@ public enum BackendReadiness: Equatable, Sendable {
 }
 
 /// The consent gate (CODING_STANDARDS #2): no user screenshot goes to a cloud backend unless the user chose that
-/// backend and accepted sending to its destination. The app's analyzer factory, its folder watcher and the
-/// processor (which skips files while consent is missing) all ask this.
+/// backend and allowed its destination, and the screenshot was taken after that. The analyzer factory, the folder
+/// watcher and `ScreenshotProcessor` (the one choke point every file passes, whatever brought it there) ask this.
 ///
-/// Consent is per destination (`AppSettings.acceptedUploadDestinations`): `.cloudflare` from setup step 2's
-/// "I Agree" (its text names Cloudflare), `.customEndpoint` from the Settings confirmation that names the host,
-/// and only for that host. Test Connection is not gated: it sends only a generated image, never a user file.
+/// Consent is per destination with a time (`AppSettings.uploadGrants`): `.cloudflare` when setup saves Clairic after
+/// step 2's "I Agree", or from the Settings confirmation; `.customEndpoint` from the Settings confirmation naming the
+/// endpoint, for that endpoint only (scheme + host + port). Test Connection is not gated: it sends only a generated
+/// image, never a user file.
 public enum BackendGate {
     public static let consentReason = "Finish setup to allow where screenshots are sent (or allow it in Settings → Model)"
 
     /// True for backends that send screenshots off this Mac. A custom endpoint counts even when it is on
     /// 127.0.0.1: the app cannot tell where a URL really ends up.
     public static func sendsScreenshotsOffThisMac(_ backend: AppSettings.Backend) -> Bool {
-        switch backend {
-        case .clairic, .customEndpoint: return true
-        case .localInkling: return false
-        }
+        destination(of: backend) != nil
     }
 
-    /// - Parameter hasClairicToken: a non-empty Cloudflare API token is in the credential store.
-    /// The local backend is ready once chosen: the managed runtime reports "not installed" itself, and nothing
-    /// leaves the Mac, so it needs no consent.
     /// Where `backend` sends screenshots; nil for the local model.
     public static func destination(of backend: AppSettings.Backend) -> AppSettings.UploadDestination? {
         switch backend {
@@ -41,43 +36,71 @@ public enum BackendGate {
         }
     }
 
-    /// The user allowed sending to the selected backend's destination (always true for local). For a custom
-    /// endpoint the allowed host must be the URL's host.
-    public static func hasUploadConsent(_ settings: AppSettings) -> Bool {
-        guard let destination = destination(of: settings.backend) else { return true }
-        guard settings.acceptedUploadDestinations.contains(destination) else { return false }
+    /// The grant that covers the selected backend now: its destination's grant, and for a custom endpoint only
+    /// when it names the configured endpoint. Nil for local (nothing to grant) and when not allowed.
+    public static func activeGrant(_ settings: AppSettings) -> AppSettings.UploadGrant? {
+        guard let destination = destination(of: settings.backend), let grant = settings.grant(for: destination) else {
+            return nil
+        }
         if destination == .customEndpoint {
-            guard let host = AppSettings.normalizedHost(settings.customEndpointURL) else { return false }
-            return settings.acceptedCustomEndpointHost == host
+            guard let endpoint = CustomEndpointIdentity(url: settings.customEndpointURL), grant.endpoint == endpoint else {
+                return nil
+            }
         }
-        return true
+        return grant
     }
 
-    /// Returns `settings` with consent for `destination` granted (for a custom endpoint: its current host).
-    public static func granting(_ destination: AppSettings.UploadDestination, in settings: AppSettings) -> AppSettings {
-        var settings = settings
-        switch destination {
-        case .cloudflare:
-            settings.acceptedUploadDestinations.insert(.cloudflare)
-        case .customEndpoint:
-            guard let host = AppSettings.normalizedHost(settings.customEndpointURL) else { return settings }
-            settings.acceptedUploadDestinations.insert(.customEndpoint)
-            settings.acceptedCustomEndpointHost = host
-        }
-        return settings
+    /// The user allowed sending to the selected backend's destination (always true for local).
+    public static func hasUploadConsent(_ settings: AppSettings) -> Bool {
+        destination(of: settings.backend) == nil || activeGrant(settings) != nil
     }
 
-    /// The confirmation Settings shows before allowing the selected backend's destination: "Screenshots will be
-    /// sent to llm.lan" / "… to your Cloudflare account". Nil when nothing needs allowing (local, already allowed)
-    /// or there is no host to name yet.
-    public static func consentPrompt(for settings: AppSettings) -> String? {
+    /// The processor's rule for one file: local always; a cloud destination only when allowed AND the file was
+    /// taken at or after the grant. `explicitlyRequested` ("Process Existing Screenshots…", a user action on files
+    /// that already exist) skips the time rule but never the destination rule.
+    public static func mayAnalyze(fileCapturedAt capturedAt: Date, settings: AppSettings,
+                                  explicitlyRequested: Bool = false) -> Bool {
+        guard destination(of: settings.backend) != nil else { return true }
+        guard let grant = activeGrant(settings) else { return false }
+        return explicitlyRequested || capturedAt >= grant.grantedAt
+    }
+
+    /// The confirmation Settings shows before allowing the selected backend's destination, and the endpoint it
+    /// names. Nil when nothing needs allowing (local, already allowed) or there is no endpoint to name yet.
+    public static func consentRequest(for settings: AppSettings)
+        -> (prompt: String, destination: AppSettings.UploadDestination, endpoint: CustomEndpointIdentity?)? {
         guard let destination = destination(of: settings.backend), !hasUploadConsent(settings) else { return nil }
         switch destination {
         case .cloudflare:
-            return "Screenshots will be sent to your Cloudflare account"
+            return ("Screenshots will be sent to your Cloudflare account", .cloudflare, nil)
         case .customEndpoint:
-            return AppSettings.normalizedHost(settings.customEndpointURL).map { "Screenshots will be sent to \($0)" }
+            guard let endpoint = CustomEndpointIdentity(url: settings.customEndpointURL) else { return nil }
+            return ("Screenshots will be sent to \(endpoint.display)", .customEndpoint, endpoint)
         }
+    }
+
+    public static func consentPrompt(for settings: AppSettings) -> String? { consentRequest(for: settings)?.prompt }
+
+    /// `settings` with `destination` allowed from `now`. For a custom endpoint, `expectedEndpoint` is the one the
+    /// confirmation named: when the configured endpoint is no longer that one, nothing is granted. An existing
+    /// grant for the same destination and endpoint keeps its (earlier) time.
+    public static func granting(_ destination: AppSettings.UploadDestination, expectedEndpoint: CustomEndpointIdentity? = nil,
+                                in settings: AppSettings, at now: Date = Date()) -> AppSettings {
+        var settings = settings
+        let endpoint: CustomEndpointIdentity?
+        switch destination {
+        case .cloudflare:
+            endpoint = nil
+        case .customEndpoint:
+            guard let current = CustomEndpointIdentity(url: settings.customEndpointURL), current == expectedEndpoint else {
+                return settings
+            }
+            endpoint = current
+        }
+        if let existing = settings.grant(for: destination), existing.endpoint == endpoint { return settings }
+        settings.uploadGrants.removeAll { $0.destination == destination }
+        settings.uploadGrants.append(AppSettings.UploadGrant(destination: destination, grantedAt: now, endpoint: endpoint))
+        return settings
     }
 
     public static func readiness(settings: AppSettings, hasClairicToken: Bool) -> BackendReadiness {

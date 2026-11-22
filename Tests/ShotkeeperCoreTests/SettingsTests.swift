@@ -15,8 +15,7 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(s.maxImageLongSide, 1280)
         XCTAssertEqual(s.excludeRules, ExcludeRules())
         XCTAssertFalse(s.hasSeenPrivacyNotice)
-        XCTAssertEqual(s.acceptedUploadDestinations, [])
-        XCTAssertNil(s.acceptedCustomEndpointHost)
+        XCTAssertEqual(s.uploadGrants, [])
         XCTAssertTrue(s.showRenameToast)
         XCTAssertFalse(s.playRenameSound)
     }
@@ -28,7 +27,8 @@ final class SettingsTests: XCTestCase {
             return AppSettings.decode(Data("{\"backend\":\"\(backend)\",\"hasSeenPrivacyNotice\":\(flag)\(urlField)}".utf8))
         }
         let clairic = decode("clairic", flag: true)
-        XCTAssertEqual(clairic.acceptedUploadDestinations, [.cloudflare])
+        XCTAssertEqual(clairic.uploadGrants, [AppSettings.UploadGrant(destination: .cloudflare, grantedAt: .distantPast)],
+                       "an upgraded Clairic user keeps working; .distantPast covers screenshots already sent")
         XCTAssertTrue(clairic.hasSeenPrivacyNotice, "setup does not open again")
 
         let local = decode("localInkling", flag: true)
@@ -36,16 +36,14 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(local.hasSeenPrivacyNotice)
 
         let custom = decode("customEndpoint", flag: true, url: "http://LLM.lan:8080/v1")
-        XCTAssertEqual(custom.acceptedUploadDestinations, [.customEndpoint])
-        XCTAssertEqual(custom.acceptedCustomEndpointHost, "llm.lan")
+        XCTAssertEqual(custom.uploadGrants, [], "a custom endpoint is not migrated: Settings asks once, naming it")
 
-        XCTAssertEqual(decode("clairic", flag: false).acceptedUploadDestinations, [])
-        XCTAssertEqual(decode("customEndpoint", flag: true).acceptedUploadDestinations, [], "no URL, no host to allow")
+        XCTAssertEqual(decode("clairic", flag: false).uploadGrants, [])
 
-        // Once the key exists it is the truth: an emptied set is not re-seeded from the old flag.
+        // Once the key exists it is the truth: an emptied list is not re-seeded from the old flag.
         var saved = clairic
-        saved.acceptedUploadDestinations = []
-        XCTAssertEqual(AppSettings.decode(try saved.encoded()).acceptedUploadDestinations, [])
+        saved.uploadGrants = []
+        XCTAssertEqual(AppSettings.decode(try saved.encoded()).uploadGrants, [])
     }
 
     func testSettingsFileFromBeforeTheToastSettingsStillDecodes() throws {
@@ -103,8 +101,11 @@ final class SettingsTests: XCTestCase {
         s.clairicAccountID = "abc123"
         s.excludeRules.pause(for: 600, from: Date(timeIntervalSince1970: 1_800_000_000))
         s.hasSeenPrivacyNotice = true
-        s.acceptedUploadDestinations = [.cloudflare, .customEndpoint]
-        s.acceptedCustomEndpointHost = "127.0.0.1"
+        s.uploadGrants = [
+            .init(destination: .cloudflare, grantedAt: Date(timeIntervalSince1970: 1_800_000_000)),
+            .init(destination: .customEndpoint, grantedAt: Date(timeIntervalSince1970: 1_800_000_100),
+                  endpoint: CustomEndpointIdentity(url: URL(string: "http://127.0.0.1:8080/v1"))),
+        ]
         XCTAssertEqual(AppSettings.decode(try s.encoded()), s)
         XCTAssertFalse(String(decoding: try s.encoded(), as: UTF8.self).lowercased().contains("token"), "no secrets in settings")
     }

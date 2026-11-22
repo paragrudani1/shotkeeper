@@ -94,6 +94,9 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
 - **Setup/** (first-run setup; the app renders it)
   - `BackendGate.readiness(settings:hasClairicToken:) -> BackendReadiness` (`.ready`, `.needsConsent`,
     `.notConfigured(reason)`): the consent gate for the analyzer factory, and `mayWatch` for the folder watcher.
+    `mayAnalyze(fileCapturedAt:settings:explicitlyRequested:)` is the processor's per-file rule (destination allowed
+    and file taken after the grant); `consentRequest(for:)` + `granting(_:expectedEndpoint:in:at:)` for Settings'
+    confirmation. Grants: `AppSettings.uploadGrants`, `CustomEndpointIdentity` (scheme + host + port).
   - `SetupFlow` (5 `SetupStep`s, `showsBack`, `primary` title/enabled/`SetupPrimaryAction`, `advance()`, `back()`,
     `choose(_:)`), `SetupCards.make(physicalMemoryBytes:)` (the two step-3 cards), `ClairicPricing.perThousandText()`,
     `TryIt.apply(_:entry:to:)` (step 4 from a `ScreenshotEvent`), `ConnectionTestText.failure(_:backend:)`.

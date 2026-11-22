@@ -30,7 +30,21 @@ final class SetupModelTests: TempDirectoryTestCase {
         return model
     }
 
-    func testConsentIsStoredOnlyByIAgree() {
+    /// Settings-style Clairic configuration (no setup flow, so no grant).
+    private func configureClairicInSettings(_ coordinator: AppCoordinator) {
+        coordinator.setSecret("tok", for: .cloudflareAPIToken)
+        coordinator.updateSettings {
+            $0.backend = .clairic
+            $0.clairicAccountID = "acct"
+        }
+    }
+
+    /// Waits for pipeline events, up to 5 s.
+    private func waitForEvents(_ events: () -> [ScreenshotEvent], count: Int = 1) async throws {
+        for _ in 0..<500 where events().count < count { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    func testCloudflareIsAllowedOnlyByIAgreeThenClairicContinue() {
         let coordinator = makeCoordinator()
         let model = makeModel(coordinator)
         model.pressPrimary() // Get Started
@@ -45,12 +59,33 @@ final class SetupModelTests: TempDirectoryTestCase {
         model.pressPrimary()
         XCTAssertFalse(coordinator.settings.hasSeenPrivacyNotice, "Back and Get Started store nothing")
 
-        XCTAssertEqual(coordinator.settings.acceptedUploadDestinations, [])
+        XCTAssertEqual(coordinator.settings.uploadGrants, [])
         model.pressPrimary() // I Agree
         XCTAssertTrue(coordinator.settings.hasSeenPrivacyNotice)
-        XCTAssertEqual(coordinator.settings.acceptedUploadDestinations, [.cloudflare],
-                       "step 2 names Cloudflare, so it allows Cloudflare only (not a custom endpoint)")
+        XCTAssertEqual(coordinator.settings.uploadGrants, [], "I Agree alone grants nothing")
         XCTAssertEqual(model.flow.step, .connect)
+
+        model.accountID = "acct"
+        model.tokenDraft = "tok"
+        let before = Date()
+        model.pressPrimary() // Continue with Clairic
+        let grant = coordinator.settings.grant(for: .cloudflare)
+        XCTAssertNotNil(grant, "I Agree + Clairic's Continue allow Cloudflare")
+        XCTAssertGreaterThanOrEqual(grant?.grantedAt ?? .distantPast, before, "from now on, not before")
+        XCTAssertNil(coordinator.settings.grant(for: .customEndpoint))
+        model.stop()
+    }
+
+    func testPickingLocalInSetupGrantsNothing() {
+        let coordinator = makeCoordinator()
+        coordinator.updateSettings { $0.backend = .localInkling }
+        let model = makeModel(coordinator)
+        model.pressPrimary()
+        model.flow.consentChecked = true
+        model.pressPrimary()
+        model.choose(.localInkling)
+        model.pressPrimary() // Skip (not installed)
+        XCTAssertEqual(coordinator.settings.uploadGrants, [], "no silent Cloudflare grant for a Local user")
         model.stop()
     }
 
@@ -93,14 +128,14 @@ final class SetupModelTests: TempDirectoryTestCase {
         coordinator.startServices()
         defer { coordinator.stopServices() }
         // E.g. entered in Settings after closing setup at step 1.
-        coordinator.saveClairicSetup(accountID: "acct", token: "tok")
+        configureClairicInSettings(coordinator)
         XCTAssertFalse(coordinator.settings.hasSeenPrivacyNotice)
         XCTAssertEqual(coordinator.readiness, .needsConsent)
         XCTAssertFalse(coordinator.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
         XCTAssertEqual(coordinator.notWatchingReason, "Not allowed to send screenshots yet")
 
-        coordinator.acceptUploadConsent()
+        coordinator.allowUploads(to: .cloudflare, endpoint: nil) // the Settings confirmation
         XCTAssertTrue(coordinator.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is CloudflareClairicAnalyzer)
     }
@@ -117,7 +152,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         defer { coordinator.stopServices() }
         coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
         XCTAssertTrue(coordinator.isWatching)
-        coordinator.saveClairicSetup(accountID: "acct", token: "tok")
+        configureClairicInSettings(coordinator)
         XCTAssertEqual(coordinator.readiness, .needsConsent)
         XCTAssertTrue(coordinator.isSkippingForConsent)
         XCTAssertEqual(MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S").status.detail,
@@ -133,13 +168,70 @@ final class SetupModelTests: TempDirectoryTestCase {
         guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
         XCTAssertEqual(report.outcome, .skipped(.awaitingConsent))
 
-        coordinator.acceptUploadConsent()
+        coordinator.allowUploads(to: .cloudflare, endpoint: nil)
         XCTAssertEqual(coordinator.readiness, .ready)
         await queue.waitUntilIdle()
         let queued = await queue.queuedCount
         XCTAssertEqual(queued, 0, "nothing was held for after the consent")
         XCTAssertTrue(FileManager.default.fileExists(atPath: shot.path), "the file keeps its name")
         XCTAssertNil(coordinator.indexEntry(atPath: shot.standardizedFileURL.path), "never analyzed")
+    }
+
+    /// Consent re-review blocker: jobs held by Local ("not installed") were resumed by the Clairic rebuild and
+    /// uploaded. The processor's time rule skips them: they were taken before Cloudflare was allowed.
+    func testHeldJobsAreNotSentToADestinationAllowedLater() async throws {
+        let coordinator = makeCoordinator()
+        let shot = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
+            .appendingPathComponent("Screenshot 2026-11-21 at 11.00.00.png")
+        try Data("png".utf8).write(to: shot)
+        coordinator.startServices()
+        defer { coordinator.stopServices() }
+        // 1. Setup closed without agreeing. 2. Local in Settings, not installed: the job is held.
+        coordinator.updateSettings { $0.backend = .localInkling }
+        let queue = try XCTUnwrap(coordinator.queue)
+        await queue.enqueue(shot)
+        for _ in 0..<500 {
+            if case .error = coordinator.queueStatus { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard case .error = coordinator.queueStatus else { return XCTFail("held as not installed: \(coordinator.queueStatus)") }
+        // 3. Setup again: I Agree, still Local, still held.
+        coordinator.acceptPrivacyStep()
+        var events: [ScreenshotEvent] = []
+        let observer = coordinator.addEventObserver { events.append($0) }
+        defer { coordinator.removeEventObserver(observer) }
+        // 4. Clairic + Continue: the rebuild resumes the queue.
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok")
+        XCTAssertEqual(coordinator.readiness, .ready)
+        try await waitForEvents({ events })
+        await queue.waitUntilIdle()
+        guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
+        XCTAssertEqual(report.outcome, .skipped(.awaitingConsent), "taken before Cloudflare was allowed")
+        XCTAssertNotEqual(coordinator.indexEntry(atPath: shot.standardizedFileURL.path)?.status, .done)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shot.path))
+    }
+
+    /// Consent re-review: a later file event (a Preview save, moving the file back) re-queues a file that was
+    /// skipped before consent. Its creation date still predates the grant, so it is skipped again.
+    func testALaterFileEventDoesNotSendAFileTakenBeforeConsent() async throws {
+        let coordinator = makeCoordinator()
+        let shot = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
+            .appendingPathComponent("Screenshot 2026-11-21 at 12.00.00.png")
+        try Data("png".utf8).write(to: shot)
+        try await Task.sleep(for: .milliseconds(20))
+        coordinator.acceptPrivacyStep()
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok") // Cloudflare allowed now, after the file
+        coordinator.startServices()
+        defer { coordinator.stopServices() }
+        try Data("edited in Preview".utf8).write(to: shot) // same file, same creation date
+        var events: [ScreenshotEvent] = []
+        let observer = coordinator.addEventObserver { events.append($0) }
+        defer { coordinator.removeEventObserver(observer) }
+        let queue = try XCTUnwrap(coordinator.queue)
+        await queue.enqueue(shot) // what the watcher does for the event
+        try await waitForEvents({ events })
+        guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
+        XCTAssertEqual(report.outcome, .skipped(.awaitingConsent))
     }
 
     func testLocalNeedsNoUploadConsent() {
@@ -286,7 +378,6 @@ final class SetupModelTests: TempDirectoryTestCase {
             $0.customEndpointURL = URL(string: "http://gpu-box.lan:8080")
             $0.customModelName = "m"
             $0.hasSeenPrivacyNotice = true
-            $0.acceptedUploadDestinations = [.cloudflare]
         }
         coordinator.setSecret("tok", for: .cloudflareAPIToken)
         coordinator.updateSettings { $0.clairicAccountID = "acct" }
@@ -296,23 +387,30 @@ final class SetupModelTests: TempDirectoryTestCase {
         XCTAssertEqual(model.current.primary.title, "Continue")
         model.pressPrimary() // Return on step 3
         XCTAssertEqual(coordinator.settings.backend, .customEndpoint, "not silently switched to Clairic")
+        XCTAssertNil(coordinator.settings.grant(for: .cloudflare), "a re-run that keeps Custom grants Cloudflare nothing")
         model.stop()
     }
 
-    func testCustomEndpointNeedsItsOwnConsentForItsHost() {
+    func testCustomEndpointNeedsItsOwnConsentForItsEndpoint() {
         let coordinator = makeCoordinator()
-        coordinator.acceptUploadConsent()
+        coordinator.allowUploads(to: .cloudflare, endpoint: nil)
         coordinator.updateSettings {
             $0.backend = .customEndpoint
             $0.customEndpointURL = URL(string: "http://gpu-box.lan:8080")
             $0.customModelName = "m"
         }
         XCTAssertEqual(coordinator.readiness, .needsConsent)
-        XCTAssertEqual(BackendGate.consentPrompt(for: coordinator.settings), "Screenshots will be sent to gpu-box.lan")
-        coordinator.allowCustomEndpointUploads()
+        let request = BackendGate.consentRequest(for: coordinator.settings)
+        XCTAssertEqual(request?.prompt, "Screenshots will be sent to http://gpu-box.lan:8080")
+        // The URL changed while the dialog was open: "Allow" grants nothing.
+        coordinator.updateSettings { $0.customEndpointURL = URL(string: "http://gpu-box.lan:9090") }
+        coordinator.allowUploads(to: .customEndpoint, endpoint: request?.endpoint)
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        coordinator.updateSettings { $0.customEndpointURL = URL(string: "http://gpu-box.lan:8080") }
+        coordinator.allowUploads(to: .customEndpoint, endpoint: request?.endpoint)
         XCTAssertEqual(coordinator.readiness, .ready)
-        coordinator.updateSettings { $0.customEndpointURL = URL(string: "https://elsewhere.example.com") }
-        XCTAssertEqual(coordinator.readiness, .needsConsent, "another host is asked again")
+        coordinator.updateSettings { $0.customEndpointURL = URL(string: "http://gpu-box.lan:9090") }
+        XCTAssertEqual(coordinator.readiness, .needsConsent, "another port is another endpoint: asked again")
     }
 
     func testFinishAppliesLoginItemAndCloses() {

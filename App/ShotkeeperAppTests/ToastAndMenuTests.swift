@@ -243,7 +243,7 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
         XCTAssertNil(state.download)
 
         // Consent given but the backend step skipped: still "Finish Setup…".
-        coordinator.acceptUploadConsent()
+        coordinator.acceptPrivacyStep()
         XCTAssertTrue(MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S").showsFinishSetup)
 
         coordinator.saveClairicSetup(accountID: "acct", token: "tok")

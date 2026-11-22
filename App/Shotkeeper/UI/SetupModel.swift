@@ -15,7 +15,7 @@ struct SetupServices {
     var runtimePhase: @MainActor () -> RuntimePhase
     var readiness: @MainActor () -> BackendReadiness
     var isPaused: @MainActor () -> Bool
-    /// Step 2 "I Agree".
+    /// Step 2 "I Agree": the privacy step is done (grants nothing; Clairic's Continue allows Cloudflare).
     var acceptConsent: @MainActor () -> Void
     /// Step 3 "Continue" with Clairic: the token goes to the Keychain here (empty = keep the saved one).
     var saveClairic: @MainActor (_ accountID: String, _ token: String) -> Void
@@ -48,7 +48,7 @@ struct SetupServices {
             runtimePhase: { coordinator.runtimePhase },
             readiness: { coordinator.readiness },
             isPaused: { coordinator.isPaused },
-            acceptConsent: { coordinator.acceptUploadConsent() },
+            acceptConsent: { coordinator.acceptPrivacyStep() },
             saveClairic: { account, token in coordinator.saveClairicSetup(accountID: account, token: token) },
             chooseLocal: { coordinator.chooseLocalBackend($0) },
             refreshLocal: { await coordinator.localRuntime.refresh(for: $0) },

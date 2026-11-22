@@ -9,9 +9,9 @@ public enum SkipReason: Equatable, Sendable {
     case alreadyIndexed
     /// The user restored this file's original name with Undo; Shotkeeper leaves it alone from then on.
     case restoredByUndo
-    /// The selected backend sends screenshots off this Mac and the user has not allowed that destination
-    /// (`BackendGate.hasUploadConsent`). Skipped like Pause, not held: a held file would be uploaded the moment
-    /// consent is given, although it was taken before.
+    /// The selected backend sends screenshots off this Mac, and the user has not allowed that destination, or the
+    /// file was taken before they did (`BackendGate.mayAnalyze`). Skipped like Pause, not held, and checked on every
+    /// run, so neither a resumed queue nor a later file event uploads a screenshot taken before the consent.
     case awaitingConsent
 }
 
@@ -108,19 +108,21 @@ public final class ScreenshotProcessor: Sendable {
     }
 
     /// Suitable as a `ProcessingQueue` handler: `{ _ = try await processor.process($0) }`.
-    public func process(_ url: URL) async throws -> ProcessingOutcome {
-        try await processWithReport(url).outcome
+    public func process(_ url: URL, explicitlyRequested: Bool = false) async throws -> ProcessingOutcome {
+        try await processWithReport(url, explicitlyRequested: explicitlyRequested).outcome
     }
 
     /// `process(_:)` plus the original path and the undo record id (for the rename toast).
-    public func processWithReport(_ url: URL) async throws -> ProcessingReport {
+    /// - Parameter explicitlyRequested: the user asked for this existing file ("Process Existing Screenshots…"), so
+    ///   a file taken before the destination was allowed may be sent. The destination must still be allowed.
+    public func processWithReport(_ url: URL, explicitlyRequested: Bool = false) async throws -> ProcessingReport {
         let original = url.standardizedFileURL
         var undoRecordID: UUID?
-        let outcome = try await process(original, undoRecordID: &undoRecordID)
+        let outcome = try await process(original, explicitlyRequested: explicitlyRequested, undoRecordID: &undoRecordID)
         return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: undoRecordID)
     }
 
-    private func process(_ url: URL, undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
+    private func process(_ url: URL, explicitlyRequested: Bool, undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
         let url = url.standardizedFileURL
         let settings = self.settings()
         let fm = FileManager.default
@@ -133,7 +135,8 @@ public final class ScreenshotProcessor: Sendable {
         case .rule(let rule)?: return .skipped(.excluded(rule))
         case nil: break
         }
-        guard BackendGate.hasUploadConsent(settings) else { return .skipped(.awaitingConsent) }
+        guard BackendGate.mayAnalyze(fileCapturedAt: capturedAt, settings: settings,
+                                     explicitlyRequested: explicitlyRequested) else { return .skipped(.awaitingConsent) }
 
         let rowAtPath = try index.lookup(byPath: url.path)
         if rowAtPath?.restoredByUndo == true { return .skipped(.restoredByUndo) }

@@ -14,9 +14,12 @@ public enum SetupStep: Int, CaseIterable, Sendable {
 public enum SetupPrimaryAction: Equatable, Sendable {
     /// Step 1 "Get Started", step 4 "Skip"/"Continue".
     case next
-    /// Step 2 "I Agree": store the upload consent (the only place it is stored).
+    /// Step 2 "I Agree": record that the privacy step was accepted. It grants nothing by itself: Cloudflare is
+    /// allowed only when step 3 then saves Clairic, so a re-run that keeps Local or a custom endpoint, or a user who
+    /// picks Local, never gets a silent Cloudflare grant.
     case acceptConsent
-    /// Step 3 "Continue": save the chosen backend (the token goes to the Keychain now, never earlier).
+    /// Step 3 "Continue": save the chosen backend (the token goes to the Keychain now, never earlier); for Clairic
+    /// this is when `.cloudflare` is allowed (only reachable after step 2's "I Agree").
     case saveConnection(AppSettings.Backend)
     /// Step 3 "Skip": change nothing; step 4 then shows that no model is connected.
     case skipConnection
@@ -216,8 +219,9 @@ public struct TryItResult: Equatable, Sendable {
 
 /// Step 4 rules. Pure: the app feeds it the coordinator's pipeline events (the same ones the toast uses).
 public enum TryIt {
-    /// A screenshot taken this long before step 4 opened still counts (macOS writes the file a moment after ⌘⇧4).
-    public static let slack: TimeInterval = 5
+    /// Clock tolerance only: the file is created after ⌘⇧4, so its date can only be later than the moment the user
+    /// could have pressed it on this step.
+    public static let slack: TimeInterval = 1
     public static let waitingText = "Waiting for a new screenshot…"
     public static let instruction = "Take a screenshot of anything on your screen with ⌘⇧4. Shotkeeper shows you the result here."
     public static let notConnectedText = "Shotkeeper is not connected to a model yet, so it cannot name screenshots. "

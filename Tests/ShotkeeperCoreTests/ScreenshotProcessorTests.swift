@@ -21,7 +21,7 @@ final class ScreenshotProcessorTests: XCTestCase {
         undoLog = UndoLog(fileURL: dir.url.appendingPathComponent("state/undo.jsonl"))
         writer = RecordingMetadataWriter()
         var configured = AppSettings()
-        configured.acceptedUploadDestinations = [.cloudflare] // a user who allowed the default Clairic backend
+        configured.uploadGrants = [AppSettings.cloudflareSinceEver] // a user who allowed the default Clairic backend
         settings = Locked(configured)
     }
 
@@ -152,7 +152,7 @@ final class ScreenshotProcessorTests: XCTestCase {
     func testFilesAreSkippedWhileTheDestinationIsNotAllowed() async throws {
         let source = try screenshot()
         let analyzer = StubAnalyzer(analysis(title: "Secret"))
-        settings.mutate { $0.acceptedUploadDestinations = [] }
+        settings.mutate { $0.uploadGrants = [] }
         let outcome = try await processor(analyzer).process(source)
         XCTAssertEqual(outcome, .skipped(.awaitingConsent))
         XCTAssertEqual(analyzer.calls.get.count, 0)
@@ -161,7 +161,7 @@ final class ScreenshotProcessorTests: XCTestCase {
 
         // Cloudflare consent does not cover a custom endpoint.
         settings.mutate {
-            $0.acceptedUploadDestinations = [.cloudflare]
+            $0.uploadGrants = [AppSettings.cloudflareSinceEver]
             $0.backend = .customEndpoint
             $0.customEndpointURL = URL(string: "http://192.168.1.5:8080")
         }
@@ -169,10 +169,35 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(custom, .skipped(.awaitingConsent))
 
         // The local model needs no consent.
-        settings.mutate { $0.acceptedUploadDestinations = []; $0.backend = .localInkling }
+        settings.mutate { $0.uploadGrants = []; $0.backend = .localInkling }
         let local = try await processor(analyzer).process(source)
         guard case .processed = local else { return XCTFail("\(local)") }
         XCTAssertEqual(analyzer.calls.get.count, 1)
+    }
+
+    /// The one choke point: a file taken before its destination was allowed is skipped on every run, whatever
+    /// brought it to the queue (a resumed hold, a later file event). Only an explicit request skips the time rule.
+    func testFilesTakenBeforeTheGrantAreSkippedUnlessExplicitlyRequested() async throws {
+        let source = try screenshot()
+        let analyzer = StubAnalyzer(analysis(title: "Old receipt"))
+        let later = Date().addingTimeInterval(3_600) // granted after the file was created
+        settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: later)] }
+        let skipped = try await processor(analyzer).process(source)
+        XCTAssertEqual(skipped, .skipped(.awaitingConsent))
+        XCTAssertEqual(analyzer.calls.get.count, 0)
+
+        let requested = try await processor(analyzer).process(source, explicitlyRequested: true)
+        guard case .processed = requested else { return XCTFail("\(requested)") }
+        XCTAssertEqual(analyzer.calls.get.count, 1, "Process Existing may send an older file to an allowed destination")
+    }
+
+    func testAnExplicitRequestStillNeedsTheDestination() async throws {
+        let source = try screenshot()
+        let analyzer = StubAnalyzer(analysis(title: "Secret"))
+        settings.mutate { $0.uploadGrants = [] }
+        let outcome = try await processor(analyzer).process(source, explicitlyRequested: true)
+        XCTAssertEqual(outcome, .skipped(.awaitingConsent))
+        XCTAssertEqual(analyzer.calls.get.count, 0)
     }
 
     func testAlreadyIndexedIsSkipped() async throws {

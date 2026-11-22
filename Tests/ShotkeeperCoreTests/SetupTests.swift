@@ -8,7 +8,7 @@ private func clairicSettings(account: String? = "acct", consent: Bool) -> AppSet
     settings.backend = .clairic
     settings.clairicAccountID = account
     settings.hasSeenPrivacyNotice = consent
-    settings.acceptedUploadDestinations = consent ? [.cloudflare] : []
+    settings.uploadGrants = consent ? [AppSettings.cloudflareSinceEver] : []
     return settings
 }
 
@@ -29,8 +29,9 @@ final class BackendGateTests: XCTestCase {
         var settings = AppSettings()
         settings.backend = .customEndpoint
         settings.hasSeenPrivacyNotice = true
-        settings.acceptedUploadDestinations = [.cloudflare, .customEndpoint]
-        settings.acceptedCustomEndpointHost = "127.0.0.1"
+        settings.uploadGrants = [AppSettings.cloudflareSinceEver,
+                                 .init(destination: .customEndpoint, grantedAt: .distantPast,
+                                       endpoint: CustomEndpointIdentity(scheme: "http", host: "127.0.0.1", port: 8080))]
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false),
                        .notConfigured("Custom endpoint URL is not set"))
         settings.customEndpointURL = URL(string: "ftp://example.com")
@@ -42,32 +43,88 @@ final class BackendGateTests: XCTestCase {
         settings.customModelName = "inkling"
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .ready)
         // Even a 127.0.0.1 URL counts as leaving the Mac: the app cannot tell where it ends up.
-        settings.acceptedUploadDestinations = [.cloudflare]
+        settings.uploadGrants = [AppSettings.cloudflareSinceEver]
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .needsConsent,
-                       "Cloudflare consent (setup step 2) does not cover a custom endpoint")
+                       "Cloudflare consent does not cover a custom endpoint")
         XCTAssertTrue(BackendGate.sendsScreenshotsOffThisMac(.customEndpoint))
     }
 
-    func testCustomEndpointConsentIsForTheAllowedHostOnly() {
+    func testCustomEndpointConsentIsForTheNamedEndpointOnly() {
         var settings = AppSettings()
         settings.backend = .customEndpoint
         settings.customEndpointURL = URL(string: "http://LLM.lan:8080/v1")
         settings.customModelName = "m"
+        let named = CustomEndpointIdentity(url: settings.customEndpointURL)
+        XCTAssertEqual(named, CustomEndpointIdentity(scheme: "http", host: "llm.lan", port: 8080))
         XCTAssertFalse(BackendGate.hasUploadConsent(settings))
-        settings = BackendGate.granting(.customEndpoint, in: settings)
-        XCTAssertEqual(settings.acceptedCustomEndpointHost, "llm.lan")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        settings = BackendGate.granting(.customEndpoint, expectedEndpoint: named, in: settings, at: now)
+        XCTAssertEqual(settings.grant(for: .customEndpoint)?.grantedAt, now)
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .ready)
-        XCTAssertFalse(settings.acceptedUploadDestinations.contains(.cloudflare), "allowing one destination grants only it")
+        XCTAssertNil(settings.grant(for: .cloudflare), "allowing one destination grants only it")
 
-        settings.customEndpointURL = URL(string: "https://other.example.com")
-        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .needsConsent,
-                       "a different host needs a new confirmation")
-        settings.customEndpointURL = URL(string: "http://llm.lan:9999")
-        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false), .ready, "same host, other port")
+        for other in ["http://llm.lan:9999", "https://llm.lan:8080", "https://other.example.com"] {
+            var moved = settings
+            moved.customEndpointURL = URL(string: other)
+            XCTAssertEqual(BackendGate.readiness(settings: moved, hasClairicToken: false), .needsConsent,
+                           "\(other) is another endpoint (scheme, host and port)")
+        }
+        var otherPath = settings
+        otherPath.customEndpointURL = URL(string: "http://llm.lan:8080/other/path")
+        XCTAssertEqual(BackendGate.readiness(settings: otherPath, hasClairicToken: false), .ready)
+    }
 
+    func testAllowGrantsOnlyTheEndpointTheDialogNamed() {
+        var settings = AppSettings()
+        settings.backend = .customEndpoint
+        settings.customEndpointURL = URL(string: "http://a.lan:8080")
+        let shown = CustomEndpointIdentity(url: settings.customEndpointURL)
+        settings.customEndpointURL = URL(string: "http://b.lan:8080") // edited while the dialog was open
+        XCTAssertEqual(BackendGate.granting(.customEndpoint, expectedEndpoint: shown, in: settings), settings,
+                       "a mismatch grants nothing")
+        XCTAssertEqual(BackendGate.granting(.customEndpoint, expectedEndpoint: nil, in: settings), settings)
         var noURL = AppSettings()
         noURL.backend = .customEndpoint
-        XCTAssertEqual(BackendGate.granting(.customEndpoint, in: noURL), noURL, "nothing to allow without a host")
+        XCTAssertEqual(BackendGate.granting(.customEndpoint, expectedEndpoint: shown, in: noURL), noURL)
+    }
+
+    func testGrantTimeRule() {
+        let grantedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        var settings = AppSettings()
+        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt, settings: settings))
+        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt, settings: settings, explicitlyRequested: true),
+                       "an explicit request still needs the destination")
+        settings = BackendGate.granting(.cloudflare, in: settings, at: grantedAt)
+        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt.addingTimeInterval(-1), settings: settings))
+        XCTAssertTrue(BackendGate.mayAnalyze(fileCapturedAt: grantedAt, settings: settings))
+        XCTAssertTrue(BackendGate.mayAnalyze(fileCapturedAt: grantedAt.addingTimeInterval(-86_400), settings: settings,
+                                             explicitlyRequested: true))
+        // Granting again keeps the first time.
+        let again = BackendGate.granting(.cloudflare, in: settings, at: grantedAt.addingTimeInterval(500))
+        XCTAssertEqual(again.grant(for: .cloudflare)?.grantedAt, grantedAt)
+        // A new endpoint gets a new time: files taken before it are not sent there.
+        var custom = settings
+        custom.backend = .customEndpoint
+        custom.customEndpointURL = URL(string: "http://a.lan:8080")
+        custom = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: custom.customEndpointURL),
+                                      in: custom, at: grantedAt)
+        custom.customEndpointURL = URL(string: "http://b.lan:8080")
+        custom = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: custom.customEndpointURL),
+                                      in: custom, at: grantedAt.addingTimeInterval(600))
+        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt.addingTimeInterval(300), settings: custom),
+                       "taken while A was allowed, but B was allowed later")
+        // Local has no destination and no time rule.
+        settings.backend = .localInkling
+        settings.uploadGrants = []
+        XCTAssertTrue(BackendGate.mayAnalyze(fileCapturedAt: .distantPast, settings: settings))
+    }
+
+    func testEndpointDisplay() {
+        XCTAssertEqual(CustomEndpointIdentity(url: URL(string: "https://GPU-box.lan/v1"))?.display, "gpu-box.lan:443")
+        XCTAssertEqual(CustomEndpointIdentity(url: URL(string: "http://gpu-box.lan"))?.display, "http://gpu-box.lan:80")
+        XCTAssertEqual(CustomEndpointIdentity(url: URL(string: "http://[::1]:8080"))?.display, "http://[::1]:8080")
+        XCTAssertNil(CustomEndpointIdentity(url: URL(string: "ftp://x.lan")))
+        XCTAssertNil(CustomEndpointIdentity(url: nil))
     }
 
     func testConsentPromptNamesTheDestination() {
@@ -76,9 +133,14 @@ final class BackendGateTests: XCTestCase {
         settings = BackendGate.granting(.cloudflare, in: settings)
         XCTAssertNil(BackendGate.consentPrompt(for: settings))
         settings.backend = .customEndpoint
-        XCTAssertNil(BackendGate.consentPrompt(for: settings), "no host to name yet")
+        XCTAssertNil(BackendGate.consentPrompt(for: settings), "no endpoint to name yet")
         settings.customEndpointURL = URL(string: "https://GPU-box.lan:8443/v1")
-        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to gpu-box.lan")
+        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to gpu-box.lan:8443")
+        XCTAssertEqual(BackendGate.consentRequest(for: settings)?.endpoint,
+                       CustomEndpointIdentity(scheme: "https", host: "gpu-box.lan", port: 8443))
+        settings.customEndpointURL = URL(string: "http://gpu-box.lan:8080")
+        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to http://gpu-box.lan:8080",
+                       "an unencrypted endpoint says so")
         settings.backend = .localInkling
         XCTAssertNil(BackendGate.consentPrompt(for: settings))
     }
@@ -314,7 +376,7 @@ final class SetupFlowTests: XCTestCase {
     func testRerunStartsFromTheCurrentSettings() {
         var settings = AppSettings()
         settings.hasSeenPrivacyNotice = true
-        settings.acceptedUploadDestinations = [.cloudflare]
+        settings.uploadGrants = [AppSettings.cloudflareSinceEver]
         settings.backend = .localInkling
         settings.launchAtLogin = false
         let flow = SetupFlow(settings: settings, cards: cards16)
@@ -322,10 +384,10 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertEqual(flow.choice, .localInkling)
         XCTAssertFalse(flow.openAtLogin, "a re-run keeps the user's login-item choice")
 
-        settings.acceptedUploadDestinations = []
+        settings.uploadGrants = []
         XCTAssertFalse(SetupFlow(settings: settings, cards: cards16).consentChecked,
                        "the box shows step 2's own consent (Cloudflare), not the old flag")
-        settings.acceptedUploadDestinations = [.cloudflare]
+        settings.uploadGrants = [AppSettings.cloudflareSinceEver]
         XCTAssertTrue(SetupFlow(settings: settings, cards: cards16, loginItemEnabled: true).openAtLogin,
                       "the login item's real state wins over the saved setting")
 
@@ -442,7 +504,7 @@ final class TryItTests: XCTestCase {
         XCTAssertEqual(TryIt.apply(.processed(report), entry: old, openedAt: opened, to: .waiting(note: nil)),
                        .waiting(note: nil))
         var justBefore = old
-        justBefore.capturedAt = opened.addingTimeInterval(-TryIt.slack + 1)
+        justBefore.capturedAt = opened.addingTimeInterval(-TryIt.slack + 0.5)
         guard case .result = TryIt.apply(.processed(report), entry: justBefore, openedAt: opened, to: .waiting(note: nil)) else {
             return XCTFail("a screenshot taken a moment before the step opened still counts")
         }

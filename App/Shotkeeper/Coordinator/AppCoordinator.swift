@@ -63,6 +63,10 @@ final class AppCoordinator {
     @ObservationIgnored private var toastBatcher = ToastBatcher()
     @ObservationIgnored private var lastSoundAt: Date?
     @ObservationIgnored private let eventSink = LockedValue<(@MainActor @Sendable (ScreenshotEvent) -> Void)?>(nil)
+    /// Paths the user asked for with "Process Existing Screenshots…": the processor may send these even when they
+    /// were taken before the destination was allowed (`BackendGate.mayAnalyze(explicitlyRequested:)`). Removed once
+    /// processed, so a later file event for the same path gets the normal time rule.
+    @ObservationIgnored private let explicitRequests = LockedValue<Set<String>>([])
     /// Extra listeners for pipeline events (setup's "Try it now" step), keyed by the id `addEventObserver` returned.
     @ObservationIgnored private var eventObservers: [UUID: @MainActor (ScreenshotEvent) -> Void] = [:]
     /// Shows a toast (set by the app delegate; nil in unit tests unless a test sets it).
@@ -199,8 +203,7 @@ final class AppCoordinator {
         if new.backend != old.backend || new.clairicAccountID != old.clairicAccountID
             || new.customEndpointURL != old.customEndpointURL || new.customModelName != old.customModelName
             || new.localModelVariantID != old.localModelVariantID
-            || new.acceptedUploadDestinations != old.acceptedUploadDestinations // consent un-holds cloud backends
-            || new.acceptedCustomEndpointHost != old.acceptedCustomEndpointHost {
+            || new.uploadGrants != old.uploadGrants { // consent un-holds cloud backends
             rebuildAnalyzer()
             Task { await localRuntime.refresh(for: localVariant) }
             if new.backend != .localInkling, old.backend == .localInkling { Task { await localRuntime.stop() } }
@@ -257,9 +260,13 @@ final class AppCoordinator {
         let configuration = ProcessingQueue.Configuration(concurrency: 1,
                                                           requestsPerMinute: max(1, settings.requestsPerMinute))
         let sink = eventSink
+        let explicit = explicitRequests
         let queue = ProcessingQueue(configuration: configuration, handler: { url in
+            let path = url.standardizedFileURL.path
             do {
-                let report = try await processor.processWithReport(url)
+                let requested = explicit.value.contains(path)
+                let report = try await processor.processWithReport(url, explicitlyRequested: requested)
+                explicit.withValue { _ = $0.remove(path) }
                 await MainActor.run { sink.value?(.processed(report)) }
             } catch {
                 if UserFacingError.shouldNotify(error) {
@@ -412,6 +419,7 @@ final class AppCoordinator {
                                                  isIndexed: ExistingScreenshotScanner.indexedCheck(index))
         }.value
         toastBatcher.beginRun(candidates)
+        explicitRequests.withValue { $0.formUnion(candidates.map(\.standardizedFileURL.path)) }
         for url in candidates { await queue.enqueue(url) }
         lastMessage = candidates.isEmpty ? "No unprocessed screenshots in \(folder.lastPathComponent)"
             : "Queued \(candidates.count) screenshot\(candidates.count == 1 ? "" : "s")"
@@ -446,24 +454,17 @@ final class AppCoordinator {
 
     // MARK: Setup helpers
 
-    /// Setup step 2 "I Agree": marks setup's privacy step done and allows the destination its text names, the
-    /// user's Cloudflare account. Nothing else grants `.cloudflare`.
-    func acceptUploadConsent() {
-        updateSettings {
-            $0 = BackendGate.granting(.cloudflare, in: $0)
-            $0.hasSeenPrivacyNotice = true
-        }
+    /// Setup step 2 "I Agree": records that the privacy step was accepted (setup no longer opens at launch). It
+    /// grants nothing: Cloudflare is allowed when step 3 then saves Clairic (`saveClairicSetup`).
+    func acceptPrivacyStep() {
+        updateSettings { $0.hasSeenPrivacyNotice = true }
     }
 
-    /// Settings → Model's confirmation "Screenshots will be sent to <host>": allows the custom endpoint's current
-    /// host (a different host later needs a new confirmation).
-    func allowCustomEndpointUploads() {
-        allowUploads(to: .customEndpoint)
-    }
-
-    /// Settings → Model's confirmation (`BackendGate.consentPrompt`) for the selected backend's destination.
-    func allowUploads(to destination: AppSettings.UploadDestination) {
-        updateSettings { $0 = BackendGate.granting(destination, in: $0) }
+    /// Settings → Model's confirmation (`BackendGate.consentRequest`) for the selected backend's destination, from
+    /// now on. `endpoint` is the one the dialog named: if the configured endpoint changed meanwhile, nothing is
+    /// granted.
+    func allowUploads(to destination: AppSettings.UploadDestination, endpoint: CustomEndpointIdentity?) {
+        updateSettings { $0 = BackendGate.granting(destination, expectedEndpoint: endpoint, in: $0) }
     }
 
     /// Setup step 5 "Finish": saves the choice and applies it to the login item every time, so a login item that
@@ -478,13 +479,15 @@ final class AppCoordinator {
     }
 
     /// Setup step 3 "Continue" with Clairic: the token goes to the Keychain now (never while typing), then the
-    /// backend and account ID are saved. An empty token keeps the saved one.
+    /// backend and account ID are saved, and Cloudflare is allowed from now on when step 2 was agreed to (the
+    /// only way to reach step 3 in setup). An empty token keeps the saved one.
     func saveClairicSetup(accountID: String, token: String) {
         if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { setSecret(token, for: .cloudflareAPIToken) }
         let account = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
         updateSettings {
             $0.backend = .clairic
             $0.clairicAccountID = account.isEmpty ? nil : account
+            if $0.hasSeenPrivacyNotice { $0 = BackendGate.granting(.cloudflare, in: $0) }
         }
     }
 
@@ -523,11 +526,12 @@ final class AppCoordinator {
                 try? store.setSecret(saved, for: key)
             }
         }
-        // Only a generated image is sent here, never a user file, so the consent gate does not apply.
+        // Only a generated image is sent here, never a user file, so the consent gate does not apply. The grants
+        // live on this copy only; nothing is saved.
         var candidate = candidate
-        for destination in AppSettings.UploadDestination.allCases {
-            candidate = BackendGate.granting(destination, in: candidate)
-        }
+        candidate = BackendGate.granting(.cloudflare, in: candidate, at: .distantPast)
+        candidate = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: candidate.customEndpointURL),
+                                         in: candidate, at: .distantPast)
         let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,
                                             physicalMemoryBytes: physicalMemoryBytes)
         do {

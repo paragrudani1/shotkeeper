@@ -13,13 +13,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case customEndpoint
     }
 
-    /// Where a backend sends screenshots off this Mac. Consent is given per destination (`acceptedUploadDestinations`).
+    /// Where a backend sends screenshots off this Mac. Consent is given per destination (`uploadGrants`).
     public enum UploadDestination: String, Codable, Sendable, CaseIterable {
-        /// The user's own Cloudflare account (Clairic). Granted by setup step 2's "I Agree".
+        /// The user's own Cloudflare account (Clairic). Granted when setup's step 3 saves Clairic after step 2's
+        /// "I Agree", or by the Settings → Model confirmation.
         case cloudflare
-        /// The custom OpenAI-compatible endpoint, for the host in `acceptedCustomEndpointHost`. Granted by the
-        /// confirmation in Settings → Model that names the host.
+        /// The custom OpenAI-compatible endpoint named in the grant (`UploadGrant.endpoint`). Granted by the
+        /// Settings → Model confirmation that names it.
         case customEndpoint
+    }
+
+    /// The user's permission to send screenshots to one destination, from `grantedAt` on. Screenshots taken before
+    /// it are never sent there by the watcher (only an explicit "Process Existing Screenshots…" may).
+    public struct UploadGrant: Codable, Equatable, Sendable {
+        public var destination: UploadDestination
+        public var grantedAt: Date
+        /// The endpoint allowed, for `.customEndpoint`; nil for Cloudflare.
+        public var endpoint: CustomEndpointIdentity?
+
+        public init(destination: UploadDestination, grantedAt: Date, endpoint: CustomEndpointIdentity? = nil) {
+            self.destination = destination
+            self.grantedAt = grantedAt
+            self.endpoint = endpoint
+        }
     }
 
     public var backend: Backend = .clairic
@@ -50,11 +66,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Setup's privacy step was completed once ("I Agree"). Decides whether setup opens at launch; it is NOT the
     /// upload consent any more (2026-11-21): that is `acceptedUploadDestinations`.
     public var hasSeenPrivacyNotice: Bool = false
-    /// Destinations the user allowed screenshots to be sent to. Empty = nothing may leave this Mac.
-    /// Settings files written before this key existed are migrated once in `init(from:)`.
-    public var acceptedUploadDestinations: Set<UploadDestination> = []
-    /// The custom endpoint host the user allowed (lowercased). A different host needs a new confirmation.
-    public var acceptedCustomEndpointHost: String?
+    /// Destinations the user allowed, with when. Empty = nothing may leave this Mac. At most one grant per
+    /// destination. Settings files written before this key existed are migrated once in `init(from:)`.
+    public var uploadGrants: [UploadGrant] = []
+
+    /// The allowed destinations (whatever endpoint or time).
+    public var acceptedUploadDestinations: Set<UploadDestination> { Set(uploadGrants.map(\.destination)) }
+
+    public func grant(for destination: UploadDestination) -> UploadGrant? {
+        uploadGrants.first { $0.destination == destination }
+    }
     /// Show the rename toast after each rename (and the batch summary).
     public var showRenameToast: Bool = true
     /// Play a short sound after a rename.
@@ -68,7 +89,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case backend, clairicAccountID, localModelVariantID, customEndpointURL, customModelName, idleTimeoutMinutes,
              watchedFolderOverride, organizedFolder, renameEnabled, moveEnabled, launchAtLogin, minTitleConfidence,
              requestsPerMinute, maxImageLongSide, writeFinderMetadata, excludeRules, hasSeenPrivacyNotice,
-             acceptedUploadDestinations, acceptedCustomEndpointHost, showRenameToast, playRenameSound
+             uploadGrants, showRenameToast, playRenameSound
     }
 
     public init(from decoder: Decoder) throws {
@@ -95,9 +116,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         s.writeFinderMetadata = value(.writeFinderMetadata, s.writeFinderMetadata)
         s.excludeRules = value(.excludeRules, s.excludeRules)
         s.hasSeenPrivacyNotice = value(.hasSeenPrivacyNotice, s.hasSeenPrivacyNotice)
-        if c.contains(.acceptedUploadDestinations) {
-            s.acceptedUploadDestinations = value(.acceptedUploadDestinations, s.acceptedUploadDestinations)
-            s.acceptedCustomEndpointHost = value(.acceptedCustomEndpointHost, s.acceptedCustomEndpointHost)
+        if c.contains(.uploadGrants) {
+            s.uploadGrants = value(.uploadGrants, s.uploadGrants)
         } else {
             s.migrateLegacyConsent()
         }
@@ -106,31 +126,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self = s
     }
 
-    /// Settings from before per-destination consent: the old setup set `hasSeenPrivacyNotice` for every backend,
-    /// local included, after showing a notice about the backend it was saving. So the flag counts as consent only
-    /// for the destination of the backend stored with it; a stored local backend grants nothing.
+    /// Settings from before per-destination consent. The old setup set `hasSeenPrivacyNotice` for every backend,
+    /// local included, and its notice named Cloudflare. So the flag becomes a Cloudflare grant only when Clairic is
+    /// the stored backend, dated `.distantPast` (that user already sent screenshots there). A custom endpoint is not
+    /// migrated: Settings asks once, naming the endpoint. A stored local backend grants nothing.
     mutating func migrateLegacyConsent() {
-        acceptedUploadDestinations = []
-        acceptedCustomEndpointHost = nil
-        guard hasSeenPrivacyNotice else { return }
-        switch backend {
-        case .clairic:
-            acceptedUploadDestinations = [.cloudflare]
-        case .customEndpoint:
-            if let host = AppSettings.normalizedHost(customEndpointURL) {
-                acceptedUploadDestinations = [.customEndpoint]
-                acceptedCustomEndpointHost = host
-            }
-        case .localInkling:
-            break
+        uploadGrants = []
+        if hasSeenPrivacyNotice, backend == .clairic {
+            uploadGrants = [UploadGrant(destination: .cloudflare, grantedAt: .distantPast)]
         }
-    }
-
-    /// Lowercased host of an http(s) URL, nil otherwise.
-    public static func normalizedHost(_ url: URL?) -> String? {
-        guard let url, let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = url.host?.lowercased(), !host.isEmpty else { return nil }
-        return host
     }
 
     /// JSON for storage (e.g. a file in Application Support or a UserDefaults blob).
@@ -146,5 +150,32 @@ public struct AppSettings: Codable, Equatable, Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return (try? decoder.decode(AppSettings.self, from: data)) ?? AppSettings()
+    }
+}
+
+/// Who a custom endpoint really is: scheme + lowercased host + effective port. Consent for one identity does not
+/// cover another (another port can be another server, http vs https another channel).
+public struct CustomEndpointIdentity: Codable, Equatable, Hashable, Sendable {
+    public var scheme: String
+    public var host: String
+    public var port: Int
+
+    public init(scheme: String, host: String, port: Int) {
+        self.scheme = scheme
+        self.host = host
+        self.port = port
+    }
+
+    /// Nil unless `url` is http(s) with a host. The port defaults to 80 / 443.
+    public init?(url: URL?) {
+        guard let url, let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased(), !host.isEmpty else { return nil }
+        self.init(scheme: scheme, host: host, port: url.port ?? (scheme == "https" ? 443 : 80))
+    }
+
+    /// "gpu-box.lan:8443" for https, "http://gpu-box.lan:8080" otherwise (unencrypted is named). IPv6 in brackets.
+    public var display: String {
+        let hostPart = host.contains(":") ? "[\(host)]" : host
+        return scheme == "https" ? "\(hostPart):\(port)" : "http://\(hostPart):\(port)"
     }
 }

@@ -275,12 +275,13 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   on white), warning text (Experimental badge, local note) light #8A4600 / dark #FFB340.
 
 ### Review fixes (review of `80113d7`, commit `4472f0b`)
-- 2026-11-21: **consent per destination.** New key `acceptedUploadDestinations` (`cloudflare`, `customEndpoint`) +
+- 2026-11-21: **consent per destination.** *Superseded 2026-11-22 (consent re-review, below): grants with a time and
+  an endpoint identity; step 2 grants nothing by itself.* New key `acceptedUploadDestinations` (`cloudflare`, `customEndpoint`) +
   `acceptedCustomEndpointHost`. `BackendGate` checks the selected backend's destination; a custom endpoint only for
   the allowed host (another host is asked again; the port does not matter). Step 2's "I Agree" grants `.cloudflare`
   only (its text names Cloudflare) and still sets `hasSeenPrivacyNotice`, which now only means "setup's privacy step
   was done" (setup opens at launch while false; the menu shows "Finish Setup…").
-- 2026-11-21: **upgrade.** A settings file without the new key is migrated once at load: the old flag counts only
+- 2026-11-21: **upgrade.** *Superseded 2026-11-22: a custom endpoint is no longer migrated.* A settings file without the new key is migrated once at load: the old flag counts only
   for the destination of the backend stored with it (Clairic → `.cloudflare`; custom → `.customEndpoint` for the
   stored URL's host; Local → nothing, because the old setup set the flag for Local too). Once the key exists it is
   never re-seeded. Test: `SettingsTests.testUpgradeSeedsConsentOnlyForTheStoredBackend`.
@@ -328,6 +329,31 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
 - 2026-11-22: `setup-3-custom-rerun` fits three cards; the host wraps inside the narrow card ("gpu-box.lan").
   `menu-setup-unfinished` now shows a real reason ("Cloudflare account ID is not set") instead of a fixture string.
 
+### Consent re-review fixes (review of `4472f0b`)
+- 2026-11-22: **one choke point with a grant time.** `AppSettings.uploadGrants` replaces the set: one
+  `UploadGrant(destination, grantedAt, endpoint)` per destination. `ScreenshotProcessor` returns
+  `.skipped(.awaitingConsent)` when the selected backend's destination is not allowed OR the file's `capturedAt`
+  (creation date) is before the grant (`BackendGate.mayAnalyze`). This closes the blocker (jobs held by Local "not
+  installed" resumed by the Clairic rebuild after "I Agree" + Continue, and uploaded; same for an offline custom
+  endpoint A replaced by B) and the re-event path (a Preview save or moving the file back re-queues a file skipped
+  before consent). Granting again keeps the first time; a new custom endpoint gets a new time.
+- 2026-11-22: **Process Existing** is an explicit user action on existing files: the coordinator marks those paths
+  (`explicitRequests`, removed once processed) and the processor skips the time rule for them
+  (`explicitlyRequested`), never the destination rule. The confirmation text says so.
+- 2026-11-22: **endpoint identity** = scheme + lowercased host + effective port (`CustomEndpointIdentity`); the prompt
+  shows `host:port`, with `http://` when not TLS ("Screenshots will be sent to http://gpu-box.lan:8080"). "Allow"
+  grants exactly the endpoint the dialog named (`granting(_:expectedEndpoint:)`); a mismatch grants nothing.
+- 2026-11-22: **upgrade**: only `hasSeenPrivacyNotice` + a stored Clairic backend becomes a Cloudflare grant, dated
+  `.distantPast`. A custom endpoint is not migrated (Settings asks once); Local grants nothing.
+- 2026-11-22: **step 2 grants nothing.** "I Agree" records the privacy step (`hasSeenPrivacyNotice`); Cloudflare is
+  allowed when step 3 then saves Clairic (`saveClairicSetup`, only after step 2). Chosen over skipping step 2 on a
+  re-run because it is one rule for first runs and re-runs: picking Local or keeping Custom never grants Cloudflare.
+  Deviation from the spec's "consent is stored only after this step": it is stored at step 3's Continue, which
+  cannot be reached without step 2's "I Agree".
+- 2026-11-22: step 4 slack is 1 s (`TryIt.slack`): the file is created after ⌘⇧4, so its date cannot be earlier than
+  the step; 1 s only absorbs clock rounding.
+- 2026-11-22: Test Connection's grants live on the candidate copy only; a test asserts nothing is saved.
+
 ### What CI cannot check (Parag, on a real Mac)
 - First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
   app (no Dock icon) while it is open.
@@ -346,10 +372,13 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   Space ticks the step 2 and step 5 checkboxes with "Keyboard navigation" off.
 - (review fixes) Settings → Model → Custom with a URL: the "Screenshots will be sent to <host>" dialog appears;
   nothing is renamed before "Allow"; changing the host asks again.
-- (review fixes) Pick Local in setup, then Clairic in Settings without allowing it: a new screenshot keeps its
-  name, the menu says "Skipping new screenshots…", and allowing it later does not rename the earlier one.
-- (review fixes) Upgrade from a build with the old setup: a Clairic user keeps working without being asked again;
-  a Local user who switches to Clairic is asked.
+- (consent re-review) Close setup without agreeing, pick Local in Settings (not installed), take a screenshot, then run
+  setup: I Agree, Clairic, Continue. The earlier screenshot keeps its name; a new one is renamed.
+- (consent re-review) Open a screenshot taken before Clairic was allowed in Preview and save it: it keeps its name.
+  "Process Existing Screenshots…" does rename it (an explicit request).
+- (review fixes) Upgrade from a build with the old setup (upgraded users only): a Clairic user keeps working
+  without being asked again; a user whose stored backend was Local or Custom is asked once when they use Clairic or
+  their endpoint.
 - (review fixes) A VoiceOver announcement "It works…" when the step 4 result appears while another app is in front.
 
 ### Snapshot review

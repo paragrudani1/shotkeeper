@@ -217,8 +217,8 @@ private struct UploadConsentRow: View {
         let settings = coordinator.settings
         // A VStack, not a Group: a Group passes `onChange` to its children, and there are none while allowed.
         VStack(alignment: .leading, spacing: 0) {
-            if let prompt = BackendGate.consentPrompt(for: settings),
-               let destination = BackendGate.destination(of: settings.backend) {
+            if let request = BackendGate.consentRequest(for: settings) {
+                let prompt = request.prompt
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "hand.raised.fill").foregroundStyle(.orange).accessibilityHidden(true)
                     Text("\(prompt). Nothing is sent until you allow it.")
@@ -228,11 +228,12 @@ private struct UploadConsentRow: View {
                 }
                 .font(.callout)
                 .confirmationDialog("\(prompt).", isPresented: $asking, titleVisibility: .visible) {
-                    Button("Allow") { coordinator.allowUploads(to: destination) }
+                    // Grants exactly the endpoint this dialog names; nothing if it was edited meanwhile.
+                    Button("Allow") { coordinator.allowUploads(to: request.destination, endpoint: request.endpoint) }
                     Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("Shotkeeper sends each new screenshot there to name it. Screenshots taken before you allow it "
-                         + "are left alone.")
+                         + "are left alone, unless you choose Process Existing Screenshots.")
                 }
             }
         }
