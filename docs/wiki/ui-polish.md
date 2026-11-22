@@ -438,3 +438,62 @@ Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they dif
   unavailable local card was a disabled button, and its reason text was dimmed twice to unreadable. It is now a
   plain view with secondary text; VoiceOver reads "…, not available on this Mac. Needs a Mac with at least 16 GB…".
   The `menu-setup-unfinished` fixture now shows the "Not watching yet" header the real menu shows.
+
+## PR 4: app icon assets (branch `t3/ui-pr4-icon`, merged into `t3/ui-pr4-settings`)
+
+Commits: `0145a1e` (core paths + SVG, CLI, script, asset catalog, app wiring, checks), `097e02d` (bundle test fix;
+green run 44982471002, linux-core + macos-app).
+
+### Decisions
+- 2026-11-22 (`0145a1e`): one source of the shape: `Sources/ShotkeeperCore/Brand/IconGeometry.swift` (numbers) and
+  `IconPath.swift` (the paths built from them: squircle, viewfinder corners, sparkle). `IconSVG.swift` writes them as
+  SVG; `AppIconView` (SwiftUI) and `MenuBarGlyph` (AppKit) replay the same `IconPathElement` lists. No renderer builds
+  its own shape any more (`RoundedRectangle(.continuous)` and the two copies of the sparkle code are gone).
+- 2026-11-22 (`0145a1e`): the squircle's corner is our own continuous corner (line → transition cubic → circular arc
+  of radius 22.5% → transition cubic → line; starts 1.528 radii from the corner; `ContinuousCorner`). It looks like
+  Apple's continuous corners, but it is not Apple's exact curve (not published); the 45° point equals a plain
+  22.5% rounded rectangle's. Tests check the arc radius, tangent continuity and 4-fold symmetry.
+- 2026-11-22 (`0145a1e`): `design/icon/AppIcon.svg` is a 1024 canvas with the 824 px squircle at a 100 px
+  transparent margin (Apple's macOS icon grid), so the icon has the same size as other apps in the Dock. The in-app
+  `AppIconView` has no margin. No drop shadow in the artwork.
+- 2026-11-22 (`0145a1e`): regenerate with `scripts/make-icons.sh`: `shotkeeper-cli icon-svg app|glyph` (in the
+  Swift image) writes `design/icon/*.svg`, then `rsvg-convert` 2.58.5 in a throwaway `alpine:3.20` container (network
+  only for `apk add`; the image is `docker rmi`'d if the script pulled it) renders the 10 PNGs of
+  `App/Shotkeeper/Assets.xcassets/AppIcon.appiconset` straight from the vector at each size. Linux was chosen over
+  rendering in macOS CI: the PNGs are committed, reviewable and reproducible without a Mac. `Contents.json` is
+  static. `IconSVGTests.testCommittedSVGsMatchTheGeometry` fails when the SVGs are stale (it does not check PNGs).
+- 2026-11-22 (`0145a1e`): the menu bar glyph stays code-drawn (`MenuBarGlyph`, template `NSImage` with a drawing
+  handler, so it is vector-sharp at every backing scale) instead of a PDF/SVG asset: it already draws exactly
+  `IconGeometry.menuBarGlyph`, and the PR 1 pulse needs a bigger sparkle that an asset cannot give.
+  `design/icon/MenuBarGlyph.svg` is the exported design source of the same paths, not used by the app.
+- 2026-11-22 (`0145a1e`): `App/project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`; actool adds
+  `CFBundleIconFile`/`CFBundleIconName` = AppIcon. The old placeholder `assets/icon.svg` (purple "S") was removed;
+  the README shows `design/icon/AppIcon.svg`.
+- 2026-11-22: not done: an Icon Composer `.icon` (macOS 26 Liquid Glass layers). The appiconset is the legacy
+  format; macOS 26 draws it with its own glass shading (see the snapshot review).
+
+### Checks
+- 2026-11-22 (`0145a1e`): UI snapshot `app-icon-asset` shows the hosting app's `NSApp.applicationIconImage` at
+  16–256 pt; `AppIconBundleTests` checks `CFBundleIconName`, `Assets.car` and `AppIcon.icns`; the CI step "Check the
+  app icon in the bundle" lists the Release app's Resources, prints the plist keys, and copies the icns PNGs into the
+  snapshot artifact as `bundle-icon_*.png`.
+- 2026-11-22 (`097e02d`): Xcode 26.6 actool writes a small `AppIcon.icns` (16, 32, 128, 256 px incl. @2x of 16/128)
+  and keeps all sizes in `Assets.car` (run 44982021205 failed on the test expecting 16–1024 in the icns).
+
+### Snapshot review (run 44982021205, head `0145a1e`)
+- `app-icon` (vector view) and `menubar-glyph` unchanged from PR 3 apart from the continuous squircle; glyph
+  normal/pulse correct in light and dark.
+- `bundle-icon_*.png`: the committed artwork (indigo squircle with margin, 6% lighter top half, white corners and
+  sparkle) as specified.
+- `app-icon-asset`: the system's rendering on macOS 26 adds a glass look to the legacy icon (shaded white strokes,
+  a light rim); the shape is kept, not put on a grey "jail" plate. At 256 pt it is soft because
+  `applicationIconImage` uses the 256 px icns; the Dock/Finder read `Assets.car`.
+
+### What CI cannot check (Parag, on a real Mac)
+- Dock (while Settings/setup is open), Finder (/Applications, Get Info) and ⌘Tab: the icon is the indigo viewfinder,
+  same size as other apps, sharp at large Dock magnification, not on a grey plate. If Finder shows the old generic
+  icon, run `touch /Applications/Shotkeeper.app` or `killall Dock` (icon cache).
+- Menu bar glyph on a Retina and a non-Retina display: crisp 1.5 pt strokes, correct in light/dark menu bar and with
+  a tinted/transparent menu bar; the pulse after a rename.
+- Whether the hard 6% top-half edge (spec "lighter top half") looks right at Dock size, and whether the 16 px icon
+  in list views still reads.

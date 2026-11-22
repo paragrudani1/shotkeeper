@@ -27,6 +27,9 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
   step copies if the env did not arrive. The test fails if an image looks blank (fewer than 9 colors on a sample grid).
 - Look at them: `mkdir -p /tmp/sk-snap-<run> && gh-shotkeeper run download <run-id> -n Shotkeeper-ui-snapshots -D
   /tmp/sk-snap-<run>`, open the PNGs with the Read tool, then delete the folder.
+- 2026-11-22 (UI polish PR 4, `0145a1e`): the step "Check the app icon in the bundle" (after "Collect UI snapshots")
+  fails if the Release app lacks `AppIcon.icns`/`Assets.car`, and adds the icns PNGs to the snapshot artifact as
+  `bundle-icon_*.png`. Snapshot `app-icon-asset` is the hosting app's own icon.
 
 ## Lessons
 - 2026-11-21: `swift test` fails with "no tests found" while `Tests/ShotkeeperCoreTests` holds no Swift files (true on
