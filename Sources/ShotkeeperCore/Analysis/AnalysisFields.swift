@@ -1,7 +1,7 @@
 import Foundation
 
 /// The single place that says what Shotkeeper asks a model for. Both backends derive their schema from here:
-/// `ClairicFieldSchema` (Clairic field specs) and `LocalOpenAICompatibleAnalyzer` (JSON schema + system prompt).
+/// `ClairicFieldSchema` (Clairic field specs) and `OpenAICompatibleAnalyzer` (JSON schema + system prompt).
 /// Tune wording here; tune Clairic types/cost in `ClairicFieldSchema`. Rationale: docs/wiki/clairic-field-schema.md.
 public enum AnalysisFields {
     public static let title = "title"

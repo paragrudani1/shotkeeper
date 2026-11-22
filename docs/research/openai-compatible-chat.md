@@ -1,6 +1,6 @@
 # OpenAI-compatible `/v1/chat/completions` (local backends): research notes (gathered 2026-11-21)
 
-Used by `LocalOpenAICompatibleAnalyzer`. Servers differ; the analyzer sends the common subset plus optional extras and
+Used by `OpenAICompatibleAnalyzer` (profile `.localServer`; renamed from `LocalOpenAICompatibleAnalyzer` on 2026-11-22). Servers differ; the analyzer sends the common subset plus optional extras and
 drops the extras once if a server rejects them with HTTP 400.
 
 ## llama.cpp `llama-server`

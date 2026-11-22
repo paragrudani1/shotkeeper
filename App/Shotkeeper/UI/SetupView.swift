@@ -34,6 +34,11 @@ struct SetupView: View {
         .onDisappear { model.stop() }
     }
 
+    private func primaryHint(_ flow: SetupFlow) -> String? {
+        guard flow.primary.action == .saveConnection(.openRouter) else { return nil }
+        return BackendCopy.openRouterAgreement(destination: model.openRouterDestination)
+    }
+
     private func footer(_ flow: SetupFlow) -> some View {
         HStack(spacing: 12) {
             StepDots(step: flow.step)
@@ -52,6 +57,9 @@ struct SetupView: View {
                     .buttonStyle(BrandPrimaryButtonStyle(large: true))
                     .keyboardShortcut(.defaultAction)
                     .disabled(!flow.primary.isEnabled)
+                    // "Agree and Continue" is OpenRouter's consent: VoiceOver and the tooltip say what it allows.
+                    .help(primaryHint(flow) ?? "")
+                    .accessibilityHint(primaryHint(flow) ?? "")
             } else {
                 // Step 3's "Skip": not the default, so Return in a half-filled field does not skip the step.
                 Button(flow.primary.title) { model.pressPrimary() }
@@ -236,23 +244,38 @@ private struct ConnectStep: View {
         VStack(alignment: .leading, spacing: 16) {
             StepTitle(title: "Connect a model",
                       subtitle: "Choose where Shotkeeper's model runs. You can change it later in Settings.")
-            HStack(spacing: 12) {
-                ForEach(flow.cards.all) { card in
-                    ModelCardButton(card: card, isSelected: flow.choice == card.backend) { model.choose(card.backend) }
-                        .focused($focusedCard, equals: card.backend)
-                        .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { _ in
-                            model.chooseNext()
-                            focusedCard = model.flow.choice
-                            return .handled
+            // Up to three cards in one row; four (a re-run with a custom endpoint) in two rows of two. Each row is an
+            // HStack sized to its tallest card, so the cards in a row have the same height.
+            VStack(spacing: 12) {
+                ForEach(Self.rows(flow.cards), id: \.first?.id) { row in
+                    HStack(spacing: 12) {
+                        ForEach(row) { card in
+                            ModelCardButton(card: card, isSelected: flow.choice == card.backend) { model.choose(card.backend) }
+                                .focused($focusedCard, equals: card.backend)
+                                .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                                    let key: SetupFlow.ArrowKey
+                                    switch press.key {
+                                    case .leftArrow: key = .left
+                                    case .rightArrow: key = .right
+                                    case .upArrow: key = .up
+                                    default: key = .down
+                                    }
+                                    model.move(key)
+                                    focusedCard = model.flow.choice
+                                    return .handled
+                                }
                         }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
             switch flow.choice {
             case .localInkling:
                 LocalModelSetup(model: model, card: flow.cards.local)
             case .clairic:
                 ClairicSetup(model: model, hasSavedToken: flow.inputs.hasSavedToken, complete: flow.inputs.clairicComplete)
+            case .openRouter:
+                OpenRouterSetup(model: model, hasSavedKey: flow.inputs.hasSavedOpenRouterKey)
             case .customEndpoint:
                 Text("Continue keeps the custom endpoint you set up in Settings → Model.")
                     .font(.system(size: 13))
@@ -262,6 +285,13 @@ private struct ConnectStep: View {
         .task(id: flow.choice) {
             if flow.choice == .localInkling { await model.refreshLocal() }
         }
+    }
+
+    /// Rows of `SetupCards.columns` cards (core decides the layout, so the arrow keys follow the same grid).
+    static func rows(_ cards: SetupCards) -> [[SetupModelCard]] {
+        let all = cards.all
+        let columns = max(1, cards.columns)
+        return stride(from: 0, to: all.count, by: columns).map { Array(all[$0..<min($0 + columns, all.count)]) }
     }
 }
 
@@ -316,7 +346,7 @@ private struct ModelCardButton: View {
     }
 
     private var title: some View {
-        Text(card.title).font(.system(size: 14, weight: .semibold)).fixedSize()
+        Text(card.title).font(.system(size: 14, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
             .foregroundStyle(card.isAvailable ? Color.primary : Brand.secondaryText)
     }
 
@@ -386,6 +416,50 @@ private struct ClairicSetup: View {
         } else {
             focused = .token
         }
+    }
+}
+
+/// OpenRouter: the API key (to the Keychain on "Agree and Continue"), where screenshots go with links to the
+/// policies, what "Agree and Continue" allows (step 2 names Cloudflare only, so the footer's default button is the
+/// consent; Return presses it), and Test Connection.
+private struct OpenRouterSetup: View {
+    @Bindable var model: SetupModel
+    let hasSavedKey: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                GridRow {
+                    Text("API key")
+                    SecureField("API key", text: $model.openRouterKeyDraft,
+                                prompt: Text(hasSavedKey ? "Saved in the Keychain; type to replace" : "sk-or-v1-…"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            .font(.system(size: 13))
+            .frame(maxWidth: 520)
+            Text(BackendCopy.openRouterPrivacy(model: model.openRouterModel))
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 14) {
+                Link("Get a key", destination: OpenRouterBackend.keysURL)
+                    .help("Create a key and add credits at openrouter.ai")
+                Link("OpenRouter privacy policy", destination: OpenRouterBackend.privacyPolicyURL)
+                Link("Provider data policies", destination: OpenRouterBackend.providerDataPolicyURL)
+            }
+            .font(.system(size: 12))
+            Text(BackendCopy.openRouterAgreement(destination: model.openRouterDestination))
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 14) {
+                Button("Test Connection") { model.runTest() }
+                    .disabled(model.test == .running)
+                ConnectionTestLine(state: model.test)
+            }
+        }
+        .onAppear { model.showOpenRouterSection() }
     }
 }
 

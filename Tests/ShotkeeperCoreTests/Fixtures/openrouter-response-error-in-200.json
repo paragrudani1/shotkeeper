@@ -1,0 +1,13 @@
+{
+  "id": "gen-1795300003-WxYzAbCdEfGhIjKl",
+  "object": "chat.completion",
+  "created": 1795300003,
+  "model": "thinkingmachines/inkling-2-mini",
+  "error": {
+    "code": 502,
+    "message": "Provider returned error",
+    "metadata": {
+      "error_type": "provider_unavailable"
+    }
+  }
+}

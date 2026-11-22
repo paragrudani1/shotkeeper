@@ -18,8 +18,11 @@ public enum SetupPrimaryAction: Equatable, Sendable {
     /// allowed only when step 3 then saves Clairic, so a re-run that keeps Local or a custom endpoint, or a user who
     /// picks Local, never gets a silent Cloudflare grant.
     case acceptConsent
-    /// Step 3 "Continue": save the chosen backend (the token goes to the Keychain now, never earlier); for Clairic
-    /// this is when `.cloudflare` is allowed (only reachable after step 2's "I Agree").
+    /// Step 3 "Continue" ("Agree and Continue" for OpenRouter): save the chosen backend (the token or key goes to
+    /// the Keychain now, never earlier). For Clairic this is when `.cloudflare` is allowed (only reachable after
+    /// step 2's "I Agree"). For OpenRouter the button itself is the consent: its section names OpenRouter and the
+    /// providers, and `.openRouter` is allowed for the configured model from this action alone (step 2's text names
+    /// Cloudflare only).
     case saveConnection(AppSettings.Backend)
     /// Step 3 "Skip": change nothing; step 4 then shows that no model is connected.
     case skipConnection
@@ -52,14 +55,23 @@ public struct SetupConnectionInputs: Equatable, Sendable {
     public var hasTokenDraft: Bool
     public var hasSavedToken: Bool
     public var localModel: SetupLocalModelState
+    /// An OpenRouter key typed in step 3 / saved in the Keychain.
+    public var hasOpenRouterKeyDraft: Bool
+    public var hasSavedOpenRouterKey: Bool
 
     public init(accountID: String = "", hasTokenDraft: Bool = false, hasSavedToken: Bool = false,
-                localModel: SetupLocalModelState = .notInstalled) {
+                localModel: SetupLocalModelState = .notInstalled, hasOpenRouterKeyDraft: Bool = false,
+                hasSavedOpenRouterKey: Bool = false) {
         self.accountID = accountID
         self.hasTokenDraft = hasTokenDraft
         self.hasSavedToken = hasSavedToken
         self.localModel = localModel
+        self.hasOpenRouterKeyDraft = hasOpenRouterKeyDraft
+        self.hasSavedOpenRouterKey = hasSavedOpenRouterKey
     }
+
+    /// OpenRouter can be saved (and allowed, by "Agree and Continue"): a key typed now or saved earlier.
+    public var openRouterComplete: Bool { hasOpenRouterKeyDraft || hasSavedOpenRouterKey }
 
     /// Clairic can be saved: an account ID and a token (typed now or saved earlier).
     public var clairicComplete: Bool {
@@ -118,10 +130,13 @@ public struct SetupFlow: Equatable, Sendable {
             let complete: Bool
             switch choice {
             case .clairic: complete = inputs.clairicComplete
+            case .openRouter: complete = inputs.openRouterComplete
             case .localInkling: complete = inputs.localComplete
             case .customEndpoint: complete = true // keeps the endpoint configured in Settings
             }
-            return complete ? SetupPrimaryButton(title: "Continue", isEnabled: true, action: .saveConnection(choice))
+            // OpenRouter's Continue is also its consent, so it says so; Return presses it (default button).
+            let title = choice == .openRouter ? Self.openRouterAgreeTitle : "Continue"
+            return complete ? SetupPrimaryButton(title: title, isEnabled: true, action: .saveConnection(choice))
                             : SetupPrimaryButton(title: "Skip", isEnabled: true, action: .skipConnection,
                                                  isDefaultAction: false)
         case .tryIt:
@@ -168,12 +183,45 @@ public struct SetupFlow: Equatable, Sendable {
         return true
     }
 
-    /// ←/→/↑/↓ on the cards: the next available card (wrapping).
+    public static let openRouterAgreeTitle = "Agree and Continue"
+
+    /// The next available card (wrapping), in reading order.
     @discardableResult
     public mutating func chooseNext() -> Bool {
         let available = cards.all.filter(\.isAvailable).map(\.backend)
         guard let index = available.firstIndex(of: choice), available.count > 1 else { return false }
         return choose(available[(index + 1) % available.count])
+    }
+
+    public enum ArrowKey: Sendable { case left, right, up, down }
+
+    /// An arrow key on the cards, laid out in `cards.columns` columns: ←/→ move within the row, ↑/↓ between rows
+    /// (same column), each wrapping and skipping unavailable cards. In a single row ↑/↓ act like ←/→.
+    @discardableResult
+    public mutating func choose(moving key: ArrowKey) -> Bool {
+        let all = cards.all
+        let columns = max(1, cards.columns)
+        guard let current = all.firstIndex(where: { $0.backend == choice }) else { return false }
+        let rows = (all.count + columns - 1) / columns
+        let (row, column) = (current / columns, current % columns)
+        var key = key
+        if rows == 1 { key = (key == .up) ? .left : (key == .down ? .right : key) }
+        // The cells visited in that direction, starting next to the current one, back to it.
+        let cells: [Int]
+        switch key {
+        case .left, .right:
+            let rowCells = Array((row * columns)..<min(all.count, (row + 1) * columns))
+            let position = column
+            let step = key == .right ? 1 : rowCells.count - 1
+            cells = (1..<max(1, rowCells.count)).map { rowCells[(position + $0 * step) % rowCells.count] }
+        case .up, .down:
+            let columnCells = stride(from: column, to: all.count, by: columns).map { $0 }
+            let position = row
+            let step = key == .down ? 1 : columnCells.count - 1
+            cells = (1..<max(1, columnCells.count)).map { columnCells[(position + $0 * step) % columnCells.count] }
+        }
+        guard let target = cells.first(where: { all[$0].isAvailable }) else { return false }
+        return choose(all[target].backend)
     }
 }
 

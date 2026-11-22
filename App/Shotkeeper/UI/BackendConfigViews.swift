@@ -8,12 +8,33 @@ enum BackendCopy {
         + "your API token. Shotkeeper has no server of its own and sends them nowhere else."
     static let localPrivacy = "100% on-device, nothing leaves your Mac."
     static let customPrivacy = "Screenshots are sent to the endpoint you enter. If it is not on this Mac, they leave this Mac."
+    /// docs/research/openrouter.md, "Privacy routing": requests carry `zdr: true` and `data_collection: "deny"`.
+    /// `model` is an effective model ID: the providers named are the ones that serve it (`destinationPhrase`).
+    static func openRouterPrivacy(model: String) -> String {
+        "Screenshots are sent to \(OpenRouterBackend.destinationPhrase(model: model)), under the provider's data "
+            + "policy. Shotkeeper asks OpenRouter to use only providers that keep no copy (zero data retention) and do "
+            + "not collect or train on the data. Shotkeeper has no server of its own."
+    }
+    /// Settings → Model → Privacy, for an effective model ID.
+    static func openRouterRoutingNote(model: String) -> String {
+        let who = model == OpenRouterBackend.defaultModel
+            ? "Both providers of Inkling 2 Mini qualify today; if none does,"
+            : "If no provider of \(model) qualifies,"
+        return "Requests ask for zero data retention and no data collection. \(who) OpenRouter refuses the request "
+            + "instead of sending it elsewhere."
+    }
+    /// Setup step 3, above the footer: what the default button "Agree and Continue" allows.
+    static func openRouterAgreement(destination: String) -> String {
+        "\u{201C}\(SetupFlow.openRouterAgreeTitle)\u{201D} allows Shotkeeper to send each new screenshot to \(destination)."
+    }
     static let tokenHelpURL = URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!
     static let tokenHelpText = "Create a token with Workers AI Read + Edit permissions (Cloudflare docs)"
 
-    static func privacy(for backend: AppSettings.Backend) -> String {
+    /// `openRouterModel`: the setting (nil or blank = the default model).
+    static func privacy(for backend: AppSettings.Backend, openRouterModel: String? = nil) -> String {
         switch backend {
         case .clairic: return clairicPrivacy
+        case .openRouter: return openRouterPrivacy(model: OpenRouterBackend.effectiveModel(openRouterModel))
         case .localInkling: return localPrivacy
         case .customEndpoint: return customPrivacy
         }
@@ -22,6 +43,7 @@ enum BackendCopy {
     static func name(for backend: AppSettings.Backend) -> String {
         switch backend {
         case .clairic: return "Cloudflare Clairic"
+        case .openRouter: return SetupCards.openRouterTitle
         case .localInkling: return "Inkling 2 Mini, on this Mac"
         case .customEndpoint: return "Custom endpoint"
         }
@@ -31,6 +53,7 @@ enum BackendCopy {
     static func shortName(for backend: AppSettings.Backend) -> String {
         switch backend {
         case .clairic: return "Clairic"
+        case .openRouter: return "OpenRouter"
         case .localInkling: return "Local"
         case .customEndpoint: return "Custom"
         }
@@ -90,12 +113,14 @@ struct TestResultView: View {
 
 // MARK: Model tab
 
-/// Settings → Model: a segmented picker (Clairic / Local / Custom), the consent row, the selected backend's fields
+/// Settings → Model: a segmented picker (Clairic / OpenRouter / Local / Custom), the consent row, the selected backend's fields
 /// (saved as you type; tokens to the Keychain after a pause), Test Connection, and the local model install.
 struct ModelSettingsTab: View {
     let coordinator: AppCoordinator
     /// Snapshots show a download without running one.
     var installStateOverride: LocalInstallState?
+    /// Snapshots show OpenRouter's Advanced disclosure open.
+    var showsOpenRouterAdvanced = false
     @State private var asking: ConsentRequest?
 
     var body: some View {
@@ -109,7 +134,7 @@ struct ModelSettingsTab: View {
                     }
                     .pickerStyle(.segmented)
                     .help("Which model names your screenshots")
-                    Text(BackendCopy.privacy(for: draft.wrappedValue.backend))
+                    Text(BackendCopy.privacy(for: draft.wrappedValue.backend, openRouterModel: draft.wrappedValue.openRouterModel))
                         .foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     if let request = BackendGate.consentRequest(for: coordinator.settings) {
@@ -119,6 +144,8 @@ struct ModelSettingsTab: View {
                 switch draft.wrappedValue.backend {
                 case .clairic:
                     ClairicSettingsSection(coordinator: coordinator, draft: draft)
+                case .openRouter:
+                    OpenRouterSettingsSection(coordinator: coordinator, draft: draft, showsAdvanced: showsOpenRouterAdvanced)
                 case .localInkling:
                     LocalModelSettingsSection(coordinator: coordinator, draft: draft, stateOverride: installStateOverride)
                 case .customEndpoint:
@@ -169,7 +196,10 @@ struct UploadConsentPrompt: ViewModifier {
         content
             .confirmationDialog(asking.map { "\($0.prompt)." } ?? "", isPresented: isAsking, titleVisibility: .visible,
                                 presenting: asking) { request in
-                Button("Allow") { coordinator.allowUploads(to: request.destination, endpoint: request.endpoint) }
+                Button("Allow") {
+                    coordinator.allowUploads(to: request.destination, endpoint: request.endpoint,
+                                             openRouterModel: request.openRouterModel)
+                }
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
                 Text("Shotkeeper sends each new screenshot there to name it. Screenshots taken before you allow it "
@@ -215,6 +245,70 @@ private struct ClairicSettingsSection: View {
     }
 }
 
+/// OpenRouter: API key (Keychain, saved after a pause, used on commit, like the Clairic token), links to get a key
+/// and credits, the price once measured, where screenshots go with the policy links, the model under "Advanced"
+/// (saved as you type; empty = the default), and Test Connection.
+private struct OpenRouterSettingsSection: View {
+    let coordinator: AppCoordinator
+    @Binding var draft: AppSettings
+    @State private var keyDraft = ""
+    @State private var showsAdvanced: Bool
+
+    init(coordinator: AppCoordinator, draft: Binding<AppSettings>, showsAdvanced: Bool = false) {
+        self.coordinator = coordinator
+        _draft = draft
+        _showsAdvanced = State(initialValue: showsAdvanced)
+    }
+
+    var body: some View {
+        Section("OpenRouter") {
+            SecretField(title: "API key", key: .openRouterAPIKey, coordinator: coordinator, text: $keyDraft,
+                        removeTitle: "Remove saved API key",
+                        removeMessage: "Shotkeeper stops naming screenshots with OpenRouter until you enter a key again.")
+            LabeledContent {
+                HStack(spacing: 14) {
+                    Link("Get a key", destination: OpenRouterBackend.keysURL)
+                    Link("Add credits", destination: OpenRouterBackend.creditsURL)
+                }
+            } label: {
+                EmptyView()
+            }
+            // Hidden until the live test measured it (core `OpenRouterPricing`, nil until then).
+            if let price = OpenRouterPricing.perThousandText() {
+                LabeledContent("Cost") { Text(price).foregroundStyle(Color.primary) }
+            }
+            DisclosureGroup("Advanced", isExpanded: $showsAdvanced) {
+                ModelNameField(title: "Model", field: .openRouter, coordinator: coordinator,
+                               prompt: OpenRouterBackend.defaultModel)
+                Text("Leave empty for \(OpenRouterBackend.defaultModel). Another model needs its own \u{201C}Allow\u{2026}\u{201D}: "
+                     + "it is served by other providers. Requests turn reasoning off and ask for zero data retention.")
+                    .font(.callout)
+                    .foregroundStyle(Brand.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            TestConnectionRow(coordinator: coordinator) {
+                var candidate = draft
+                candidate.backend = .openRouter
+                candidate.openRouterModel = coordinator.displayedModelName(for: .openRouter)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return (candidate, [.openRouterAPIKey: keyDraft])
+            }
+        }
+        Section("Privacy") {
+            LabeledContent {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Link("OpenRouter privacy policy", destination: OpenRouterBackend.privacyPolicyURL)
+                    Link("Provider data policies", destination: OpenRouterBackend.providerDataPolicyURL)
+                    Link("Zero data retention", destination: OpenRouterBackend.zeroDataRetentionURL)
+                }
+            } label: {
+                Text(BackendCopy.openRouterRoutingNote(model: OpenRouterBackend.effectiveModel(draft.openRouterModel)))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 /// URL and model name (saved as you type), optional API key (Keychain), Test Connection.
 private struct CustomEndpointSettingsSection: View {
     let coordinator: AppCoordinator
@@ -227,18 +321,40 @@ private struct CustomEndpointSettingsSection: View {
                 get: { draft.customEndpointURL?.absoluteString ?? "" },
                 set: { draft.customEndpointURL = URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }),
                 prompt: Text("http://127.0.0.1:8080"))
-            TextField("Model name", text: Binding(
-                get: { draft.customModelName ?? "" },
-                set: { draft.customModelName = $0.isEmpty ? nil : $0 }))
+            ModelNameField(title: "Model name", field: .custom, coordinator: coordinator, prompt: nil)
             SecretField(title: "API key (optional)", key: .customEndpointAPIKey, coordinator: coordinator, text: $keyDraft,
                         removeTitle: "Remove saved API key",
                         removeMessage: "Requests to the endpoint are sent without a key from now on.")
             TestConnectionRow(coordinator: coordinator) {
                 var candidate = draft
                 candidate.backend = .customEndpoint
+                candidate.customModelName = coordinator.displayedModelName(for: .custom)
                 return (candidate, [.customEndpointAPIKey: keyDraft])
             }
         }
+    }
+}
+
+/// A model name field whose text is used only on commit (Return, focus leaving, the field or window going away,
+/// quitting), like `SecretField`: a model ID typed one key at a time must not rebuild the analyzer, or meet the
+/// consent check, once per keystroke (`AppCoordinator.commitModelNameDraft`).
+struct ModelNameField: View {
+    let title: String
+    let field: AppCoordinator.ModelNameField
+    let coordinator: AppCoordinator
+    let prompt: String?
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(title, text: $text, prompt: prompt.map { Text($0) })
+            .focused($focused)
+            .onAppear { text = coordinator.modelName(for: field) ?? "" }
+            // Committing an unchanged name changes nothing (`updateSettings` ignores equal settings).
+            .onChange(of: text) { _, new in coordinator.updateModelNameDraft(new, for: field) }
+            .onChange(of: focused) { _, isFocused in if !isFocused { coordinator.commitModelNameDraft(for: field) } }
+            .onSubmit { coordinator.commitModelNameDraft(for: field) }
+            .onDisappear { coordinator.commitModelNameDraft(for: field) }
     }
 }
 

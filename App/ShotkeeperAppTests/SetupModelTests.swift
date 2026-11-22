@@ -76,6 +76,95 @@ final class SetupModelTests: TempDirectoryTestCase {
         model.stop()
     }
 
+    func testOpenRouterIsAllowedOnlyByIAgreeThenItsCheckboxAndContinue() throws {
+        let coordinator = makeCoordinator()
+        coordinator.startServices()
+        defer { coordinator.stopServices() }
+        let model = makeModel(coordinator)
+        model.pressPrimary()
+        model.flow.consentChecked = true
+        model.pressPrimary() // I Agree
+        model.choose(.openRouter)
+        model.openRouterKeyDraft = "sk-or-v1-secret"
+        XCTAssertNil(try credentials.secret(for: .openRouterAPIKey), "typing stores nothing")
+        XCTAssertNil(coordinator.settings.grant(for: .openRouter), "I Agree (Cloudflare's wording) grants nothing here")
+        XCTAssertEqual(model.current.primary.title, "Agree and Continue")
+        XCTAssertTrue(model.current.primary.isDefaultAction, "Return presses it")
+        XCTAssertEqual(model.openRouterDestination, "OpenRouter, then to Prime Intellect or io.net")
+        let before = Date()
+        model.pressPrimary() // Agree and Continue
+        XCTAssertEqual(try credentials.secret(for: .openRouterAPIKey), "sk-or-v1-secret")
+        XCTAssertEqual(model.openRouterKeyDraft, "", "the typed key is not kept in the window")
+        XCTAssertEqual(coordinator.settings.backend, .openRouter)
+        let grant = try XCTUnwrap(coordinator.settings.grant(for: .openRouter))
+        XCTAssertGreaterThanOrEqual(grant.grantedAt, before, "from now on, not before")
+        XCTAssertEqual(grant.openRouterModel, OpenRouterBackend.defaultModel, "for the model the section named")
+        XCTAssertNil(coordinator.settings.grant(for: .cloudflare), "OpenRouter's Continue does not allow Cloudflare")
+        XCTAssertEqual(coordinator.readiness, .ready)
+        XCTAssertTrue(coordinator.isWatching)
+        XCTAssertTrue(coordinator.currentAnalyzer is OpenAICompatibleAnalyzer)
+        let json = String(decoding: try Data(contentsOf: AppPaths.settingsFile(in: directory.appendingPathComponent("support"))),
+                          as: UTF8.self)
+        XCTAssertFalse(json.contains("sk-or-v1-secret"), "the key never goes to settings.json")
+        model.stop()
+    }
+
+    /// S2: "Agree and Continue" is OpenRouter's own consent, without step 2 (whose text names Cloudflare).
+    func testAgreeAndContinueAloneGrantsOpenRouterForTheConfiguredModel() {
+        let coordinator = makeCoordinator()
+        XCTAssertFalse(coordinator.settings.hasSeenPrivacyNotice)
+        coordinator.updateSettings { $0.openRouterModel = "vendor/other-model" }
+        coordinator.saveOpenRouterSetup(key: "sk-or-v1-key", model: "vendor/other-model")
+        XCTAssertEqual(coordinator.settings.grant(for: .openRouter)?.openRouterModel, "vendor/other-model")
+        XCTAssertNil(coordinator.settings.grant(for: .cloudflare))
+        XCTAssertEqual(coordinator.readiness, .ready)
+        // Back to the default model: not covered, Settings asks naming OpenRouter's providers.
+        coordinator.updateSettings { $0.openRouterModel = nil }
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        let request = BackendGate.consentRequest(for: coordinator.settings)
+        XCTAssertEqual(request?.prompt, "Screenshots will be sent to OpenRouter, then to Prime Intellect or io.net")
+        coordinator.allowUploads(to: .openRouter, endpoint: nil, openRouterModel: request?.openRouterModel)
+        XCTAssertEqual(coordinator.readiness, .ready, "an empty key keeps the saved one")
+    }
+
+    /// The grant covers the model step 3 named, not one configured after the window drew it.
+    func testAgreeAndContinueGrantsOnlyTheModelTheSectionNamed() {
+        let coordinator = makeCoordinator()
+        let model = makeModel(coordinator)
+        model.pressPrimary()
+        model.flow.consentChecked = true
+        model.pressPrimary() // I Agree (Cloudflare's wording; grants nothing for OpenRouter)
+        model.choose(.openRouter)
+        model.showOpenRouterSection() // the section appears
+        model.openRouterKeyDraft = "sk-or-v1-key"
+        XCTAssertEqual(model.openRouterModel, OpenRouterBackend.defaultModel)
+        XCTAssertTrue(BackendCopy.openRouterPrivacy(model: model.openRouterModel).contains("Prime Intellect or io.net"))
+        coordinator.updateSettings { $0.openRouterModel = "vendor/other-model" } // e.g. Settings, beside setup
+        XCTAssertEqual(model.openRouterModel, OpenRouterBackend.defaultModel, "the section still names what it showed")
+        model.pressPrimary() // Agree and Continue
+        XCTAssertNil(coordinator.settings.grant(for: .openRouter), "nothing is granted for a model it did not name")
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        model.showOpenRouterSection() // shown again (setup re-run)
+        XCTAssertEqual(model.openRouterModel, "vendor/other-model")
+        let privacy = BackendCopy.openRouterPrivacy(model: model.openRouterModel)
+        XCTAssertTrue(privacy.contains("the provider that serves vendor/other-model"))
+        XCTAssertFalse(privacy.contains("Prime Intellect"), "another model's providers are not named as these two")
+        model.stop()
+    }
+
+    func testOpenRouterTestConnectionWithoutAKeySendsNothing() async throws {
+        let coordinator = makeCoordinator()
+        let model = makeModel(coordinator)
+        model.choose(.openRouter)
+        model.runTest()
+        for _ in 0..<500 where model.test == .running { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.test, .failed("OpenRouter API key is not set."))
+        XCTAssertNil(try credentials.secret(for: .openRouterAPIKey))
+        model.choose(.clairic)
+        XCTAssertEqual(model.test, .idle, "another card drops the old result")
+        model.stop()
+    }
+
     func testPickingLocalInSetupGrantsNothing() {
         let coordinator = makeCoordinator()
         coordinator.updateSettings { $0.backend = .localInkling }

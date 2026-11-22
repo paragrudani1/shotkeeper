@@ -9,7 +9,7 @@ Decisions and their reasons: [wiki/core-implementation.md](wiki/core-implementat
 | `ImagePreparer` | `Pipeline/ImagePreparer.swift` | ImageIO: downscale to `settings.maxImageLongSide`, encode PNG/JPEG, fill in pixel size. `PassthroughImagePreparer` is for tests/CLI only (sends the file as-is, PNG/JPEG/WebP; HEIC/TIFF throw `.unsupportedType`). |
 | `FileMetadataWriter` | `Files/FinderMetadata.swift` | `getxattr`/`setxattr` on the given name; return nil for ENOATTR. Core builds the binary-plist payloads. |
 | `CredentialStore` | `Settings/CredentialStore.swift` | Keychain (generic password, service `dev.shotkeeper.Shotkeeper` (the bundle id), account `key.rawValue`): `KeychainCredentialStore`. |
-| `ScreenshotAnalyzer` | `Analysis/` (other task) | Built from settings + credentials; core ships the Clairic and local analyzers. |
+| `ScreenshotAnalyzer` | `Analysis/` (other task) | Built from settings + credentials; core ships `CloudflareClairicAnalyzer` and `OpenAICompatibleAnalyzer` (profile `.localServer` for local/custom endpoints, `OpenRouterBackend.configuration(apiKey:model:)` for OpenRouter). |
 | Folder watching | app only | FSEvents on `settings.watchedFolderOverride` or the `com.apple.screencapture location` (default Desktop). For each created/renamed file, `ScreenshotDetector(customPrefix:).isScreenshot(url)` → `queue.enqueue(url)`. |
 | Server process | app only | Run `MLXRuntimePlan` commands with `Process`; apply `IdlePolicy` and `RestartPolicy`. |
 

@@ -200,7 +200,7 @@ public actor ProcessingQueue {
                 switch error {
                 case .unreachable:
                     await holdOffline()
-                case .unauthorized, .notConfigured:
+                case .unauthorized, .notConfigured, .accountState:
                     // Shown in the menu: readable text, never the server's response body.
                     holdMessage = UserFacingError.problem(for: error).message
                     publish()

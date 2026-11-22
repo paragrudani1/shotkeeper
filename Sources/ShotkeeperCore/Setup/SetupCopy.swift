@@ -14,9 +14,16 @@ public enum ClairicPricing {
         return Double(tokens) * standardUSDPerMillionInputTokens / 1_000_000 * 1_000
     }
 
-    /// "About $2 for 1,000 screenshots" (whole dollars from $1 up, else cents: "About $0.57 …").
+    /// "About $2 for 1,000 screenshots" (`PriceText.perThousandScreenshots`).
     public static func perThousandText(longSide: Int = ClairicFieldSchema.recommendedMaxImageLongSide) -> String {
-        let usd = usdPerThousandScreenshots(longSide: longSide)
+        PriceText.perThousandScreenshots(usdPerThousandScreenshots(longSide: longSide))
+    }
+}
+
+/// The one wording of a per-1,000 price (Clairic and OpenRouter cards).
+public enum PriceText {
+    /// "About $2 for 1,000 screenshots": whole dollars from $1 up, else cents ("About $0.57 …").
+    public static func perThousandScreenshots(_ usd: Double) -> String {
         let amount = usd >= 1 ? "$\(Int(usd.rounded()))" : String(format: "$%.2f", usd)
         return "About \(amount) for 1,000 screenshots"
     }
@@ -25,7 +32,7 @@ public enum ClairicPricing {
 /// One selectable model card in setup step 3.
 public struct SetupModelCard: Equatable, Sendable, Identifiable {
     public var id: AppSettings.Backend { backend }
-    /// `.clairic` or `.localInkling` (a custom endpoint is configured in Settings only).
+    /// `.clairic`, `.openRouter` or `.localInkling` (a custom endpoint is configured in Settings only).
     public var backend: AppSettings.Backend
     public var title: String
     /// "Recommended", "Experimental".
@@ -50,23 +57,29 @@ public struct SetupModelCard: Equatable, Sendable, Identifiable {
     }
 }
 
-/// The two cards of setup step 3, worded for this Mac's memory. Which one is recommended follows
-/// `BackendRecommender` ("recommend by RAM as today").
+/// The cards of setup step 3, worded for this Mac's memory. Which one is recommended follows `BackendRecommender`
+/// ("recommend by RAM as today"); the OpenRouter card is never the recommended one (Parag decides that later).
 public struct SetupCards: Equatable, Sendable {
     public var clairic: SetupModelCard
+    public var openRouter: SetupModelCard
     public var local: SetupModelCard
     /// Only when a custom endpoint is the current backend (setup run again): a third card that keeps it, so the
     /// re-run never silently switches the backend to Clairic.
     public var custom: SetupModelCard?
-    public var all: [SetupModelCard] { [clairic, local] + (custom.map { [$0] } ?? []) }
+    public var all: [SetupModelCard] { [clairic, openRouter, local] + (custom.map { [$0] } ?? []) }
     public var recommended: AppSettings.Backend { local.isRecommended ? .localInkling : .clairic }
 
     public func card(for backend: AppSettings.Backend) -> SetupModelCard? { all.first { $0.backend == backend } }
 
+    /// Columns of the step 3 layout: up to three cards in one row, four in two rows of two.
+    public var columns: Int { all.count > 3 ? 2 : all.count }
+
     /// - Parameter customEndpointHost: the configured custom endpoint's host when it is the current backend.
+    /// - Parameter openRouterPrice: `OpenRouterPricing.perThousandText()`; nil (not measured) hides the price.
     public static func make(physicalMemoryBytes: UInt64, catalog: [ModelVariant] = ModelCatalog.all,
                             clairicLongSide: Int = ClairicFieldSchema.recommendedMaxImageLongSide,
-                            customEndpointHost: String? = nil) -> SetupCards {
+                            customEndpointHost: String? = nil,
+                            openRouterPrice: String? = OpenRouterPricing.perThousandText()) -> SetupCards {
         let ramGB = BackendRecommender.marketingGB(physicalMemoryBytes)
         let recommendation = BackendRecommender.recommend(physicalMemoryBytes: physicalMemoryBytes, catalog: catalog)
         let localRecommended = recommendation.recommended.backend == .localInkling
@@ -78,6 +91,12 @@ public struct SetupCards: Equatable, Sendable {
             backend: .clairic, title: "Cloudflare Clairic", badges: localRecommended ? [] : ["Recommended"],
             subtitle: (localRecommended ? "Fast, nothing to download. " : "Best for this Mac (\(ramGB) GB). ") + cost,
             isRecommended: !localRecommended, isAvailable: true, model: nil)
+
+        let openRouter = SetupModelCard(
+            backend: .openRouter, title: openRouterTitle, badges: [],
+            subtitle: "Inkling 2 Mini in the cloud, with your OpenRouter key and credits."
+                + (openRouterPrice.map { " \($0)." } ?? ""),
+            isRecommended: false, isAvailable: true, model: nil)
 
         let local: SetupModelCard
         if let model = localOption?.model {
@@ -102,8 +121,10 @@ public struct SetupCards: Equatable, Sendable {
                            subtitle: "Keeps using \($0). Change it in Settings → Model.", isRecommended: false,
                            isAvailable: true, model: nil)
         }
-        return SetupCards(clairic: clairic, local: local, custom: custom)
+        return SetupCards(clairic: clairic, openRouter: openRouter, local: local, custom: custom)
     }
+
+    public static let openRouterTitle = "OpenRouter · Inkling 2 Mini"
 
     /// 10.4 → 10, 13.5 → 14 (the catalog's sizes are 10^9 bytes, like Finder's).
     static func gigabytes(_ value: Double) -> Int { Int(value.rounded()) }
@@ -121,6 +142,7 @@ public enum ConnectionTestText {
         let server: String = {
             switch backend {
             case .clairic: return "Cloudflare"
+            case .openRouter: return "OpenRouter"
             case .localInkling: return "The local model"
             case .customEndpoint: return "The server"
             }
@@ -128,13 +150,17 @@ public enum ConnectionTestText {
         switch error {
         case .notConfigured(let reason):
             return UserFacingProblem(message: reason).sentence
+        case .accountState(let message):
+            return UserFacingProblem(message: message).sentence
         case .unauthorized:
+            if backend == .openRouter { return "OpenRouter did not accept the API key. Check the key at openrouter.ai/keys." }
             return isClairic
                 ? "Cloudflare did not accept the token. Check the account ID, and that the token has Workers AI Read and Edit permissions."
                 : "\(server) did not accept the API key."
         case .unreachable:
             switch backend {
             case .clairic: return "Could not reach Cloudflare. Check the internet connection and try again."
+            case .openRouter: return "Could not reach OpenRouter. Check the internet connection and try again."
             case .localInkling: return "Could not reach the local model server."
             case .customEndpoint: return "Could not reach the server at that URL."
             }

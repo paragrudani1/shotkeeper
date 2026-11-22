@@ -17,5 +17,25 @@ Values (titles, token counts) are invented for tests; token counts follow the im
 
 The synthesized files still use list-shaped `tags`/`source_app_or_site`; the parser keeps accepting that shape.
 
-Local (OpenAI-compatible) responses are built inline in `LocalOpenAICompatibleAnalyzerTests` from model-output strings, wrapped in
-the chat-completion shape documented in `docs/research/openai-compatible-chat.md`.
+Local (OpenAI-compatible) responses are built inline in `OpenAICompatibleAnalyzerTests` (renamed from
+`LocalOpenAICompatibleAnalyzerTests` on 2026-11-22) from model-output strings, wrapped in the chat-completion shape
+documented in `docs/research/openai-compatible-chat.md`.
+
+## OpenRouter (`OpenRouterAnalyzerTests`)
+
+All `openrouter-*.json` files are **synthesized from OpenRouter's docs** (read 2026-11-22), not captured live (no key
+yet). Sources are summarized with URLs in `docs/research/openrouter.md`.
+
+| File | Shape | Source |
+|---|---|---|
+| `openrouter-response-success.json` | chat completion with `choices[0].logprobs.content[]` whose tokens concatenate to exactly `content`; the title is 4 tokens with logprobs −0.02, −0.15, −0.30, −0.05; `usage` with `cost` | API reference `ChatResult`, `ChatChoice`, `ChatTokenLogprobs`, `ChatUsage` |
+| `openrouter-response-reasoning-off.json` | `reasoning_tokens: 0`, `logprobs: null`, `message.reasoning: null` | same, plus the reasoning-tokens page |
+| `openrouter-response-malformed.json` | prose instead of JSON in `content` | same |
+| `openrouter-error-402.json` | 402, the docs' wording for code 402, `metadata.limit_source: openrouter_credits` + `remedy_hint` (hint text invented) | Errors page ("Error codes"), Limits page ("Handling 402 errors") |
+| `openrouter-error-402-in-flight.json` | the docs' in-flight budget example, verbatim | Limits page ("In-flight spending budget") |
+| `openrouter-error-429.json` | the docs' 429 example, verbatim | Limits page ("Handling 429 errors") |
+| `openrouter-response-error-in-200.json` | a 200 whose body is only `error` (502, `provider_unavailable`), no `choices` | Errors page ("Non-streaming requests") |
+
+Token counts, costs, ids and titles are invented; the costs follow Prime Intellect's listed prices
+($0.075 / M input, $0.30 / M output). Other error bodies (401, 403, 404, 503) are inline in the tests.
+Live responses, once a key exists, go in `openrouter-live-<date>-<sample>.json`.

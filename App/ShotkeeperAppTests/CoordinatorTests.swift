@@ -159,15 +159,48 @@ final class AnalyzerFactoryTests: XCTestCase {
         settings = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: settings.customEndpointURL),
                                         in: settings)
         let plain = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
-            as? LocalOpenAICompatibleAnalyzer)
+            as? OpenAICompatibleAnalyzer)
         XCTAssertEqual(plain.configuration.baseURL, URL(string: "http://192.168.1.5:8080"))
         XCTAssertEqual(plain.configuration.model, "inkling-2-mini")
         XCTAssertNil(plain.configuration.apiKey)
 
         try credentials.setSecret("key", for: .customEndpointAPIKey)
         let withKey = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
-            as? LocalOpenAICompatibleAnalyzer)
+            as? OpenAICompatibleAnalyzer)
         XCTAssertEqual(withKey.configuration.apiKey, "key")
+    }
+
+    func testOpenRouterNeedsAKeyAndItsOwnGrant() async throws {
+        var settings = AppSettings()
+        settings.backend = .openRouter
+        settings.uploadGrants = [.init(destination: .cloudflare, grantedAt: .distantPast)]
+        let credentials = InMemoryCredentialStore()
+        try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
+                                      contains: "OpenRouter API key")
+        try credentials.setSecret("  ", for: .openRouterAPIKey)
+        try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
+                                      contains: "OpenRouter API key")
+        try credentials.setSecret("sk-or-v1-key", for: .openRouterAPIKey)
+        try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
+                                      contains: "Finish setup")  // Cloudflare's grant does not cover OpenRouter
+        settings = BackendGate.granting(.openRouter, expectedOpenRouterModel: OpenRouterBackend.defaultModel, in: settings)
+        let analyzer = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
+            as? OpenAICompatibleAnalyzer)
+        XCTAssertEqual(analyzer.backendID, "openrouter")
+        XCTAssertEqual(analyzer.configuration.profile, OpenRouterBackend.profile(model: OpenRouterBackend.defaultModel))
+        XCTAssertEqual(analyzer.configuration.model, OpenRouterBackend.defaultModel)
+        XCTAssertEqual(analyzer.configuration.apiKey, "sk-or-v1-key")
+        settings.openRouterModel = "thinkingmachines/inkling-2-mini-20261120"
+        try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
+                                      contains: "Finish setup")  // another model needs its own grant (S1)
+        settings = BackendGate.granting(.openRouter, expectedOpenRouterModel: "thinkingmachines/inkling-2-mini-20261120",
+                                        in: settings)
+        let custom = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
+            as? OpenAICompatibleAnalyzer)
+        let body = try AnalysisJSON.parse(XCTUnwrap(custom.makeRequest(messages: [], includeExtras: true).httpBody))
+        XCTAssertNil(body["provider"]?["only"],
+                     "another model is not pinned to the default model's providers")
+        XCTAssertEqual(custom.configuration.model, "thinkingmachines/inkling-2-mini-20261120")
     }
 
     func testLocalVariantFollowsSettingsThenMemory() {
@@ -264,7 +297,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
         XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer, "Cloudflare consent does not cover a custom endpoint")
         coordinator.allowUploads(to: .customEndpoint,
                                  endpoint: CustomEndpointIdentity(url: coordinator.settings.customEndpointURL))
-        XCTAssertTrue(coordinator.currentAnalyzer is LocalOpenAICompatibleAnalyzer)
+        XCTAssertTrue(coordinator.currentAnalyzer is OpenAICompatibleAnalyzer)
 
         coordinator.updateSettings { $0.backend = .localInkling }
         XCTAssertTrue(coordinator.currentAnalyzer is ManagedLocalAnalyzer)

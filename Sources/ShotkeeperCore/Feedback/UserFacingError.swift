@@ -67,6 +67,9 @@ public enum UserFacingError {
             return UserFacingProblem(message: "too many requests, trying again shortly")
         case .serverError(let status, _):
             return UserFacingProblem(message: "the model backend failed (HTTP \(status))")
+        case .accountState(let message):
+            // Shotkeeper's own sentence (OpenRouterBackend.refineError); the fix is on the provider's site, then Resume.
+            return UserFacingProblem(message: message)
         case .badRequest(let status, _):
             return UserFacingProblem(message: "the model backend rejected the image (HTTP \(status))")
         case .invalidResponse:

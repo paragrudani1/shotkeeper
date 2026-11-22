@@ -28,9 +28,12 @@ public struct URLSessionTransport: HTTPTransport {
 /// Maps transport outcomes onto `AnalyzerError` so the queue can decide retry vs. give up.
 public enum HTTPErrorMapping {
     /// Sends `request` and returns the body for 2xx; maps everything else to `AnalyzerError`.
-    /// `describeBody` extracts a provider-specific error message from a non-2xx body.
+    /// `describeBody` extracts a provider-specific error message from a non-2xx body. `refine` lets a backend map a
+    /// status its docs give a special meaning (e.g. OpenRouter's transient 402); nil falls back to `map(status:…)`.
     public static func send(_ request: URLRequest, via transport: any HTTPTransport,
-                            describeBody: (Data) -> String = genericMessage(from:)) async throws -> (Data, HTTPURLResponse) {
+                            describeBody: (Data) -> String = genericMessage(from:),
+                            refine: (Int, HTTPURLResponse, Data) -> AnalyzerError? = { _, _, _ in nil })
+        async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: HTTPURLResponse
         do {
@@ -41,6 +44,9 @@ public enum HTTPErrorMapping {
             throw CancellationError()
         } catch {
             throw map(transportError: error)
+        }
+        if !(200..<300).contains(response.statusCode), let error = refine(response.statusCode, response, data) {
+            throw error
         }
         if let error = map(status: response.statusCode, headers: response, body: data, describeBody: describeBody) {
             throw error

@@ -30,7 +30,7 @@ public struct AnalysisContext: Sendable, Equatable {
 }
 
 /// The one seam between the pipeline and a model backend. Implementations:
-/// `CloudflareClairicAnalyzer` (primary, cloud) and `LocalOpenAICompatibleAnalyzer` (optional, on-device).
+/// `CloudflareClairicAnalyzer` (primary, cloud) and `OpenAICompatibleAnalyzer` (optional, on-device).
 public protocol ScreenshotAnalyzer: Sendable {
     /// Stable id for logs/index, e.g. "clairic" or "local-openai".
     var backendID: String { get }
@@ -53,11 +53,16 @@ public enum AnalyzerError: Error, Equatable, Sendable {
     case invalidResponse(String)
     /// Backend not configured (no credentials / no endpoint).
     case notConfigured(String)
+    /// The account or model is in a state only the user can change: out of credits, a spending limit reached, no
+    /// provider allowed to serve the model. Holds the queue like `unauthorized` until Resume; never retried by
+    /// itself. The text is Shotkeeper's own sentence (e.g. "OpenRouter is out of credits. Add credits, then choose
+    /// Resume"), never a server message.
+    case accountState(String)
 
     public var isRetryable: Bool {
         switch self {
         case .unreachable, .rateLimited, .serverError: return true
-        case .unauthorized, .badRequest, .invalidResponse, .notConfigured: return false
+        case .unauthorized, .badRequest, .invalidResponse, .notConfigured, .accountState: return false
         }
     }
 }

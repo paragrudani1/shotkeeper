@@ -5,8 +5,9 @@
 Shotkeeper is a macOS 14+ menu-bar app. When you take a screenshot, it gives the file a short descriptive name, adds
 a description and tags, and indexes it so you can search for it later. It does the same job as the app "Blinky". A
 vision model does the analysis. The default is Cloudflare Workers AI's **Clairic**, which runs in your own Cloudflare
-account. You can also use **Inkling 2 Mini** on your Mac (Shotkeeper installs and manages `mlx_lm.server` for it), or
-any OpenAI-compatible server you run yourself.
+account. You can also use **Inkling 2 Mini** on your Mac (Shotkeeper installs and manages `mlx_lm.server` for it),
+Inkling 2 Mini in the cloud **through OpenRouter** with your own OpenRouter key, or any OpenAI-compatible server you
+run yourself.
 
 Status: version 0.1.0, early. Read [Known limits](#known-limits) before relying on it.
 
@@ -18,7 +19,9 @@ Status: version 0.1.0, early. Read [Known limits](#known-limits) before relying 
 - **Renames** each new screenshot to a short title (up to 60 characters from the model, then cleaned up for use as a
   filename). It only renames when the model's title confidence is at least the **Minimum title confidence** setting
   (default 0.50). For Clairic this is the average per-token probability of the title, not the probability of the
-  whole title (which shrinks with length). Below that, the original name stays and the index records why. Renames and moves never replace an
+  whole title (which shrinks with length). For OpenRouter it is the same average over the title's tokens (from
+  `logprobs`), and the title must also pass plain rules (not generic like "Screenshot", not only a date or digits,
+  not mostly the app's name, a sensible length). Below that, the original name stays and the index records why. Renames and moves never replace an
   existing file: a name clash becomes "Title 2.png".
 - **Finder tags and Spotlight comment:** up to 8 tags, plus the description (up to 240 characters) as the Finder
   comment. Both are written as extended attributes. You can turn this off with "Write Finder tags and comment".
@@ -54,6 +57,18 @@ App data lives in `~/Library/Application Support/Shotkeeper/`: `settings.json`, 
   ([saved copy](docs/research/clairic/model-page-2026-11-21.md), fetched 2026-11-21). That is Cloudflare's own
   statement; Shotkeeper cannot verify it. The setup window explains where screenshots go before you choose Clairic.
   The API token is stored in the macOS Keychain (service `dev.shotkeeper.Shotkeeper`), not in `settings.json`.
+- **OpenRouter (cloud):** each screenshot is downscaled on your Mac (longest side 1280 px by default) and sent to
+  **OpenRouter** with your OpenRouter API key. OpenRouter passes it to a third-party provider that serves Inkling 2
+  Mini, **Prime Intellect or io.net**, under their data policies. With the default model, requests are pinned to
+  exactly those two (`provider.only`). Every request asks OpenRouter for zero data retention (`zdr: true`) and for
+  providers that do not collect data (`data_collection: "deny"`); on 2026-11-22 both providers met both
+  (`docs/research/openrouter.md`). If no provider qualifies, OpenRouter refuses the request
+  instead of sending it elsewhere. OpenRouter itself does not store prompts unless you opt in to logging in your
+  OpenRouter account; it keeps request metadata (token counts, latency), and it announced in-flight CSAM screening of
+  all requests, ZDR included (planned from 2026-10-27). Read [OpenRouter's privacy policy](https://openrouter.ai/privacy) and the
+  [provider data policies](https://openrouter.ai/docs/guides/privacy/provider-logging). OpenRouter is its own
+  destination, allowed per model: allowing Cloudflare does not allow OpenRouter, and choosing another model ID asks
+  again ("…to the provider that serves <model>") before the first screenshot goes there. The key is stored in the Keychain, not in `settings.json`.
 - **Local Inkling 2 Mini:** analysis runs in an `mlx_lm.server` process on your Mac that only listens on 127.0.0.1.
   Screenshots never leave the Mac. The internet is used only for the one-time install and model download.
 - **Custom endpoint:** screenshots go to the URL you enter. If that server is on another machine, they leave your Mac.
@@ -64,10 +79,12 @@ App data lives in `~/Library/Application Support/Shotkeeper/`: `settings.json`, 
 
 | Mac memory | Recommended | Also offered |
 |---|---|---|
-| under 16 GB | Clairic | custom endpoint |
-| 16–23 GB | Clairic | "Use local anyway" with the 2-bit build (lower quality, high memory use), custom endpoint |
-| 24–31 GB | Local Inkling 2 Mini, 3-bit | Clairic, 2-bit, custom endpoint |
-| 32 GB and up | Local Inkling 2 Mini, 4-bit | Clairic, 3-bit, 2-bit, custom endpoint |
+| under 16 GB | Clairic | OpenRouter, custom endpoint |
+| 16–23 GB | Clairic | OpenRouter, "Use local anyway" with the 2-bit build (lower quality, high memory use), custom endpoint |
+| 24–31 GB | Local Inkling 2 Mini, 3-bit | Clairic, OpenRouter, 2-bit, custom endpoint |
+| 32 GB and up | Local Inkling 2 Mini, 4-bit | Clairic, OpenRouter, 3-bit, 2-bit, custom endpoint |
+
+OpenRouter is offered on every Mac and is never the recommended choice (yet).
 
 ## Setup
 
@@ -82,6 +99,24 @@ On first launch the setup window opens. You can open it again later from Setting
    the app links to.
 3. Enter both in the setup window, or later in Settings → Model. **Test connection** sends a generated 640×400 test
    image, never one of your files, and saves nothing until you confirm. The token is saved to the Keychain.
+
+### OpenRouter (Inkling 2 Mini in the cloud)
+
+1. Create an account at [openrouter.ai](https://openrouter.ai), then an **API key** at
+   [openrouter.ai/keys](https://openrouter.ai/keys). You can give the key a credit limit there.
+2. Add **credits** at [openrouter.ai/settings/credits](https://openrouter.ai/settings/credits). OpenRouter is prepaid:
+   without credits every request fails with HTTP 402, and Shotkeeper shows "out of credits".
+3. In the setup window choose **OpenRouter · Inkling 2 Mini**, paste the key, read where screenshots go, then press
+   **Agree and Continue** (Return). That button is the permission to send screenshots to OpenRouter and its
+   providers. Or use Settings → Model → OpenRouter, which asks before the first screenshot is sent. **Test
+   Connection** sends a generated test image only. The key goes to the Keychain.
+4. Optional: Settings → Model → OpenRouter → **Advanced** changes the model ID (default
+   `thinkingmachines/inkling-2-mini`). It is used when you press Return or leave the field, and another model needs
+   its own "Allow…".
+
+Each request turns reasoning off (`reasoning: {"effort": "none"}`; the model reasons by default), asks for JSON that
+matches Shotkeeper's schema (`response_format` json_schema), and asks for token `logprobs`. Facts and sources:
+[docs/research/openrouter.md](docs/research/openrouter.md).
 
 ### Local Inkling 2 Mini
 
@@ -164,6 +199,8 @@ export CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=...
 swift run shotkeeper-cli analyze screenshot.png                      # Clairic (default)
 swift run shotkeeper-cli analyze screenshot.png --backend local \
   --endpoint http://127.0.0.1:8080 --model mlx-community/Inkling-2-Mini-4bit
+export OPENROUTER_API_KEY=...
+swift run shotkeeper-cli analyze screenshot.png --backend openrouter --raw out.json   # tokens, cost, filename
 # Linux, via Docker (network enabled for this call only):
 SHOTKEEPER_DOCKER_NETWORK=bridge scripts/test-linux.sh run shotkeeper-cli analyze screenshot.png
 ```
@@ -208,8 +245,21 @@ The earlier estimate from the docs ($0.46 promo / $1.11 standard) assumed 4 imag
 tokens ($0.57 promo / $1.37 standard per 1,000), but small text gets harder to read. Each field costs about one image
 copy, so dropping a field (for example `description`) would save roughly an eighth.
 
+## Cost (OpenRouter)
+
+**Not measured yet.** OpenRouter's list prices for Inkling 2 Mini on 2026-11-22: Prime Intellect $0.075 per million
+input tokens and $0.30 per million output tokens; io.net $0.08 and $0.35. OpenRouter picks the provider per request.
+The docs do not say how many input tokens one screenshot costs for this model, so the app shows no price until a live
+test measures it (`OpenRouterPricing.measuredUSDPerThousandScreenshots`). Every response reports what you were
+charged in `usage.cost` (US dollars); `shotkeeper-cli analyze --backend openrouter` prints it.
+
 ## Known limits
 
+- **OpenRouter has not been tested live.** No key was available on 2026-11-22, so the backend is built and tested only
+  against responses written from OpenRouter's docs. Unverified until the first live call: that both providers really
+  skip reasoning with `effort: "none"`, that they return `logprobs`, how strictly they follow the JSON schema, and the
+  cost per screenshot. Out of credits, a spending limit or no eligible provider pauses the queue ("Needs attention");
+  fix it on openrouter.ai, then choose Resume.
 - **Clairic has been verified live on only three synthetic screenshots** (2026-11-21: a tweet, a code editor and a
   receipt). The request was accepted and parsed, and titles came back in sentence case. Small samples: tags can be
   sparse (one tag for the code screenshot), and US-style dates like `11/08/2026` came back invalid
@@ -241,7 +291,8 @@ copy, so dropping a field (for example `description`) would save roughly an eigh
   storage, the global hotkey, the search panel, `SMAppService` launch at login, and the `mlx_lm.server` process
   manager.
 - **Seams:** the core defines protocols that the app implements. The main one is `ScreenshotAnalyzer`, which turns an
-  image into a title, description, tags and text. Clairic, local Inkling and a custom endpoint all sit behind it, and
+  image into a title, description, tags and text. Clairic, OpenRouter, local Inkling and a custom endpoint all sit
+  behind it (OpenRouter, local Inkling and a custom endpoint share one OpenAI-compatible client), and
   the pipeline reads the current analyzer for each screenshot, so switching backends takes effect immediately. The
   others are `ImagePreparer`, `FileMetadataWriter` and `CredentialStore`.
 - **`Sources/shotkeeper-cli`**: a command-line tool for making one live analyzer call.
@@ -254,3 +305,4 @@ More detail:
   [core](docs/wiki/core-implementation.md) and [app](docs/wiki/app-implementation.md) implementation, and
   [macOS CI](docs/wiki/macos-ci.md)
 - [docs/research/model-backends.md](docs/research/model-backends.md): Clairic and Inkling 2 Mini facts, with sources
+- [docs/research/openrouter.md](docs/research/openrouter.md): OpenRouter and Inkling 2 Mini on OpenRouter, with sources

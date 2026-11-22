@@ -7,6 +7,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public enum Backend: String, Codable, Sendable, CaseIterable {
         /// Cloudflare Workers AI Clairic (default; recommended below 24 GB RAM).
         case clairic
+        /// Inkling 2 Mini through OpenRouter (`OpenRouterBackend`), with the user's OpenRouter API key.
+        case openRouter
         /// Inkling 2 Mini run by the app's managed `mlx_lm.server`.
         case localInkling
         /// Any OpenAI-compatible endpoint the user runs (e.g. their own llama.cpp/mlx server).
@@ -21,6 +23,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         /// The custom OpenAI-compatible endpoint named in the grant (`UploadGrant.endpoint`). Granted by the
         /// Settings → Model confirmation that names it.
         case customEndpoint
+        /// OpenRouter (`openrouter.ai`) for one model (`UploadGrant.openRouterModel`), which passes screenshots on to
+        /// that model's provider (Prime Intellect or io.net for the default model). Granted by setup step 3's
+        /// "Agree and Continue" or by the Settings → Model confirmation, for the model they name. Never granted by
+        /// the legacy-consent migration.
+        case openRouter
     }
 
     /// The user's permission to send screenshots to one destination, from `grantedAt` on. Screenshots taken before
@@ -28,13 +35,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public struct UploadGrant: Codable, Equatable, Sendable {
         public var destination: UploadDestination
         public var grantedAt: Date
-        /// The endpoint allowed, for `.customEndpoint`; nil for Cloudflare.
+        /// The endpoint allowed, for `.customEndpoint`; nil otherwise.
         public var endpoint: CustomEndpointIdentity?
+        /// The model allowed, for `.openRouter` (`OpenRouterBackend.effectiveModel`); nil otherwise. A grant without
+        /// one covers no model.
+        public var openRouterModel: String?
 
-        public init(destination: UploadDestination, grantedAt: Date, endpoint: CustomEndpointIdentity? = nil) {
+        public init(destination: UploadDestination, grantedAt: Date, endpoint: CustomEndpointIdentity? = nil,
+                    openRouterModel: String? = nil) {
             self.destination = destination
             self.grantedAt = grantedAt
             self.endpoint = endpoint
+            self.openRouterModel = openRouterModel
         }
     }
 
@@ -45,6 +57,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var localModelVariantID: String?
     public var customEndpointURL: URL?
     public var customModelName: String?
+    /// OpenRouter model ID (Settings → Model → Advanced); nil = `OpenRouterBackend.defaultModel`. The API key is in
+    /// the `CredentialStore` under `.openRouterAPIKey`.
+    public var openRouterModel: String?
     /// Stop the managed local server after this many idle minutes. 0 = never.
     public var idleTimeoutMinutes: Int = 10
     /// Folder to watch; nil = the macOS screenshot location (`com.apple.screencapture location`, else Desktop).
@@ -67,7 +82,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// upload consent any more (2026-11-21): that is `acceptedUploadDestinations`.
     public var hasSeenPrivacyNotice: Bool = false
     /// Destinations the user allowed, with when. Empty = nothing may leave this Mac. At most one grant per
-    /// destination. Settings files written before this key existed are migrated once in `init(from:)`.
+    /// destination, except OpenRouter: one per model, so going back to a model keeps its first grant time. Settings files written before this key existed are migrated once in `init(from:)`.
     public var uploadGrants: [UploadGrant] = []
 
     /// The allowed destinations (whatever endpoint or time).
@@ -99,7 +114,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaults = AppSettings()
 
     private enum CodingKeys: String, CodingKey {
-        case backend, clairicAccountID, localModelVariantID, customEndpointURL, customModelName, idleTimeoutMinutes,
+        case backend, clairicAccountID, localModelVariantID, customEndpointURL, customModelName, openRouterModel,
+             idleTimeoutMinutes,
              watchedFolderOverride, organizedFolder, renameEnabled, moveEnabled, launchAtLogin, minTitleConfidence,
              requestsPerMinute, maxImageLongSide, writeFinderMetadata, excludeRules, hasSeenPrivacyNotice,
              uploadGrants, showRenameToast, playRenameSound, filenameCasing, filenameDatePrefix, searchShortcut
@@ -117,6 +133,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         s.localModelVariantID = value(.localModelVariantID, s.localModelVariantID)
         s.customEndpointURL = value(.customEndpointURL, s.customEndpointURL)
         s.customModelName = value(.customModelName, s.customModelName)
+        s.openRouterModel = value(.openRouterModel, s.openRouterModel)
         s.idleTimeoutMinutes = value(.idleTimeoutMinutes, s.idleTimeoutMinutes)
         s.watchedFolderOverride = value(.watchedFolderOverride, s.watchedFolderOverride)
         s.organizedFolder = value(.organizedFolder, s.organizedFolder)
@@ -147,7 +164,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Settings from before per-destination consent. The old setup set `hasSeenPrivacyNotice` for every backend,
     /// local included, and its notice named Cloudflare. So the flag becomes a Cloudflare grant only when Clairic is
     /// the stored backend, dated `.distantPast` (that user already sent screenshots there). A custom endpoint is not
-    /// migrated: Settings asks once, naming the endpoint. A stored local backend grants nothing.
+    /// migrated: Settings asks once, naming the endpoint. A stored local backend grants nothing. OpenRouter did not
+    /// exist then, so nothing ever becomes an OpenRouter grant here.
     mutating func migrateLegacyConsent() {
         uploadGrants = []
         if hasSeenPrivacyNotice, backend == .clairic {

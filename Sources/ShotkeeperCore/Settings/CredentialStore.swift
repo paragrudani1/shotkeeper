@@ -9,6 +9,8 @@ public struct CredentialKey: RawRepresentable, Hashable, Sendable {
     public static let cloudflareAPIToken = CredentialKey(rawValue: "cloudflare-api-token")
     /// Optional bearer token for a custom OpenAI-compatible endpoint.
     public static let customEndpointAPIKey = CredentialKey(rawValue: "custom-endpoint-api-key")
+    /// OpenRouter API key (`sk-or-v1-…`, from openrouter.ai/keys).
+    public static let openRouterAPIKey = CredentialKey(rawValue: "openrouter-api-key")
 }
 
 /// Where secrets live. The macOS app implements this with the Keychain; never log or persist values elsewhere.

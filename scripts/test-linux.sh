@@ -13,5 +13,5 @@ fi
 SCRATCH="${SCRATCH:-.build/linux}"
 [ $# -eq 0 ] && set -- test
 exec docker run --rm --network "${SHOTKEEPER_DOCKER_NETWORK:-none}" \
-  -e CLOUDFLARE_ACCOUNT_ID -e CLOUDFLARE_API_TOKEN \
+  -e CLOUDFLARE_ACCOUNT_ID -e CLOUDFLARE_API_TOKEN -e OPENROUTER_API_KEY \
   -v "$ROOT":/src -w /src "$IMAGE" swift "$1" --scratch-path "$SCRATCH" "${@:2}"

@@ -9,6 +9,10 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [clairic-field-schema](clairic-field-schema.md): Clairic fields, pass/cost trade-offs, per-screenshot cost, `maxImageLongSide` (2026-11-21); live-call measurements and the switch to scalar fields (2026-11-21).
 - [core-implementation](core-implementation.md): files/index/queue/pipeline/runtime choices, 3-bit catalog, open mlx-vlm question (2026-11-21).
 - [app-implementation](app-implementation.md): macOS app phase 2: coordinator, settings file, analyzer selection, local runtime, pause, search; what needs a real Mac (2026-11-21).
+- [openrouter-backend](openrouter-backend.md): Inkling 2 Mini through OpenRouter: shared OpenAI-compatible client,
+  request options (reasoning off, json_schema, logprobs, zdr + data_collection deny), title confidence and rules,
+  errors, consent as its own destination, setup checkbox, price hidden until measured (2026-11-22); review fixes:
+  consent per model + `provider.only`, "Agree and Continue", account states hold the queue (2026-11-22).
 - [ui-polish](ui-polish.md): UI polish PRs (spec `../specs/ui-polish-2026-11.md`): toast batching, restored-by-undo rule, status item menu, focus, deviations; PR 2 search window rules, Quick Look, batch view; PR 3 setup steps, consent and watch gate, computed Clairic cost, icon geometry (2026-11-21); the consent choke point `UploadConsent.decide` (2026-11-22); PR 4 Settings scene, shortcut recorder, filename style, contrast; app icon: one geometry source, SVG + asset catalog + Icon Composer `.icon` (shipped on every macOS, Parag's decision), glyph stays code-drawn (2026-11-22).
 
 ## Standards
@@ -23,6 +27,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [../research/model-backends.md](../research/model-backends.md): Clairic REST schema and Inkling 2 Mini facts with sources.
 - [../research/icon-composer.md](../research/icon-composer.md): Icon Composer `.icon` layout, `icon.json` keys (from Apple's Landmarks sample), which icon wins, actool facts (2026-11-22).
 - [../research/openai-compatible-chat.md](../research/openai-compatible-chat.md): local server request shape (llama-server, mlx_lm.server, structured outputs).
+- [../research/openrouter.md](../research/openrouter.md): OpenRouter + Inkling 2 Mini: parameters per provider, reasoning switch, logprobs, headers, usage/cost, privacy routing, errors (2026-11-22).
 
 ## Code map
 - [../core-api.md](../core-api.md): public core types and how the macOS app wires them.
