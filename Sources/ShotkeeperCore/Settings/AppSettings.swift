@@ -80,6 +80,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var showRenameToast: Bool = true
     /// Play a short sound after a rename.
     public var playRenameSound: Bool = false
+    /// Filename style for renames (Settings → General): casing and the optional date at the start.
+    public var filenameCasing: FilenameStyle.Casing = .sentence
+    public var filenameDatePrefix: Bool = false
+    /// The global shortcut that opens Search (Settings → General → "Search shortcut"). Default ⌥⌘S.
+    public var searchShortcut: HotKeyShortcut = .defaultSearch
+
+    public var filenameStyle: FilenameStyle {
+        get { FilenameStyle(casing: filenameCasing, datePrefix: filenameDatePrefix) }
+        set {
+            filenameCasing = newValue.casing
+            filenameDatePrefix = newValue.datePrefix
+        }
+    }
 
     public init() {}
 
@@ -89,7 +102,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case backend, clairicAccountID, localModelVariantID, customEndpointURL, customModelName, idleTimeoutMinutes,
              watchedFolderOverride, organizedFolder, renameEnabled, moveEnabled, launchAtLogin, minTitleConfidence,
              requestsPerMinute, maxImageLongSide, writeFinderMetadata, excludeRules, hasSeenPrivacyNotice,
-             uploadGrants, showRenameToast, playRenameSound
+             uploadGrants, showRenameToast, playRenameSound, filenameCasing, filenameDatePrefix, searchShortcut
     }
 
     public init(from decoder: Decoder) throws {
@@ -123,6 +136,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         }
         s.showRenameToast = value(.showRenameToast, s.showRenameToast)
         s.playRenameSound = value(.playRenameSound, s.playRenameSound)
+        s.filenameCasing = value(.filenameCasing, s.filenameCasing)
+        s.filenameDatePrefix = value(.filenameDatePrefix, s.filenameDatePrefix)
+        // A stored shortcut that is no longer allowed (rules changed, hand-edited file) falls back to the default.
+        let shortcut = value(.searchShortcut, s.searchShortcut)
+        s.searchShortcut = HotKeyRules.problem(with: shortcut) == nil ? shortcut : .defaultSearch
         self = s
     }
 

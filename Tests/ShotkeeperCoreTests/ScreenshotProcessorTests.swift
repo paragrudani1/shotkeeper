@@ -500,6 +500,37 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(try index.lookup(byPath: source.standardizedFileURL.path)?.restoredByUndo, true)
     }
 
+    func testFilenameStyleAppliesInThePipelineAndToManualRenames() async throws {
+        let source = try screenshot()
+        let captured = Date(timeIntervalSince1970: 1_795_278_240)  // 2026-11-21 16:24 UTC
+        try FileManager.default.setAttributes([.modificationDate: captured], ofItemAtPath: source.path)
+        let attributes = try FileManager.default.attributesOfItem(atPath: source.path)
+        // What the processor reads (creation date where the file system has one, else the modification date).
+        let day = FilenameStyle.dateString((attributes[.creationDate] as? Date) ?? captured,
+                                           timeZone: TimeZone(secondsFromGMT: 0)!)
+        settings.mutate { $0.filenameStyle = FilenameStyle(casing: .kebab, datePrefix: true) }
+        let settings = self.settings!
+        let now = self.now
+        let p = ScreenshotProcessor(analyzer: StubAnalyzer(analysis(title: "Invoice from Acme")),
+                                    imagePreparer: PassthroughImagePreparer(), index: index, undoLog: undoLog,
+                                    settings: { settings.get }, now: { now }, timeZone: TimeZone(secondsFromGMT: 0)!)
+        let outcome = try await p.process(source)
+        let expected = dir.url.appendingPathComponent("Desktop/\(day)-invoice-from-acme.png").standardizedFileURL
+        XCTAssertEqual(outcome, .processed(finalURL: expected, renamed: true, moved: false))
+
+        // "Edit name": the same style; the date already in the typed name is kept, not doubled.
+        settings.mutate { $0.filenameStyle = FilenameStyle(casing: .title, datePrefix: true) }
+        let edited = try p.rename(expected, to: "\(day) march invoice from acme")
+        XCTAssertEqual(edited.finalURL.lastPathComponent, "\(day) March Invoice from Acme.png")
+        // A typed name without a date gets the capture date from the index.
+        let again = try p.rename(edited.finalURL, to: "acme invoice")
+        XCTAssertEqual(again.finalURL.lastPathComponent, "\(day) Acme Invoice.png")
+        XCTAssertEqual(read(again.finalURL), "png bytes")
+        XCTAssertThrowsError(try p.rename(again.finalURL, to: "Screenshot")) { error in
+            XCTAssertEqual(error as? ManualRenameError, .unusableName("Screenshot"), "sanitizer rules are unchanged")
+        }
+    }
+
     func testManualRenameRejectsUnusableNamesAndIgnoresNoChange() async throws {
         let source = try screenshot()
         let p = processor(StubAnalyzer(analysis(title: "Invoice From Acme")))

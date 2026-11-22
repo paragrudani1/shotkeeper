@@ -210,7 +210,7 @@ public final class ScreenshotProcessor: Sendable {
         var stem: String?
         if settings.renameEnabled {
             if let title = analysis.title, analysis.titleConfidence >= settings.minTitleConfidence {
-                stem = FilenameSanitizer.stem(from: title)
+                stem = settings.filenameStyle.stem(from: title, capturedAt: capturedAt, timeZone: timeZone)
                 if stem == nil { notes.append("kept name: title not usable as a filename") }
             } else if analysis.title == nil {
                 notes.append("kept name: no title")
@@ -284,12 +284,14 @@ public final class ScreenshotProcessor: Sendable {
         (try? undoLog.records())?.last
     }
 
-    /// Renames `url` to a name the user typed, with the pipeline's rules: `FilenameSanitizer`, the original
+    /// Renames `url` to a name the user typed, with the pipeline's rules: `FilenameSanitizer`, the filename style
+    /// from Settings (casing; the capture date when "Add the date" is on and the name has none), the original
     /// extension, no-replace "Name 2.png" collisions via `FileOrganizer`. Writes an undo record and moves the index
     /// row (whose title becomes the new name, so search finds it).
     public func rename(_ url: URL, to proposedName: String) throws -> ManualRenameResult {
         let url = url.standardizedFileURL
-        guard let stem = FilenameSanitizer.stem(from: proposedName) else {
+        let style = snapshot().settings.filenameStyle
+        guard let stem = style.stem(from: proposedName, capturedAt: captureDateForName(of: url), timeZone: timeZone) else {
             throw ManualRenameError.unusableName(proposedName)
         }
         if stem == url.deletingPathExtension().lastPathComponent { return ManualRenameResult(finalURL: url, undoRecordID: nil) }
@@ -310,6 +312,14 @@ public final class ScreenshotProcessor: Sendable {
             _ = try? index.save(row)
         }
         return ManualRenameResult(finalURL: finalURL, undoRecordID: record.id)
+    }
+
+    /// The date "Add the date at the start" uses for a manual rename: the index's capture time (what the pipeline
+    /// used), else the file's creation date.
+    private func captureDateForName(of url: URL) -> Date? {
+        if let row = try? index.lookup(byPath: url.path), let captured = row.capturedAt { return captured }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.creationDate] as? Date) ?? (attributes?[.modificationDate] as? Date)
     }
 
     /// After an undo: the index follows the file back, and the file is flagged so neither the watcher (which sees
