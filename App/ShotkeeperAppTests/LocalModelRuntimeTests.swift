@@ -51,4 +51,29 @@ final class LocalModelRuntimeTests: TempDirectoryTestCase {
         let phase = await runtime.phase
         XCTAssertNotEqual(phase, .starting)
     }
+
+    /// "Remove model" deletes only that variant's download (app data), keeps the Python environment and the other
+    /// variants, and reports "Not installed".
+    func testRemoveModelDeletesOnlyThatDownload() async throws {
+        let variant = ModelCatalog.inkling2bit
+        try installCrashingServer(for: variant)
+        let plan = MLXRuntimePlan(applicationSupport: directory, uvPath: nil)
+        let other = plan.localModelDirectory(for: ModelCatalog.inkling3bit)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try Data("weights".utf8).write(to: plan.localModelDirectory(for: variant).appendingPathComponent("model.safetensors"))
+        let runtime = LocalModelRuntime(applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"),
+                                        idleTimeoutMinutes: 0) { _ in }
+        let needsBefore = await runtime.diskNeeds(for: variant)
+        XCTAssertEqual(needsBefore.alreadyOnDisk, 7)
+        XCTAssertTrue(needsBefore.needsRuntime, "the fixture has the server but no `hf`")
+
+        try await runtime.removeModel(variant)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plan.localModelDirectory(for: variant).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path), "other variants stay")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: plan.serverExecutable), "the Python environment stays")
+        let installed = await runtime.isInstalled(variant)
+        XCTAssertFalse(installed)
+        let phase = await runtime.phase
+        XCTAssertEqual(phase, .notInstalled)
+    }
 }

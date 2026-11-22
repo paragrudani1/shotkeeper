@@ -23,32 +23,33 @@ enum MenuBarGlyph {
         return image
     }
 
-    /// Core `IconGeometry.menuBarGlyph` (the app icon's shape, with the corners pushed out and a heavier stroke for
-    /// 18 pt), drawn in AppKit coordinates (y up).
+    /// Core `IconGeometry.menuBarGlyph` paths (the app icon's shape, with the corners pushed out and a heavier stroke
+    /// for 18 pt; also exported as `design/icon/MenuBarGlyph.svg`), drawn in AppKit coordinates (y up).
     static func draw(in rect: NSRect, sparkleScale: CGFloat) {
         let geometry = IconGeometry.menuBarGlyph
         let side = min(rect.width, rect.height)
-        func point(_ p: IconPoint) -> NSPoint {
-            NSPoint(x: rect.minX + CGFloat(p.x) * side, y: rect.minY + side - CGFloat(p.y) * side)
-        }
-        let corners = NSBezierPath()
+        let corners = bezierPath(geometry.viewfinderPath, in: rect, side: side)
         corners.lineWidth = max(1, side * CGFloat(geometry.cornerStroke))
         corners.lineCapStyle = .round
         corners.lineJoinStyle = .round
-        for corner in geometry.viewfinderCorners {
-            corners.move(to: point(corner[0]))
-            for next in corner.dropFirst() { corners.line(to: point(next)) }
-        }
         corners.stroke()
+        bezierPath(geometry.sparklePath(scale: Double(sparkleScale)), in: rect, side: side).fill()
+    }
 
-        let (tips, controls) = geometry.sparkle(scale: Double(sparkleScale))
-        let sparkle = NSBezierPath()
-        sparkle.move(to: point(tips[0]))
-        for index in 0..<4 {
-            let control = point(controls[index])
-            sparkle.curve(to: point(tips[(index + 1) % 4]), controlPoint1: control, controlPoint2: control)
+    /// A unit-square core path (y down) as an `NSBezierPath` in `rect` (y up).
+    private static func bezierPath(_ elements: [IconPathElement], in rect: NSRect, side: CGFloat) -> NSBezierPath {
+        func point(_ p: IconPoint) -> NSPoint {
+            NSPoint(x: rect.minX + CGFloat(p.x) * side, y: rect.minY + side - CGFloat(p.y) * side)
         }
-        sparkle.close()
-        sparkle.fill()
+        let path = NSBezierPath()
+        for element in elements {
+            switch element {
+            case .move(let p): path.move(to: point(p))
+            case .line(let p): path.line(to: point(p))
+            case .curve(let p, let c1, let c2): path.curve(to: point(p), controlPoint1: point(c1), controlPoint2: point(c2))
+            case .close: path.close()
+            }
+        }
+        return path
     }
 }

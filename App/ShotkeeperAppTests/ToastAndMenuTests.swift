@@ -141,6 +141,10 @@ final class MenuTests: XCTestCase {
         state.recents = [RecentItem(id: 9, path: "/a.png", title: "a", source: nil, date: Date())]
         state.showsFixSettings = true
         XCTAssertEqual(state.rows, [.fixSettings, .recent(9), .undo, .resume, .processExisting, .search, .settings, .about, .quit])
+        // Before setup: nothing to pause and nothing to process yet.
+        state.showsPauseResume = false
+        state.showsProcessExisting = false
+        XCTAssertEqual(state.rows, [.fixSettings, .recent(9), .undo, .search, .settings, .about, .quit])
     }
 
     func testStatusIconsAreTemplates() {
@@ -233,7 +237,7 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
 
     func testMenuStateFromCoordinator() {
         let coordinator = makeCoordinator()
-        let state = MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S", version: "0.1.0")
+        let state = MenuViewState.make(from: coordinator, version: "0.1.0")
         // A fresh install watches nothing until setup chose a usable backend.
         XCTAssertEqual(state.status, MenuStatusSummary(dot: .orange, headline: "Not watching yet",
                                                        detail: "Cloudflare account ID is not set"))
@@ -241,15 +245,35 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
         XCTAssertFalse(state.canUndo)
         XCTAssertTrue(state.showsFinishSetup)
         XCTAssertNil(state.download)
+        XCTAssertFalse(state.showsProcessExisting, "it refuses before setup, so it is hidden")
+        XCTAssertFalse(state.showsPauseResume, "nothing is watched yet")
+        XCTAssertNil(state.searchShortcut, "no shortcut registered in a unit test")
 
         // Consent given but the backend step skipped: still "Finish Setup…".
         coordinator.acceptPrivacyStep()
-        XCTAssertTrue(MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S").showsFinishSetup)
+        XCTAssertTrue(MenuViewState.make(from: coordinator).showsFinishSetup)
 
         coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
-        let ready = MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S", version: "0.1.0")
+        let ready = MenuViewState.make(from: coordinator, version: "0.1.0")
         XCTAssertEqual(ready.status.dot, .green)
         XCTAssertEqual(ready.status.detail, "Idle · 0 screenshots in the index")
         XCTAssertFalse(ready.showsFinishSetup)
+        XCTAssertTrue(ready.showsProcessExisting)
+    }
+}
+
+/// PR 4: the AppIcon asset catalog reaches the built bundle (tests run hosted in Shotkeeper.app).
+final class AppIconBundleTests: XCTestCase {
+    func testBundleCarriesTheGeneratedAppIcon() throws {
+        let bundle = Bundle.main
+        XCTAssertEqual(bundle.bundleURL.pathExtension, "app", "tests run hosted in the app")
+        XCTAssertEqual(bundle.object(forInfoDictionaryKey: "CFBundleIconName") as? String, "AppIcon")
+        XCTAssertNotNil(bundle.url(forResource: "Assets", withExtension: "car"))
+        let icns = try XCTUnwrap(bundle.url(forResource: "AppIcon", withExtension: "icns"))
+        let icon = try XCTUnwrap(NSImage(contentsOf: icns))
+        // Xcode 26 actool writes a small legacy icns (16, 32, 128, 256 px; run 44982021205) and keeps every size of
+        // the appiconset in Assets.car, which the Dock and Finder read.
+        let widths = Set(icon.representations.map(\.pixelsWide))
+        XCTAssertTrue(Set([16, 32, 128, 256]).isSubset(of: widths), "icns sizes: \(widths.sorted())")
     }
 }

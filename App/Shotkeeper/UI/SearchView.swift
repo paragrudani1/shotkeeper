@@ -140,7 +140,7 @@ struct SearchView: View {
         HStack(spacing: 14) {
             Text(model.state.footerText)
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .lineLimit(1)
             Spacer(minLength: 8)
             KeyHint(keys: "↑↓", label: "Select", spoken: "Up or Down Arrow")
@@ -180,14 +180,14 @@ struct KeyHint: View {
         HStack(spacing: 5) {
             Text(keys)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .padding(.horizontal, 5)
                 .frame(minWidth: 20, minHeight: 18)
                 .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.07)))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5))
             Text(label)
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(spoken): \(label)")
@@ -214,7 +214,7 @@ struct SearchMessageView<Accessory: View>: View {
                 .multilineTextAlignment(.center)
             Text(message)
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 420)
@@ -277,7 +277,7 @@ struct SearchResultRow: View {
                     .lineLimit(1)
                 Text(item.subtitle(now: now, time: time))
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -324,7 +324,7 @@ struct SearchPreview: View {
                         if let description = item.description {
                             Text(description)
                                 .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Brand.secondaryText)
                                 .lineLimit(3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -369,7 +369,7 @@ struct SearchPreview: View {
             let rows = item.metadata(time: model.time)
             GridRow {
                 ForEach(rows, id: \.label) { row in
-                    Text(row.label).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(row.label).font(.system(size: 11)).foregroundStyle(Brand.secondaryText)
                 }
             }
             GridRow {

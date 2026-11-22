@@ -195,12 +195,13 @@ final class ProcessingQueueTests: XCTestCase {
     }
 
     func testUnauthorizedHoldsInErrorUntilResume() async {
-        let (handler, calls) = scripted([AnalyzerError.unauthorized("bad token")])
+        let (handler, calls) = scripted([AnalyzerError.unauthorized("HTTP 401: {\"errors\":[{\"message\":\"bad token\"}]}")])
         let queue = makeQueue(handler, clock: FakeClock())
         await queue.enqueue(a)
         await queue.enqueue(b)
-        let status = await waitForStatus(queue) { $0 == .error("bad token") }
-        XCTAssertEqual(status, .error("bad token"))
+        let held = QueueStatus.error("the model backend rejected the token")
+        let status = await waitForStatus(queue) { $0 == held }
+        XCTAssertEqual(status, held, "the menu shows readable text, never the server's response body")
         await settle()
         XCTAssertEqual(calls.get, [a], "held: nothing else runs")
         await queue.resume()

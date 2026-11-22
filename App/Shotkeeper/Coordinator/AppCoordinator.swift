@@ -45,6 +45,21 @@ final class AppCoordinator {
     private(set) var renamePulse = 0
     /// Bumped when a secret changes so views re-read `hasSecret`.
     private(set) var credentialsRevision = 0
+    /// Bytes, speed and time left while the local model downloads (nil otherwise).
+    private(set) var downloadStats: DownloadStats?
+    /// Why the last "Install and Download" did not start or failed (Settings → Model shows it under the button).
+    private(set) var localInstallProblem: String?
+    /// Bytes of the selected local model on disk while it is not installed (a cancelled or failed download that
+    /// "Remove Download…" can delete). 0 otherwise.
+    private(set) var localDownloadBytesOnDisk: Int64 = 0
+    /// The search shortcut registered with the system now (nil when none could be registered). The menu and setup
+    /// show this one.
+    private(set) var activeSearchShortcut: HotKeyShortcut?
+    /// Why the saved search shortcut could not be registered at launch (Settings shows it at the recorder).
+    private(set) var searchShortcutProblem: String?
+    /// Registers a search shortcut with the system (set by the app delegate; nil in unit tests). Returns the
+    /// problem when it was refused; the old shortcut then keeps working.
+    @ObservationIgnored var registerSearchShortcut: ((HotKeyShortcut) -> HotKeyProblem?)?
 
     @ObservationIgnored let settingsStore: SettingsStore
     @ObservationIgnored let credentials: any CredentialStore
@@ -93,11 +108,13 @@ final class AppCoordinator {
                                                         settings: store.current))
 
         let phaseSink = LockedValue<(@MainActor @Sendable (RuntimePhase) -> Void)?>(nil)
+        let bytesSink = LockedValue<(@MainActor @Sendable (Int64) -> Void)?>(nil)
         self.localRuntime = LocalModelRuntime(applicationSupport: applicationSupport, logDirectory: logDirectory,
-                                              idleTimeoutMinutes: store.current.idleTimeoutMinutes) { phase in
-            Task { @MainActor in phaseSink.value?(phase) }
-        }
-        phaseSink.value = { [weak self] phase in self?.runtimePhase = phase }
+                                              idleTimeoutMinutes: store.current.idleTimeoutMinutes,
+                                              onPhase: { phase in Task { @MainActor in phaseSink.value?(phase) } },
+                                              onDownloadBytes: { bytes in Task { @MainActor in bytesSink.value?(bytes) } })
+        phaseSink.value = { [weak self] phase in self?.applyRuntimePhase(phase) }
+        bytesSink.value = { [weak self] bytes in self?.recordDownloadBytes(bytes) }
 
         openStorage()
         rebuildAnalyzer()
@@ -105,6 +122,34 @@ final class AppCoordinator {
         buildQueue()
         refreshHistory()
         Task { await localRuntime.refresh(for: localVariant) }
+    }
+
+    // MARK: Local model download
+
+    /// Internal so tests and snapshots can show a download without running one.
+    func applyRuntimePhase(_ phase: RuntimePhase) {
+        runtimePhase = phase
+        if case .downloading = phase { return }
+        downloadStats = nil
+        refreshLocalDownloadBytes()
+    }
+
+    /// Re-reads how much of the selected model is on disk (for "Remove Download…").
+    func refreshLocalDownloadBytes() {
+        let variant = localVariant
+        let runtime = localRuntime
+        Task { [weak self] in
+            let installed = await runtime.isInstalled(variant)
+            let bytes = installed ? 0 : await runtime.diskNeeds(for: variant).alreadyOnDisk
+            self?.localDownloadBytesOnDisk = bytes
+        }
+    }
+
+    func recordDownloadBytes(_ bytes: Int64, at time: Date = Date()) {
+        guard case .downloading = runtimePhase else { return }
+        var stats = downloadStats ?? DownloadStats(totalBytes: Int64(localVariant.approxDownloadGB * 1_000_000_000))
+        stats.record(bytes: bytes, at: time)
+        downloadStats = stats
     }
 
     // MARK: Derived state
@@ -229,7 +274,7 @@ final class AppCoordinator {
         }
         if new.launchAtLogin != old.launchAtLogin, servicesStarted {
             do { try LaunchAtLogin.setEnabled(new.launchAtLogin) } catch {
-                lastMessage = "Launch at login: \(error.localizedDescription). Move Shotkeeper to /Applications and try again."
+                lastMessage = StatusText.launchAtLoginFailed
             }
         }
     }
@@ -240,24 +285,81 @@ final class AppCoordinator {
         updateSettings(copy)
     }
 
+    /// Saves (or, when empty, removes) a secret and uses it now: setup's Continue, "Remove saved token". Drops any
+    /// draft of that key being typed in Settings.
     func setSecret(_ value: String, for key: CredentialKey) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        secretDrafts[key] = nil
+        committedSecrets[key] = nil
         do {
             if trimmed.isEmpty { try credentials.removeSecret(for: key) } else { try credentials.setSecret(trimmed, for: key) }
         } catch {
-            lastMessage = "Keychain: \(StatusText.describe(error))"
+            lastMessage = StatusText.describe(error)
         }
         credentialsRevision += 1
         rebuildAnalyzer()
     }
 
+    // MARK: Secrets typed in Settings (saved as you type, used on commit)
+
+    /// What the user typed and has not been written yet, per key.
+    @ObservationIgnored private var secretDrafts: [CredentialKey: String] = [:]
+    /// For a key whose draft was written to the Keychain but not committed: the value the analyzer was built with
+    /// before (nil inside = none). The analyzer and readiness keep using it until the commit, so a half-typed token
+    /// that was saved during a pause in typing is never sent.
+    @ObservationIgnored private var committedSecrets: [CredentialKey: String?] = [:]
+
+    /// Keystrokes in a token field. Only remembered; nothing is written or used.
+    func updateSecretDraft(_ value: String, for key: CredentialKey) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        secretDrafts[key] = trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The pause after typing: writes the draft to the Keychain so it is not lost, without using it (no analyzer
+    /// rebuild, no readiness change, no queue resume, no watcher start). Throws the Keychain error.
+    func persistSecretDraft(for key: CredentialKey) throws {
+        guard let draft = secretDrafts[key] else { return }
+        if committedSecrets[key] == nil {
+            committedSecrets[key] = .some((try? credentials.secret(for: key)) ?? nil)
+        }
+        try credentials.setSecret(draft, for: key)
+        secretDrafts[key] = nil
+        credentialsRevision += 1
+    }
+
+    /// Return, focus leaving the field, the field or window going away, quitting: writes what is left and uses the
+    /// saved value from now on.
+    func commitSecretDraft(for key: CredentialKey) throws {
+        try persistSecretDraft(for: key)
+        guard committedSecrets.removeValue(forKey: key) != nil else { return }
+        rebuildAnalyzer()
+    }
+
+    /// Settings window closed or the app quits: commits every key being typed. Errors go to the menu message.
+    func commitAllSecretDrafts() {
+        for key in Set(secretDrafts.keys).union(committedSecrets.keys) {
+            do { try commitSecretDraft(for: key) } catch { lastMessage = StatusText.describe(error) }
+        }
+    }
+
+    /// The credentials the analyzer is built from: the Keychain, except committed values for keys being typed.
+    private var analyzerCredentials: any CredentialStore {
+        committedSecrets.isEmpty ? credentials : CommittedCredentialStore(base: credentials, committed: committedSecrets)
+    }
+
     // MARK: Analyzer and queue
 
+    /// How many times the analyzer was rebuilt (each rebuild may resume a held queue). For tests.
+    @ObservationIgnored private(set) var analyzerRebuilds = 0
+
     func rebuildAnalyzer() {
-        let analyzer = AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: localRuntime,
+        analyzerRebuilds += 1
+        let store = analyzerCredentials
+        let analyzer = AnalyzerFactory.make(settings: settings, credentials: store, localRuntime: localRuntime,
                                             physicalMemoryBytes: physicalMemoryBytes)
         analyzerBox.value = AnalyzerSnapshot(analyzer: analyzer, settings: settings)
-        readiness = BackendGate.readiness(settings: settings, hasClairicToken: hasSecret(.cloudflareAPIToken))
+        let token = ((try? store.secret(for: .cloudflareAPIToken)) ?? nil) ?? ""
+        readiness = BackendGate.readiness(settings: settings, hasClairicToken: !token.isEmpty)
         // A queue held on "not configured"/"unauthorized" retries with the new analyzer.
         if case .error = queueStatus, let queue { Task { await queue.resume() } }
         startWatchingIfReady()
@@ -492,8 +594,37 @@ final class AppCoordinator {
         updateSettings { $0.launchAtLogin = enabled } // applies it when it changed (and services run)
         guard unchanged, servicesStarted else { return }
         do { try LaunchAtLogin.apply(enabled) } catch {
-            lastMessage = "Launch at login: \(error.localizedDescription). Move Shotkeeper to /Applications and try again."
+            lastMessage = StatusText.launchAtLoginFailed
         }
+    }
+
+    // MARK: Search shortcut
+
+    /// At launch: registers the saved search shortcut. If the system refuses it, Settings shows why at the recorder
+    /// and the menu shows no shortcut.
+    func startSearchShortcut() {
+        guard let registerSearchShortcut else { return }
+        let shortcut = settings.searchShortcut
+        if let problem = registerSearchShortcut(shortcut) {
+            searchShortcutProblem = problem.displayMessage(for: shortcut)
+            lastMessage = "Search shortcut: \(problem.displayMessage(for: shortcut))"
+        } else {
+            activeSearchShortcut = shortcut
+            searchShortcutProblem = nil
+        }
+    }
+
+    /// The shortcut recorder: checks the rules, registers the new shortcut, and saves it only once it registered.
+    /// On a problem nothing changes and the old shortcut keeps working.
+    func changeSearchShortcut(to shortcut: HotKeyShortcut) -> HotKeyProblem? {
+        if let problem = HotKeyRules.problem(with: shortcut) { return problem }
+        if let registerSearchShortcut {
+            if let problem = registerSearchShortcut(shortcut) { return problem }
+            activeSearchShortcut = shortcut
+        }
+        searchShortcutProblem = nil
+        updateSettings { $0.searchShortcut = shortcut }
+        return nil
     }
 
     /// Setup step 3 "Continue" with Clairic: the token goes to the Keychain now (never while typing), then the
@@ -561,13 +692,50 @@ final class AppCoordinator {
         }
     }
 
+    /// Free space on the volume of `url` (or its nearest existing parent), nil when unknown.
+    nonisolated static func freeDiskBytes(near url: URL) -> Int64? {
+        var candidate = url
+        while !FileManager.default.fileExists(atPath: candidate.path), candidate.pathComponents.count > 1 {
+            candidate = candidate.deletingLastPathComponent()
+        }
+        let values = try? candidate.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
+    /// Test seam for the disk check (real free space otherwise).
+    @ObservationIgnored var availableDiskBytes: (URL) -> Int64? = { AppCoordinator.freeDiskBytes(near: $0) }
+
+    /// "Install and Download": checks the free disk space first (core `DiskSpaceCheck`), then installs.
     func installLocalModel(_ variant: ModelVariant) async {
+        localInstallProblem = nil
+        let needs = await localRuntime.diskNeeds(for: variant)
+        let verdict = DiskSpaceCheck.evaluate(availableBytes: availableDiskBytes(localRuntime.runtimeDirectory),
+                                              downloadBytes: Int64(variant.approxDownloadGB * 1_000_000_000),
+                                              alreadyOnDisk: needs.alreadyOnDisk, needsRuntime: needs.needsRuntime)
+        if let message = verdict.message {
+            localInstallProblem = message
+            lastMessage = message
+            return
+        }
         do {
             try await localRuntime.install(variant)
             lastMessage = "\(variant.displayName) is installed."
             rebuildAnalyzer() // un-holds a queue that stopped on "not installed"
         } catch is CancellationError {
             lastMessage = "Install cancelled."
+        } catch {
+            localInstallProblem = StatusText.describe(error)
+            lastMessage = StatusText.describe(error)
+        }
+    }
+
+    /// "Remove model" (after the user confirmed): deletes the downloaded files of `variant`.
+    func removeLocalModel(_ variant: ModelVariant) async {
+        do {
+            try await localRuntime.removeModel(variant)
+            localInstallProblem = nil
+            lastMessage = "\(variant.displayName) was removed from this Mac."
+            rebuildAnalyzer()
         } catch {
             lastMessage = StatusText.describe(error)
         }
@@ -584,4 +752,18 @@ extension AppCoordinator {
 
 struct AnalyzerFailure: Error, Equatable {
     var message: String
+}
+
+/// Reads committed values for the keys being typed and the Keychain for the rest. Read-only.
+private struct CommittedCredentialStore: CredentialStore {
+    let base: any CredentialStore
+    let committed: [CredentialKey: String?]
+
+    func secret(for key: CredentialKey) throws -> String? {
+        if let value = committed[key] { return value }
+        return try base.secret(for: key)
+    }
+
+    func setSecret(_ value: String, for key: CredentialKey) throws {}
+    func removeSecret(for key: CredentialKey) throws {}
 }

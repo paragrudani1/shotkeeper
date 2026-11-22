@@ -30,12 +30,14 @@ struct SetupServices {
     var addEventObserver: @MainActor (@escaping @MainActor (ScreenshotEvent) -> Void) -> UUID?
     var removeEventObserver: @MainActor (UUID) -> Void
     var indexEntry: @MainActor (_ path: String) -> IndexedScreenshot?
-    /// Step 5 "Change Shortcut…": Settings, where the shortcut lives (the recorder is PR 4).
+    /// Step 5 "Change Shortcut…": Settings → General's shortcut recorder.
     var openShortcutSettings: @MainActor () -> Void
     /// Step 5 "Finish": apply "Open Shotkeeper when I log in" (every time), then close the window.
     var finish: @MainActor (_ openAtLogin: Bool) -> Void
     /// The setup window, for VoiceOver announcements (nil in tests and snapshots).
     var window: @MainActor () -> NSWindow? = { nil }
+    /// The search shortcut steps 1 and 5 show: the registered one, else the saved one.
+    var searchShortcut: @MainActor () -> HotKeyShortcut = { .defaultSearch }
 
     @MainActor
     static func live(coordinator: AppCoordinator, openShortcutSettings: @escaping @MainActor () -> Void,
@@ -71,7 +73,8 @@ struct SetupServices {
                 coordinator.setLaunchAtLogin(openAtLogin)
                 close()
             },
-            window: { NSApp.windows.first { $0.title == SetupView.windowTitle && $0.isVisible } })
+            window: { NSApp.windows.first { $0.title == SetupView.windowTitle && $0.isVisible } },
+            searchShortcut: { coordinator.activeSearchShortcut ?? coordinator.settings.searchShortcut })
     }
 }
 

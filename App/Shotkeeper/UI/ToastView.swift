@@ -97,14 +97,14 @@ struct ToastView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Text(toast.subline)
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .font(.system(size: 11)).foregroundStyle(Brand.secondaryText)
                             .lineLimit(1).allowsTightening(true).truncationMode(.middle)
                     }
                     Spacer(minLength: 0)
                 }
                 if model.isEditing {
                     HStack(spacing: 8) {
-                        Text("↩ Save · esc Cancel").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("↩ Save · esc Cancel").font(.system(size: 11)).foregroundStyle(Brand.secondaryText)
                             .accessibilityHidden(true)
                         Spacer(minLength: 0)
                         Button("Cancel", action: actions.cancelEdit).buttonStyle(PanelSecondaryButtonStyle())
@@ -129,7 +129,7 @@ struct ToastView: View {
                     brandLabel(toast.label, symbol: "arrow.uturn.backward").padding(.trailing, 22)
                     Text(toast.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(toast.subline).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(toast.subline).font(.system(size: 11)).foregroundStyle(Brand.secondaryText).lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -142,7 +142,7 @@ struct ToastView: View {
                         Text(toast.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
                             .padding(.trailing, 22)
                         if let subline = toast.subline {
-                            Text(subline).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                            Text(subline).font(.system(size: 11)).foregroundStyle(Brand.secondaryText).lineLimit(1)
                         }
                     }
                     Spacer(minLength: 0)

@@ -81,7 +81,6 @@ enum MenuPlacement {
 final class StatusItemController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let coordinator: AppCoordinator
-    private let searchShortcut: String
     private let perform: (MenuRowID, Bool) -> Void
     private let highlight = MenuHighlight()
     private var panel: MenuPanel?
@@ -90,9 +89,8 @@ final class StatusItemController: NSObject {
     private var pulseTask: Task<Void, Never>?
 
     /// - Parameter perform: runs a row's action (after the menu closed). `reveal` = ⌥ for recent rows.
-    init(coordinator: AppCoordinator, searchShortcut: String, perform: @escaping (MenuRowID, Bool) -> Void) {
+    init(coordinator: AppCoordinator, perform: @escaping (MenuRowID, Bool) -> Void) {
         self.coordinator = coordinator
-        self.searchShortcut = searchShortcut
         self.perform = perform
         super.init()
         if let button = statusItem.button {
@@ -175,8 +173,7 @@ final class StatusItemController: NSObject {
 
     private func makePanel() -> MenuPanel {
         let actions = MenuActions { [weak self] row, reveal in self?.run(row, reveal: reveal) }
-        let root = MenuRootView(coordinator: coordinator, searchShortcut: searchShortcut, actions: actions,
-                                highlight: highlight)
+        let root = MenuRootView(coordinator: coordinator, actions: actions, highlight: highlight)
         let hosting = NSHostingView(rootView: root)
         hosting.sizingOptions = [.intrinsicContentSize]
         let effect = NSVisualEffectView()
@@ -206,7 +203,7 @@ final class StatusItemController: NSObject {
     }
 
     private func handle(_ key: MenuKey) -> Bool {
-        let rows = MenuViewState.make(from: coordinator, searchShortcut: searchShortcut).rows
+        let rows = MenuViewState.make(from: coordinator).rows
         switch key {
         case .up: highlight.move(-1, in: rows)
         case .down: highlight.move(1, in: rows)

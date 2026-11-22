@@ -65,6 +65,34 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(AppSettings.decode(try changed.encoded()), changed)
     }
 
+    /// PR 4 added the filename style and the search shortcut. A file from before (written at `7cf9df5`) keeps
+    /// every value it had and gets the defaults for the new keys; bad new values fall back per key.
+    func testSettingsFileFromBeforeTheFilenameStyleAndShortcutStillDecodes() throws {
+        let json = """
+        {"backend":"clairic","clairicAccountID":"acct","excludeRules":{"rules":[]},"hasSeenPrivacyNotice":true,
+         "idleTimeoutMinutes":10,"launchAtLogin":true,"maxImageLongSide":1280,"minTitleConfidence":0.5,
+         "moveEnabled":false,"playRenameSound":true,"renameEnabled":true,"requestsPerMinute":30,
+         "showRenameToast":false,"uploadGrants":[{"destination":"cloudflare","grantedAt":"2026-11-22T03:00:00Z"}],
+         "writeFinderMetadata":true}
+        """
+        let s = AppSettings.decode(Data(json.utf8))
+        XCTAssertEqual(s.clairicAccountID, "acct")
+        XCTAssertTrue(s.launchAtLogin)
+        XCTAssertFalse(s.showRenameToast)
+        XCTAssertTrue(s.playRenameSound)
+        XCTAssertEqual(s.uploadGrants.map(\.destination), [.cloudflare])
+        XCTAssertEqual(s.filenameStyle, FilenameStyle(casing: .sentence, datePrefix: false))
+        XCTAssertEqual(s.searchShortcut, .defaultSearch)
+
+        var changed = s
+        changed.filenameStyle = FilenameStyle(casing: .kebab, datePrefix: true)
+        changed.searchShortcut = HotKeyShortcut(keyCode: KeyCode.k, modifiers: [.control, .option])
+        XCTAssertEqual(AppSettings.decode(try changed.encoded()), changed)
+
+        let bad = AppSettings.decode(Data(#"{"filenameCasing":"SHOUTING","filenameDatePrefix":"yes"}"#.utf8))
+        XCTAssertEqual(bad.filenameStyle, FilenameStyle())
+    }
+
     func testEmptyObjectDecodesToDefaults() {
         XCTAssertEqual(AppSettings.decode(Data("{}".utf8)), AppSettings())
     }

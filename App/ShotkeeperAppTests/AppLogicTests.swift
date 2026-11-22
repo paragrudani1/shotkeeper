@@ -33,9 +33,25 @@ final class StatusTextTests: XCTestCase {
                                                          accessibilityDescription: nil), "\(status)") }
     }
 
-    func testDescribeUnauthorizedMentionsPermissions() {
-        XCTAssertTrue(StatusText.describe(AnalyzerError.unauthorized("bad token")).contains("Workers AI Read + Edit"))
+    /// Readable text only: no server body, no Swift enum description, no bare OSStatus.
+    func testDescribeIsReadableAndNeverLeaksRawErrorText() {
+        XCTAssertEqual(StatusText.describe(AnalyzerError.unauthorized("HTTP 401: {\"errors\":[\"secret-ish\"]}")),
+                       "The model backend rejected the token.")
+        XCTAssertEqual(StatusText.describe(AnalyzerError.serverError(status: 503, message: "<html>upstream</html>")),
+                       "The model backend failed (HTTP 503).")
+        XCTAssertEqual(StatusText.describe(AnalyzerError.unreachable("No free local port")), "The model backend is unreachable.")
         XCTAssertEqual(StatusText.describe(AnalyzerError.notConfigured("No token")), "No token")
+        XCTAssertEqual(StatusText.describe(KeychainError.status(operation: "SecItemAdd", -25308)),
+                       "The Keychain is locked. Unlock the Mac and try again.")
+        XCTAssertEqual(StatusText.describe(KeychainError.invalidData), "The Keychain could not save the token.")
+        XCTAssertEqual(StatusText.describe(LocalRuntimeError.commandFailed(step: "Downloading Inkling", exit: .exited(1))),
+                       "Downloading Inkling failed (exit code 1). Details are in the log folder (Settings → About).")
+        XCTAssertEqual(StatusText.describe(ManagedProcessError.launchFailed("posix_spawn: /Users/x/venv")),
+                       "The local model runtime could not be started. Install it again in Settings → Model.")
+        XCTAssertEqual(StatusText.describe(CocoaError(.fileWriteOutOfSpace)), "The disk is full.")
+        struct Opaque: Error {}
+        XCTAssertEqual(StatusText.describe(Opaque()), "Something went wrong.")
+        XCTAssertEqual(ProcessExit.signaled(9).readable, "stopped by signal 9")
     }
 }
 

@@ -155,7 +155,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         configureClairicInSettings(coordinator)
         XCTAssertEqual(coordinator.readiness, .needsConsent)
         XCTAssertTrue(coordinator.isSkippingForConsent)
-        XCTAssertEqual(MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S").status.detail,
+        XCTAssertEqual(MenuViewState.make(from: coordinator).status.detail,
                        MenuText.skippingForConsentText)
 
         let queue = try XCTUnwrap(coordinator.queue)

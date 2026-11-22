@@ -46,6 +46,9 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `exclusion(for:capturedAt:now:)`. Pausing = screenshots captured or processed in the window are skipped (not held).
   - `FileOrganizer`: `organize(_:stem:into:) -> URL` (rename and/or move, "Title 2.png" on collision, never
     overwrites), `move(_:to:)` (exact target or `.destinationExists`). Errors: `FileOrganizerError`.
+  - `FilenameStyle(casing:datePrefix:)` (`AppSettings.filenameStyle`): `stem(from:capturedAt:timeZone:)` = `FilenameSanitizer`
+    then Sentence case (first letter only; default) / Title Case / kebab-case, plus the optional "2026-11-21 " date prefix.
+    The pipeline and `ScreenshotProcessor.rename(_:to:)` (toast "Edit name") both use it.
   - `UndoLog`: `append(from:to:)`, `records()`, `undo(id:)`, `undoLast()`. Errors: `UndoError`
     (`.originalPathOccupied`, `.fileNotAtDestination`, …). Prefer `ScreenshotProcessor.undoLast()`, which also fixes the index.
   - `FinderMetadata`: attribute names, `tagsPayload`, `commentPayload`, `decode*`, `mergedTags`, `apply(tags:comment:to:using:)`.
@@ -121,6 +124,11 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `AppSettings`: all settings with defaults; `encoded()` / `AppSettings.decode(_:)` (missing/bad keys → defaults).
     `showRenameToast` (default true) and `playRenameSound` (default false) drive the toast and the sound.
     Toggle Finder metadata with `writeFinderMetadata`. Show the Clairic privacy notice until `hasSeenPrivacyNotice`.
+  - `filenameCasing`, `filenameDatePrefix` (→ `filenameStyle`), `searchShortcut: HotKeyShortcut` (default ⌥⌘S; a stored
+    shortcut that `HotKeyRules` refuses decodes as the default).
+  - `HotKeyShortcut(keyCode:modifiers:)` (`kVK_*` key code + `Modifiers`): `displayString` ("⌥⌘S"), `spokenName`.
+    `HotKeyRules.problem(with:)` → `HotKeyProblem?` (needs ⌘ or ⌃, plain ⌘ is left to apps, known macOS shortcuts);
+    `registrationProblem(status:)` for a `RegisterEventHotKey` failure; `HotKeyProblem.message(for:)`.
   - `CredentialStore`, `CredentialKey.cloudflareAPIToken`, `.customEndpointAPIKey`, `InMemoryCredentialStore`.
 - **Runtime/**
   - `ModelCatalog.all` (4-bit, 3-bit, 2-bit `ModelVariant`s with pinned revisions, sizes, min RAM, warnings).
@@ -129,5 +137,8 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `MLXRuntimePlan(applicationSupport:uvPath:python3Path:)`: `installCommands`, `isSupportedPython(versionOutput:)`
     (needed only without uv), `downloadCommand(for:)`, `localModelDirectory(for:)`, `serverCommand(model:port:)`,
     `healthURL(port:)`, `chatCompletionsURL(port:)`. Commands are argv arrays: run them without a shell.
+  - `DownloadStats(totalBytes:)`: `record(bytes:at:)` → `bytesText` ("4.1 of 9.1 GB"), `speedText`, `timeLeftText`, `summary`
+    (speed over the last 10 s). `DiskSpaceCheck.evaluate(availableBytes:downloadBytes:alreadyOnDisk:needsRuntime:)` →
+    `.enough` / `.notEnough` with a `message` (rest of the download + 1 GB runtime + 2 GB margin; unknown free space allows).
   - `IdlePolicy(idleTimeoutMinutes:)`: `shouldStop(lastActivity:now:inFlight:)`. `RestartPolicy`: `recordCrash(at:)` →
     `.restart(after:)` / `.giveUp`; `reset()` when the user retries.

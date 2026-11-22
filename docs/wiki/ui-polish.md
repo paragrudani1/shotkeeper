@@ -325,7 +325,8 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   "Step 1 of 5" 3.81, selected card subtitle 3.84 on its indigo tint, unavailable card title 3.94), below the spec's
   4.5:1. Setup now uses `Brand.secondaryText` (primary label colour at 72%: ~6:1 light, ~8:1 dark) for secondary
   text; icons keep `.secondary` (non-text, 3:1). The toast, menu, search and settings views still use system
-  `.secondary`: open for PR 4 (accessibility).
+  `.secondary`: open for PR 4 (accessibility). *Superseded 2026-11-22 (PR 4, `4c4a860`): `Brand.secondaryText` is
+  the one secondary text colour in the menu, toast, search, setup and Settings.*
 - 2026-11-22: `setup-3-custom-rerun` fits three cards; the host wraps inside the narrow card ("gpu-box.lan").
   `menu-setup-unfinished` now shows a real reason ("Cloudflare account ID is not set") instead of a fixture string.
 
@@ -438,3 +439,267 @@ Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they dif
   unavailable local card was a disabled button, and its reason text was dimmed twice to unreadable. It is now a
   plain view with secondary text; VoiceOver reads "…, not available on this Mac. Needs a Mac with at least 16 GB…".
   The `menu-setup-unfinished` fixture now shows the "Not watching yet" header the real menu shows.
+
+## PR 4: Settings, accessibility, filename style and hotkey (branch `t3/ui-pr4-settings`)
+
+Core: `9eb452d`. App, Settings scene and snapshots: `4c4a860`; macOS compile fix `eb394fa`. The app icon assets are a
+separate branch (`t3/ui-pr4-icon`), merged in before the PR.
+
+### Core rules (Linux-tested: `FilenameStyleTests`, `HotKeyShortcutTests`, `DownloadStatsTests`, `SettingsTests`)
+- 2026-11-22 (`9eb452d`): **filename style** = `FilenameStyle`, applied after `FilenameSanitizer` by the pipeline and
+  by "Edit name" (`ScreenshotProcessor.rename`). The sanitizer and the collision rules are unchanged.
+  - Sentence case (default) raises only the first letter, and only when the first word is all lowercase. It does
+    not lower the other words: the model already writes sentence case with proper nouns ("Invoice from Acme"), and
+    lowering would break names and acronyms.
+  - Title Case raises all-lowercase words, except short joining words (a, the, of, for, …) that are neither first,
+    nor last, nor right after a " - " separator. Words with capitals (iPhone, PDF, GitHub) or digits (v1.2) are kept.
+  - kebab-case lowercases everything (acronyms too). It keeps letters and digits of every script, their combining
+    marks and emoji, drops apostrophes, keeps "." between digits, and turns everything else into one "-".
+  - Sentence case and Title Case never change caseless scripts (CJK, Arabic, Devanagari).
+  - Date prefix: the capture day as `yyyy-MM-dd` (Gregorian, in the processor's time zone), then " " (or "-" in
+    kebab-case). A date already at the start of the name is kept and only the rest is styled. So "Edit name" on
+    "2026-11-21 Tweet…" never doubles the date, and a date the user typed wins. Room for the date is reserved, so
+    the 80-unit cap holds.
+  - "Edit name" takes the date from the index's capture time, else from the file's creation date.
+- 2026-11-22 (`9eb452d`): **search shortcut** = `HotKeyShortcut`: a `kVK_*` key code + modifiers, with US key names.
+  `HotKeyRules.problem(with:)` refuses:
+  - keys without ⌘ or ⌃ (⌥ or ⇧ alone type characters);
+  - ⌘ or ⇧⌘ + a key, which is a menu shortcut in most apps (⌘C, ⇧⌘N). F-keys are allowed;
+  - Esc, which cancels recording;
+  - a named list of macOS default shortcuts: Spotlight, input sources, screenshots, Force Quit, Lock Screen,
+    Mission Control and Spaces, the ⌃F-key focus keys, VoiceOver, and others.
+
+  A stored shortcut that the rules refuse decodes as ⌥⌘S.
+- 2026-11-22 (`9eb452d`): `DownloadStats` measures speed over the last 10 s of bytes-on-disk samples. A resumed
+  download starts with gigabytes already on disk, so an average since the start would be wrong. Fewer bytes than
+  the last sample restart the measurement; no progress shows "Stalled".
+- 2026-11-22 (`9eb452d`): `DiskSpaceCheck` needs this much free space on the runtime folder's volume
+  (`volumeAvailableCapacityForImportantUsage`): the rest of the download, plus 1 GB for the Python environment
+  (an estimate; only while it is not installed), plus a 2 GB margin. When the free space cannot be read, the
+  download is allowed: `hf download` fails cleanly on a full disk.
+- 2026-11-22 (`9eb452d`): the queue's "Needs attention" text for a rejected token is `UserFacingError` text ("the
+  model backend rejected the token"), never the server's response body.
+- 2026-11-22 (`9eb452d`): new settings keys `filenameCasing`, `filenameDatePrefix` and `searchShortcut`. A settings
+  file from `7cf9df5` decodes with their defaults (tested).
+
+### App
+- 2026-11-22 (`4c4a860`): **Settings is the spec's SwiftUI `Settings` scene**: toolbar tabs, a grouped Form per tab,
+  640×560. It replaces the `NSWindow` that PRs 1–3 used ([app-implementation](app-implementation.md), 2026-11-21).
+  - Evidence: a CI probe on a deleted branch (runs 44981832999 and 44982578002, macOS 26.7). `showSettingsWindow:`
+    no longer opens the scene; it logs "Please use SettingsLink for opening the Settings scene." An `openSettings`
+    action captured from an `NSHostingView` does open it. This also worked after the helper window was ordered
+    out, and after the Settings window was closed and opened again. The window had the toolbar tabs
+    (`.preference` style).
+  - `SettingsOpener` captures that action at launch from a 1×1 transparent off-screen helper window. To open
+    Settings, it activates the app, runs the action, and brings the window (`com_apple_SwiftUI_Settings_window`)
+    to the front.
+  - Entry points: the menu, the toast's "Fix Settings…" (now opens the Model tab), setup's "Change Shortcut…", and
+    ⌘, (from SwiftUI's app menu, while Shotkeeper is active).
+  - CI cannot activate the app, so whether the window comes to the front must be checked on a real Mac.
+- 2026-11-22 (`4c4a860`): **shortcut recorder** (General → Search shortcut).
+  - "Change Shortcut…" starts recording. A local key monitor swallows the keys and shows the held modifiers. Esc or
+    Cancel stops. The global hotkey is suspended while recording.
+  - A new shortcut is checked by `HotKeyRules`, then registered with `RegisterEventHotKey` and
+    `kEventHotKeyExclusive`, and saved only after it registered (`AppCoordinator.changeSearchShortcut`).
+    *Corrected 2026-11-22 (review of `9552c66`): exclusive registration fails with `eventHotKeyExistsErr` only when
+    the shortcut is already registered so that it cannot be shared. It does not catch a shortcut another app
+    registered without that option, or one an app handles as a menu key, so the recorder says "Shortcuts another
+    app uses may not register."*
+  - The old hotkey stays registered until the new one registers (`SearchHotKey`). A refused shortcut keeps the
+    recorder recording and shows the reason in error red.
+  - "Use ⌥⌘S" appears while another shortcut is set.
+  - If the saved shortcut cannot be registered at launch, the reason shows at the recorder and in the menu message,
+    and the menu shows no shortcut. The menu and setup steps 1 and 5 show the registered shortcut.
+- 2026-11-22 (`4c4a860`): setup's "Change Shortcut…" opens General, scrolls to the recorder, and starts recording.
+  The request (`SettingsNavigation.recordShortcutRequest`) is taken once, so reopening General later does not
+  start recording again.
+- 2026-11-22 (`4c4a860`): **Model tab**: a segmented picker, Clairic / Local / Custom.
+  - Account ID, URL and model name save as you type, as before.
+  - Tokens and API keys save to the Keychain 1 s after the last keystroke, on Return, and when the field goes away.
+    There is no Save button. Emptying the field never deletes the saved value; "Remove saved token…" asks first.
+    The typed text stays in the field, so a pause while typing saves a partial token, which the next keystrokes
+    replace.
+  - Consent is unchanged: saving a field grants nothing. The confirmation, and its automatic opening when the
+    backend is switched, moved from the row to the whole Form, because the row now shows only while consent is
+    missing. Editing the URL only shows the row. A grant counts only for the same scheme + host + port.
+  - Local: "Install and Download (about N GB)" runs the disk check first, and its message shows in error red under
+    the button. While downloading, the tab shows a bar and "4.6 of 10.4 GB · 12.3 MB/s · About 8 min left"; the
+    runtime now reports the bytes on disk every second.
+  - "Remove Model…" asks first, stops the server, and deletes only that variant's folder under
+    `Application Support/Shotkeeper/runtime/models`. That folder is app data; the Python environment stays.
+  - Test, Stop Server and Remove show only while the model is installed or running.
+  - "Longest image side" (1280 px) and the Clairic fields are unchanged. Requests per minute moved here from
+    General.
+- 2026-11-22 (`4c4a860`): **Exclusions**: the spec's empty state and "Add Rule". Rule rows have labelled pickers,
+  fields and remove buttons ("Remove rule bank", tooltip "Remove this rule").
+- 2026-11-22 (`4c4a860`): **About**: `AppIconView` (96 pt), "Version 0.1.0 (1)", links to the README
+  (`github.com/paragrudani1/shotkeeper#readme`) and its Privacy section (`#privacy`), and "Open Log Folder".
+  Decision: when `~/Library/Logs/Shotkeeper` does not exist yet (the local model has never run), the button creates
+  it and opens it empty. So it always shows where logs will appear, instead of failing or opening another folder.
+- 2026-11-22 (`4c4a860`): **contrast**: `Brand.secondaryText` (the label colour at 72%) replaces system `.secondary`
+  for text in the menu, toast, search and Settings. Icons keep `.secondary` (non-text needs only 3:1). In Test
+  Connection, error text uses `Brand.errorText`; success is primary text with a green icon, because systemGreen text
+  is below 4.5:1.
+- 2026-11-22 (`4c4a860`): **hide what does not apply**.
+  - Menu: Pause/Resume only while watching or paused. "Process Existing Screenshots…" only when the backend is
+    ready; before, it was shown and refused with a message. No shortcut hint while none is registered.
+  - Settings: "Move into the organized folder" only when a folder is set. Filename style and minimum confidence
+    only while rename is on. Pause buttons only while watching.
+  - Deviation: the menu's "Undo" stays visible and disabled when there is nothing to undo, because PR 1b of the
+    spec asks for exactly that.
+- 2026-11-22 (`4c4a860`): **readable errors**. `StatusText.describe` maps every error the UI shows:
+  - analyzer errors through `UserFacingError`, so no server response body reaches the UI;
+  - Keychain statuses;
+  - `LocalRuntimeError`, as "…failed (exit code 1)" instead of a Swift enum description;
+  - process launch errors and file errors.
+
+  The local server's messages no longer embed `\(error)`. A failed launch-at-login change shows one fixed sentence
+  instead of the system's error description.
+
+### Snapshot review (run 44984710067, head `534c1e9`: green)
+- 2026-11-22: all 17 new images × light/dark checked against the spec: every tab under the drawn toolbar stand-in, the
+  recorder (idle, custom, recording with held ⌃⌥, conflict, system shortcut), Model in each local install state
+  (not installed, downloading with "4.7 of 10.4 GB · 12.3 MB/s · About 8 min left", no disk space, running), the
+  Exclusions empty state, and step 5 with a custom shortcut. Two fixes in the follow-up commit: a grouped Form draws
+  `LabeledContent` values in system secondary, so the folder names ("Desktop") were below 4.5:1 and are now primary;
+  the picker inside "Filename style" repeated the section title and is now "Letter case".
+- 2026-11-22: offscreen snapshots draw switches and the progress bar in the inactive-window grey; on a Mac they use
+  the accent colour.
+
+### Review fixes (review of `9552c66`; commit `d8f9e3f`, Swift 6 fix `f47d639`, green run 44988345419)
+
+Snapshots checked in that run: the new partial-download, beyond-estimate and recorder-hint states.
+- 2026-11-22 (B1): **a token being typed is saved but not used.** The 1 s pause writes the draft to the Keychain
+  (`AppCoordinator.persistSecretDraft`) without rebuilding the analyzer, recomputing readiness, starting the watcher
+  or resuming a held queue. The analyzer keeps reading the previous value of that key (`CommittedCredentialStore`)
+  until a commit: Return, focus leaving the field, the field going away, the Settings window closing, or quitting
+  (`commitSecretDraft`, `commitAllSecretDrafts`; `applicationWillTerminate` commits synchronously). Before, a pause
+  mid-typing made Clairic "ready", and the next screenshot was sent with the partial token (401 toast). Test:
+  `testAHalfTypedTokenIsSavedButNotUsedUntilCommitted`. A Keychain error shows in red under the field instead of
+  "Saved" (S4).
+- 2026-11-22 (S1, S2, N5): **filename style.**
+  - A date at the start of the title is split off before sanitizing. Room is reserved only for a date that will
+    really be there, so styling a styled name again changes nothing, also at the 80-unit cap (tested for every
+    casing, with and without the date).
+  - kebab-case backs off to the last "-" at the cap, and returns nil instead of "" when nothing is left.
+  - Month and day may have one digit ("2026-11-2 foo" gets no second date).
+  - **"Edit name" never adds a date**: the field starts with the current name, so the user's text is kept with or
+    without one, and removing the date sticks. Supersedes the 2026-11-22 entry above that took the date from the
+    index.
+  - Sentence case leaves a first word with a dot or digits ("x.com", "v1.2") alone.
+- 2026-11-22 (S3, N6): **local install.**
+  - "Installing" comes from the runtime phase (installing or downloading), not from the view's task, so Cancel
+    stays after leaving the Model tab and coming back. The variant picker is disabled meanwhile.
+  - Once more bytes arrive than the catalog size, the bar turns indeterminate and the text reads "10.6 GB so far ·
+    12.3 MB/s", without a time left.
+  - A cancelled or failed download can be deleted: "Remove Download…" shows while bytes of a model that is not
+    installed are on disk (`localDownloadBytesOnDisk`).
+- 2026-11-22 (S5): the Test Connection success text and the confidence value force primary: a grouped Form draws
+  `LabeledContent` values in system secondary.
+- 2026-11-22 (N1): key names come from the current keyboard layout (`UCKeyTranslate`, `KeyboardLayout`; "⌥⌘Y" for
+  the Z key on German), falling back to the US names. Shortcuts are still stored as key codes.
+- 2026-11-22 (N2): ⌃ (± ⇧) + a letter is refused: those are text-editing keys in every text field (⌃A, ⌃E, ⌃K).
+- 2026-11-22 (N4): the global hotkey is ignored while recording only while Shotkeeper is active, so a recorder that
+  never got the keyboard cannot disable it elsewhere. Recording also stops when the Settings window closes. The key
+  monitor lets keys through while an input method is composing (`hasMarkedText`).
+
+
+## PR 4: app icon assets (branch `t3/ui-pr4-icon`, merged into `t3/ui-pr4-settings`)
+
+Commits: `0145a1e` (core paths + SVG, CLI, script, asset catalog, app wiring, checks), `097e02d` (bundle test fix;
+green run 44982471002, linux-core + macos-app).
+
+### Decisions
+- 2026-11-22 (`0145a1e`): one source of the shape: `Sources/ShotkeeperCore/Brand/IconGeometry.swift` (numbers) and
+  `IconPath.swift` (the paths built from them: squircle, viewfinder corners, sparkle). `IconSVG.swift` writes them as
+  SVG; `AppIconView` (SwiftUI) and `MenuBarGlyph` (AppKit) replay the same `IconPathElement` lists. No renderer builds
+  its own shape any more (`RoundedRectangle(.continuous)` and the two copies of the sparkle code are gone).
+- 2026-11-22 (`0145a1e`): the squircle's corner is our own continuous corner (line → transition cubic → circular arc
+  of radius 22.5% → transition cubic → line; starts 1.528 radii from the corner; `ContinuousCorner`). It looks like
+  Apple's continuous corners, but it is not Apple's exact curve (not published); the 45° point equals a plain
+  22.5% rounded rectangle's. Tests check the arc radius, tangent continuity and 4-fold symmetry.
+- 2026-11-22 (`0145a1e`): `design/icon/AppIcon.svg` is a 1024 canvas with the 824 px squircle at a 100 px
+  transparent margin (Apple's macOS icon grid), so the icon has the same size as other apps in the Dock. The in-app
+  `AppIconView` has no margin. No drop shadow in the artwork.
+- 2026-11-22 (`0145a1e`): regenerate with `scripts/make-icons.sh`: `shotkeeper-cli icon-svg app|glyph` (in the
+  Swift image) writes `design/icon/*.svg`, then `rsvg-convert` 2.58.5 in a throwaway `alpine:3.20` container (network
+  only for `apk add`; the image is `docker rmi`'d if the script pulled it) renders the 10 PNGs of
+  `App/Shotkeeper/Assets.xcassets/AppIcon.appiconset` straight from the vector at each size. Linux was chosen over
+  rendering in macOS CI: the PNGs are committed, reviewable and reproducible without a Mac. `Contents.json` is
+  static. `IconSVGTests.testCommittedSVGsMatchTheGeometry` fails when the SVGs are stale (it does not check PNGs).
+- 2026-11-22 (`0145a1e`): the menu bar glyph stays code-drawn (`MenuBarGlyph`, template `NSImage` with a drawing
+  handler, so it is vector-sharp at every backing scale) instead of a PDF/SVG asset: it already draws exactly
+  `IconGeometry.menuBarGlyph`, and the PR 1 pulse needs a bigger sparkle that an asset cannot give.
+  `design/icon/MenuBarGlyph.svg` is the exported design source of the same paths, not used by the app.
+- 2026-11-22 (`0145a1e`): `App/project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`; actool adds
+  `CFBundleIconFile`/`CFBundleIconName` = AppIcon. The old placeholder `assets/icon.svg` (purple "S") was removed;
+  the README shows `design/icon/AppIcon.svg`.
+- 2026-11-22: not done: an Icon Composer `.icon` (macOS 26 Liquid Glass layers). The appiconset is the legacy
+  format; macOS 26 draws it with its own glass shading (see the snapshot review).
+  Superseded 2026-11-22: `AppIcon.icon` added (see "macOS 26 layered icon" below); it replaces the appiconset.
+
+### Checks
+- 2026-11-22 (`0145a1e`): UI snapshot `app-icon-asset` shows the hosting app's `NSApp.applicationIconImage` at
+  16–256 pt; `AppIconBundleTests` checks `CFBundleIconName`, `Assets.car` and `AppIcon.icns`; the CI step "Check the
+  app icon in the bundle" lists the Release app's Resources, prints the plist keys, and copies the icns PNGs into the
+  snapshot artifact as `bundle-icon_*.png`.
+- 2026-11-22 (`097e02d`): Xcode 26.6 actool writes a small `AppIcon.icns` (16, 32, 128, 256 px incl. @2x of 16/128)
+  and keeps all sizes in `Assets.car` (run 44982021205 failed on the test expecting 16–1024 in the icns). Since
+  `0bcdb15` the icns is generated from `AppIcon.icon`, with the same sizes.
+
+### Snapshot review (run 44982021205, head `0145a1e`)
+- `app-icon` (vector view) and `menubar-glyph` unchanged from PR 3 apart from the continuous squircle; glyph
+  normal/pulse correct in light and dark.
+- `bundle-icon_*.png`: the committed artwork (indigo squircle with margin, 6% lighter top half, white corners and
+  sparkle) as specified.
+- `app-icon-asset`: the system's rendering on macOS 26 adds a glass look to the legacy icon (shaded white strokes,
+  a light rim); the shape is kept, not put on a grey "jail" plate. At 256 pt it is soft because
+  `applicationIconImage` uses the 256 px icns; the Dock/Finder read `Assets.car`.
+
+### macOS 26 layered icon (Icon Composer `.icon`; commits `0bcdb15`, `223af9c`)
+Facts and sources: `../research/icon-composer.md`.
+- 2026-11-22 (`0bcdb15`): `App/Shotkeeper/AppIcon.icon` (`icon.json` + `Assets/1-corners.svg`, `Assets/2-sparkle.svg`)
+  is generated by core `IconComposerBundle` from `IconGeometry` (`shotkeeper-cli icon-composer --list|<file>`,
+  run by `scripts/make-icons.sh`, which rebuilds the folder from scratch). Background = the document `fill`
+  (solid #5856D6), not a layer; two groups, sparkle in front (`223af9c`), corners behind; white SVG layers on the full
+  1024 canvas with no margin (the system applies mask and grid). Only keys Icon Composer wrote in Apple's
+  Landmarks sample are used; all glass settings are left at Icon Composer's defaults. The spec's 6% lighter top half
+  is not in the `.icon` (Apple: leave lighting to the material). `IconComposerBundleTests` fails when the committed
+  package differs from the generator, file for file.
+- 2026-11-22 (`0bcdb15`, run 44986298454): Xcode 26.6 / actool 26.6 on `macos-latest` compiles `AppIcon.icon` +
+  `Assets.xcassets` with no warnings; CI step "Compile the Icon Composer icon (actool)" fails on any warning and logs
+  the output. XcodeGen 2.46.0 adds the package as one `wrapper.icon` resource.
+- 2026-11-22 (run 44986298454): **the `.icon` wins on every macOS version.** With both named AppIcon, actool ignores
+  the appiconset and generates the pre-26 `AppIcon.icns` (and the flat `Assets.car` images) from the `.icon` —
+  byte-identical output with or without the appiconset, and with the undocumented
+  `--enable-icon-stack-fallback-generation=disabled` (no effect in 26.6; community reports say it stopped working in
+  Xcode 26.1). Apple documents this: "it replaces any existing icon asset catalog ... Xcode automatically generates a
+  similar-looking version ... for previous releases" (research note). So the request "keep the AppIcon set as the
+  fallback for macOS 14–25" cannot be met with a supported setup. The appiconset stays in the repo and the target
+  (inert, no warning); deleting `AppIcon.icon` brings it back as the only icon. Decide with Parag.
+- 2026-11-22 (run 44986298454): the generated fallback icon (`bundle-icon_*.png` = `actool-*-icon_*.png`) shows the
+  glass treatment baked in: white corners and sparkle with a soft highlight and a faint glassy triangle inside each
+  corner's bend. `applicationIconImage` looks the same in light and dark; CI cannot render clear or tinted (no
+  public API). The `Assets.car` carries Aqua, DarkAqua and `ISAppearanceTintable` renditions.
+- Edit on a Mac: open `App/Shotkeeper/AppIcon.icon` in Icon Composer (Xcode → Open Developer Tool) to preview the
+  looks. A change saved there is overwritten by the next `scripts/make-icons.sh` and fails the Linux test: carry
+  any setting worth keeping into `IconComposerBundle` (only after checking it against the research note).
+
+### What CI cannot check (Parag, on a real Mac)
+- the icon in the light, dark, clear and tinted looks on macOS 26.
+- On macOS 14/15 (if available): the generated fallback icon in Finder and the Dock (Apple's, not our appiconset).
+- Dock (while Settings/setup is open), Finder (/Applications, Get Info) and ⌘Tab: the icon is the indigo viewfinder,
+  same size as other apps, sharp at large Dock magnification, not on a grey plate. If Finder shows the old generic
+  icon, run `touch /Applications/Shotkeeper.app` or `killall Dock` (icon cache).
+- Menu bar glyph on a Retina and a non-Retina display: crisp 1.5 pt strokes, correct in light/dark menu bar and with
+  a tinted/transparent menu bar; the pulse after a rename.
+- Whether the hard 6% top-half edge (spec "lighter top half") looks right at Dock size, and whether the 16 px icon
+  in list views still reads.
+
+## PR 4: icon decision (2026-11-22)
+- 2026-11-22: Parag chose option A: ship the layered Icon Composer icon (`App/Shotkeeper/AppIcon.icon`) on every macOS
+  version. Xcode generates the macOS 14–25 icon from it; the flat `AppIcon.appiconset` stays in the repo but is not
+  what ships (it is the icon again only if `AppIcon.icon` is removed). The spec's "keep AppIcon as the fallback for
+  macOS 14–25" is superseded by this decision, because Xcode 26.6 cannot do it (see "PR 4: app icon assets").
+- 2026-11-22: the glass highlight on the corners layer stays as generated for now; Parag may ask to turn it off after
+  seeing it on his Mac. Source: Parag via the orchestrator, 2026-11-22.
