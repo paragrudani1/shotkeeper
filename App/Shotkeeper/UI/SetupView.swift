@@ -39,7 +39,7 @@ struct SetupView: View {
             StepDots(step: flow.step)
             Text(flow.step.progressText)
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .accessibilityHidden(true) // the dots carry it as their value
             Spacer()
             if flow.showsBack {
@@ -94,7 +94,7 @@ private struct StepTitle: View {
             if let subtitle {
                 Text(subtitle)
                     .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -113,7 +113,7 @@ private struct WelcomeStep: View {
                 .accessibilityAddTraits(.isHeader)
             Text("It reads each new screenshot, gives it a clear name, and makes it easy to find again.")
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .multilineTextAlignment(.center)
             beforeAfter.padding(.top, 8)
             HStack(alignment: .top, spacing: 20) {
@@ -133,9 +133,9 @@ private struct WelcomeStep: View {
         HStack(spacing: 12) {
             Text("Screenshot 2026-11-21 at 16.24.11.png")
                 .strikethrough()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
             Image(systemName: "arrow.right")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
             Text("Tweet semiconductor flashcards.png")
                 .fontWeight(.semibold)
                 .foregroundStyle(Brand.indigoText)
@@ -166,7 +166,7 @@ private struct FeatureColumn: View {
             Text(title).font(.system(size: 13, weight: .semibold))
             Text(text)
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -254,7 +254,7 @@ private struct ConnectStep: View {
             case .customEndpoint:
                 Text("Continue keeps the custom endpoint you set up in Settings → Model.")
                     .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
             }
         }
         .task(id: flow.choice) {
@@ -297,8 +297,8 @@ private struct ModelCardButton: View {
                 }
                 Text(card.subtitle)
                     .font(.system(size: 12))
-                    // The reason a card is unavailable must stay readable (secondary is ~3.9:1 on the card).
-                    .foregroundStyle(card.isAvailable ? Color.secondary : Color.primary)
+                    // The reason a card is unavailable must stay readable: full primary, not dimmed.
+                    .foregroundStyle(card.isAvailable ? Brand.secondaryText : Color.primary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -315,7 +315,7 @@ private struct ModelCardButton: View {
 
     private var title: some View {
         Text(card.title).font(.system(size: 14, weight: .semibold)).fixedSize()
-            .foregroundStyle(card.isAvailable ? Color.primary : Color.secondary)
+            .foregroundStyle(card.isAvailable ? Color.primary : Brand.secondaryText)
     }
 
     @ViewBuilder private var badges: some View {
@@ -398,7 +398,7 @@ struct ConnectionTestLine: View {
         case .running:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text(ConnectionTestText.sending).foregroundStyle(.secondary)
+                Text(ConnectionTestText.sending).foregroundStyle(Brand.secondaryText)
             }
             .font(.system(size: 12))
         case .succeeded:
@@ -450,12 +450,12 @@ private struct LocalModelSetup: View {
                     }
                 case .installing(let step):
                     ProgressView().controlSize(.small)
-                    Text(step).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(step).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                     Button("Cancel") { model.cancelInstall() }
                 case .downloading(let fraction):
                     let text = MenuText.download(fraction: fraction, totalGB: card.model?.approxDownloadGB ?? 0)
                     ProgressView(value: fraction).frame(width: 180).accessibilityLabel(text)
-                    Text(text).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(text).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                     Button("Cancel") { model.cancelInstall() }
                 case .ready, .starting, .running:
                     Label {
@@ -468,7 +468,7 @@ private struct LocalModelSetup: View {
             }
             Text("It downloads to ~/Library/Application Support/Shotkeeper. You can continue while it downloads.")
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
         }
     }
 }
@@ -511,7 +511,7 @@ private struct TryItStep: View {
                 ProgressView()
                 Text(TryIt.waitingText).font(.system(size: 14, weight: .medium))
                 if let note {
-                    Text(note).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(note).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -523,16 +523,16 @@ private struct TryItStep: View {
                 Text(text).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text(TryIt.waitingText).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(TryIt.waitingText).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                 }
             }
             .accessibilityElement(children: .combine)
         case .notConnected(let text):
             VStack(spacing: 10) {
                 Image(systemName: "bolt.horizontal.circle")
-                    .font(.system(size: 30)).foregroundStyle(.secondary).accessibilityHidden(true)
+                    .font(.system(size: 30)).foregroundStyle(Brand.secondaryText).accessibilityHidden(true)
                 Text("No model connected").font(.system(size: 15, weight: .semibold))
-                Text(text).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(text).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
@@ -558,7 +558,7 @@ struct TryItResultCard: View {
                 Text(result.oldName)
                     .strikethrough(result.newName != nil)
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
                     .lineLimit(2)
                 if let newName = result.newName {
                     Text(newName)
@@ -567,7 +567,7 @@ struct TryItResultCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let detail = result.detail {
-                    Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(detail).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !result.hashtags.isEmpty {

@@ -27,6 +27,10 @@ enum Brand {
         appearance.isDark ? NSColor(srgbHex: 0xFFB340) : NSColor(srgbHex: 0x8A4600)
     }
 
+    /// Secondary text that meets the spec's 4.5:1. System `.secondary` measured 3.8–3.9:1 on white in the PR 3
+    /// snapshots (run 44949751528); the primary label colour at 72% is ~6:1 on white and ~8:1 on dark backgrounds.
+    static var secondaryText: Color { Color.primary.opacity(0.72) }
+
     static var indigo: Color { Color(nsColor: indigoNSColor) }
     static var warningText: Color { Color(nsColor: warningTextNSColor) }
     static var errorText: Color { Color(nsColor: errorTextNSColor) }

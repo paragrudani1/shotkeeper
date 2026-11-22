@@ -318,6 +318,16 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   "Allow…" button are reachable only with the mouse or VoiceOver; Return, Esc, Space (checkboxes) and the text
   fields work without it.
 
+### Snapshot review of the review fixes (run 44949751528, head `67c2f63`, first macOS compile of `4472f0b`: green)
+- 2026-11-22: measured contrast in `setup-3-8gb` (pixels): the unavailable card's reason is now 14.3:1 light /
+  11.7:1 dark. But system `.secondary` text measured 3.8–3.9:1 on white in light mode (welcome body 3.94, footer
+  "Step 1 of 5" 3.81, selected card subtitle 3.84 on its indigo tint, unavailable card title 3.94), below the spec's
+  4.5:1. Setup now uses `Brand.secondaryText` (primary label colour at 72%: ~6:1 light, ~8:1 dark) for secondary
+  text; icons keep `.secondary` (non-text, 3:1). The toast, menu, search and settings views still use system
+  `.secondary`: open for PR 4 (accessibility).
+- 2026-11-22: `setup-3-custom-rerun` fits three cards; the host wraps inside the narrow card ("gpu-box.lan").
+  `menu-setup-unfinished` now shows a real reason ("Cloudflare account ID is not set") instead of a fixture string.
+
 ### What CI cannot check (Parag, on a real Mac)
 - First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
   app (no Dock icon) while it is open.

@@ -268,7 +268,7 @@ enum Fixtures {
         let isError: Bool = { if case .error = status { return true } else { return false } }()
         let state = MenuViewState(
             status: MenuText.status(queue: status, watchedFolderName: "Desktop", indexedCount: count, failure: failure,
-                                    notWatchingReason: setup ? "Setup is not finished" : nil, now: now, time: time),
+                                    notWatchingReason: setup ? BackendGate.statusReason(for: .notConfigured("Cloudflare account ID is not set")) : nil, now: now, time: time),
             message: message,
             showsFixSettings: isError,
             showsFinishSetup: setup,
