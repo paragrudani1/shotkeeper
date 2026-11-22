@@ -325,7 +325,8 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   "Step 1 of 5" 3.81, selected card subtitle 3.84 on its indigo tint, unavailable card title 3.94), below the spec's
   4.5:1. Setup now uses `Brand.secondaryText` (primary label colour at 72%: ~6:1 light, ~8:1 dark) for secondary
   text; icons keep `.secondary` (non-text, 3:1). The toast, menu, search and settings views still use system
-  `.secondary`: open for PR 4 (accessibility).
+  `.secondary`: open for PR 4 (accessibility). *Superseded 2026-11-22 (PR 4, `4c4a860`): `Brand.secondaryText` is
+  the one secondary text colour in the menu, toast, search, setup and Settings.*
 - 2026-11-22: `setup-3-custom-rerun` fits three cards; the host wraps inside the narrow card ("gpu-box.lan").
   `menu-setup-unfinished` now shows a real reason ("Cloudflare account ID is not set") instead of a fixture string.
 
@@ -438,3 +439,117 @@ Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they dif
   unavailable local card was a disabled button, and its reason text was dimmed twice to unreadable. It is now a
   plain view with secondary text; VoiceOver reads "…, not available on this Mac. Needs a Mac with at least 16 GB…".
   The `menu-setup-unfinished` fixture now shows the "Not watching yet" header the real menu shows.
+
+## PR 4: Settings, accessibility, filename style and hotkey (branch `t3/ui-pr4-settings`)
+
+Core: `9eb452d`. App, Settings scene and snapshots: `4c4a860`; macOS compile fix `eb394fa`. The app icon assets are a
+separate branch (`t3/ui-pr4-icon`), merged in before the PR.
+
+### Core rules (Linux-tested: `FilenameStyleTests`, `HotKeyShortcutTests`, `DownloadStatsTests`, `SettingsTests`)
+- 2026-11-22 (`9eb452d`): **filename style** = `FilenameStyle`, applied after `FilenameSanitizer` by the pipeline and
+  by "Edit name" (`ScreenshotProcessor.rename`). The sanitizer and the collision rules are unchanged.
+  - Sentence case (default) raises only the first letter, and only when the first word is all lowercase. It does
+    not lower the other words: the model already writes sentence case with proper nouns ("Invoice from Acme"), and
+    lowering would break names and acronyms.
+  - Title Case raises all-lowercase words, except short joining words (a, the, of, for, …) that are neither first,
+    nor last, nor right after a " - " separator. Words with capitals (iPhone, PDF, GitHub) or digits (v1.2) are kept.
+  - kebab-case lowercases everything (acronyms too). It keeps letters and digits of every script, their combining
+    marks and emoji, drops apostrophes, keeps "." between digits, and turns everything else into one "-".
+  - Sentence case and Title Case never change caseless scripts (CJK, Arabic, Devanagari).
+  - Date prefix: the capture day as `yyyy-MM-dd` (Gregorian, in the processor's time zone), then " " (or "-" in
+    kebab-case). A date already at the start of the name is kept and only the rest is styled. So "Edit name" on
+    "2026-11-21 Tweet…" never doubles the date, and a date the user typed wins. Room for the date is reserved, so
+    the 80-unit cap holds.
+  - "Edit name" takes the date from the index's capture time, else from the file's creation date.
+- 2026-11-22 (`9eb452d`): **search shortcut** = `HotKeyShortcut`: a `kVK_*` key code + modifiers, with US key names.
+  `HotKeyRules.problem(with:)` refuses:
+  - keys without ⌘ or ⌃ (⌥ or ⇧ alone type characters);
+  - ⌘ or ⇧⌘ + a key, which is a menu shortcut in most apps (⌘C, ⇧⌘N). F-keys are allowed;
+  - Esc, which cancels recording;
+  - a named list of macOS default shortcuts: Spotlight, input sources, screenshots, Force Quit, Lock Screen,
+    Mission Control and Spaces, the ⌃F-key focus keys, VoiceOver, and others.
+
+  A stored shortcut that the rules refuse decodes as ⌥⌘S.
+- 2026-11-22 (`9eb452d`): `DownloadStats` measures speed over the last 10 s of bytes-on-disk samples. A resumed
+  download starts with gigabytes already on disk, so an average since the start would be wrong. Fewer bytes than
+  the last sample restart the measurement; no progress shows "Stalled".
+- 2026-11-22 (`9eb452d`): `DiskSpaceCheck` needs this much free space on the runtime folder's volume
+  (`volumeAvailableCapacityForImportantUsage`): the rest of the download, plus 1 GB for the Python environment
+  (an estimate; only while it is not installed), plus a 2 GB margin. When the free space cannot be read, the
+  download is allowed: `hf download` fails cleanly on a full disk.
+- 2026-11-22 (`9eb452d`): the queue's "Needs attention" text for a rejected token is `UserFacingError` text ("the
+  model backend rejected the token"), never the server's response body.
+- 2026-11-22 (`9eb452d`): new settings keys `filenameCasing`, `filenameDatePrefix` and `searchShortcut`. A settings
+  file from `7cf9df5` decodes with their defaults (tested).
+
+### App
+- 2026-11-22 (`4c4a860`): **Settings is the spec's SwiftUI `Settings` scene**: toolbar tabs, a grouped Form per tab,
+  640×560. It replaces the `NSWindow` that PRs 1–3 used ([app-implementation](app-implementation.md), 2026-11-21).
+  - Evidence: a CI probe on a deleted branch (runs 44981832999 and 44982578002, macOS 26.7). `showSettingsWindow:`
+    no longer opens the scene; it logs "Please use SettingsLink for opening the Settings scene." An `openSettings`
+    action captured from an `NSHostingView` does open it. This also worked after the helper window was ordered
+    out, and after the Settings window was closed and opened again. The window had the toolbar tabs
+    (`.preference` style).
+  - `SettingsOpener` captures that action at launch from a 1×1 transparent off-screen helper window. To open
+    Settings, it activates the app, runs the action, and brings the window (`com_apple_SwiftUI_Settings_window`)
+    to the front.
+  - Entry points: the menu, the toast's "Fix Settings…" (now opens the Model tab), setup's "Change Shortcut…", and
+    ⌘, (from SwiftUI's app menu, while Shotkeeper is active).
+  - CI cannot activate the app, so whether the window comes to the front must be checked on a real Mac.
+- 2026-11-22 (`4c4a860`): **shortcut recorder** (General → Search shortcut).
+  - "Change Shortcut…" starts recording. A local key monitor swallows the keys and shows the held modifiers. Esc or
+    Cancel stops. The global hotkey is suspended while recording.
+  - A new shortcut is checked by `HotKeyRules`, then registered with `RegisterEventHotKey` and
+    `kEventHotKeyExclusive`. Exclusive registration makes a shortcut that another app holds fail with
+    `eventHotKeyExistsErr`, instead of being shared. The shortcut is saved only after it registered
+    (`AppCoordinator.changeSearchShortcut`).
+  - The old hotkey stays registered until the new one registers (`SearchHotKey`). A refused shortcut keeps the
+    recorder recording and shows the reason in error red.
+  - "Use ⌥⌘S" appears while another shortcut is set.
+  - If the saved shortcut cannot be registered at launch, the reason shows at the recorder and in the menu message,
+    and the menu shows no shortcut. The menu and setup steps 1 and 5 show the registered shortcut.
+- 2026-11-22 (`4c4a860`): setup's "Change Shortcut…" opens General, scrolls to the recorder, and starts recording.
+  The request (`SettingsNavigation.recordShortcutRequest`) is taken once, so reopening General later does not
+  start recording again.
+- 2026-11-22 (`4c4a860`): **Model tab**: a segmented picker, Clairic / Local / Custom.
+  - Account ID, URL and model name save as you type, as before.
+  - Tokens and API keys save to the Keychain 1 s after the last keystroke, on Return, and when the field goes away.
+    There is no Save button. Emptying the field never deletes the saved value; "Remove saved token…" asks first.
+    The typed text stays in the field, so a pause while typing saves a partial token, which the next keystrokes
+    replace.
+  - Consent is unchanged: saving a field grants nothing. The confirmation, and its automatic opening when the
+    backend is switched, moved from the row to the whole Form, because the row now shows only while consent is
+    missing. Editing the URL only shows the row. A grant counts only for the same scheme + host + port.
+  - Local: "Install and Download (about N GB)" runs the disk check first, and its message shows in error red under
+    the button. While downloading, the tab shows a bar and "4.6 of 10.4 GB · 12.3 MB/s · About 8 min left"; the
+    runtime now reports the bytes on disk every second.
+  - "Remove Model…" asks first, stops the server, and deletes only that variant's folder under
+    `Application Support/Shotkeeper/runtime/models`. That folder is app data; the Python environment stays.
+  - Test, Stop Server and Remove show only while the model is installed or running.
+  - "Longest image side" (1280 px) and the Clairic fields are unchanged. Requests per minute moved here from
+    General.
+- 2026-11-22 (`4c4a860`): **Exclusions**: the spec's empty state and "Add Rule". Rule rows have labelled pickers,
+  fields and remove buttons ("Remove rule bank", tooltip "Remove this rule").
+- 2026-11-22 (`4c4a860`): **About**: `AppIconView` (96 pt), "Version 0.1.0 (1)", links to the README
+  (`github.com/paragrudani1/shotkeeper#readme`) and its Privacy section (`#privacy`), and "Open Log Folder".
+  Decision: when `~/Library/Logs/Shotkeeper` does not exist yet (the local model has never run), the button creates
+  it and opens it empty. So it always shows where logs will appear, instead of failing or opening another folder.
+- 2026-11-22 (`4c4a860`): **contrast**: `Brand.secondaryText` (the label colour at 72%) replaces system `.secondary`
+  for text in the menu, toast, search and Settings. Icons keep `.secondary` (non-text needs only 3:1). In Test
+  Connection, error text uses `Brand.errorText`; success is primary text with a green icon, because systemGreen text
+  is below 4.5:1.
+- 2026-11-22 (`4c4a860`): **hide what does not apply**.
+  - Menu: Pause/Resume only while watching or paused. "Process Existing Screenshots…" only when the backend is
+    ready; before, it was shown and refused with a message. No shortcut hint while none is registered.
+  - Settings: "Move into the organized folder" only when a folder is set. Filename style and minimum confidence
+    only while rename is on. Pause buttons only while watching.
+  - Deviation: the menu's "Undo" stays visible and disabled when there is nothing to undo, because PR 1b of the
+    spec asks for exactly that.
+- 2026-11-22 (`4c4a860`): **readable errors**. `StatusText.describe` maps every error the UI shows:
+  - analyzer errors through `UserFacingError`, so no server response body reaches the UI;
+  - Keychain statuses;
+  - `LocalRuntimeError`, as "…failed (exit code 1)" instead of a Swift enum description;
+  - process launch errors and file errors.
+
+  The local server's messages no longer embed `\(error)`. A failed launch-at-login change shows one fixed sentence
+  instead of the system's error description.

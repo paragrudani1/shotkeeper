@@ -106,7 +106,7 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         XCTAssertEqual(FilenameStyleExample.text(for: FilenameStyle(casing: .kebab, datePrefix: true)),
                        "2026-11-21-tweet-semiconductor-flashcards.png")
         XCTAssertEqual(AboutLinks.readme.absoluteString, "https://github.com/paragrudani1/shotkeeper#readme")
-        XCTAssertEqual(AboutLinks.privacy.fragment, "privacy", "README's \\"## Privacy\\" heading")
+        XCTAssertEqual(AboutLinks.privacy.fragment, "privacy", "the README heading is \"## Privacy\"")
         XCTAssertEqual(BackendCopy.shortName(for: .localInkling), "Local")
         XCTAssertEqual(ExclusionsSettingsTab.emptyText,
                        "No rules yet. Screenshots that match a rule are never sent, renamed or indexed.")
