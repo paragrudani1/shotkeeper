@@ -109,6 +109,9 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         XCTAssertEqual(AboutLinks.readme.absoluteString, "https://github.com/paragrudani1/shotkeeper#readme")
         XCTAssertEqual(AboutLinks.privacy.fragment, "privacy", "the README heading is \"## Privacy\"")
         XCTAssertEqual(BackendCopy.shortName(for: .localInkling), "Local")
+        XCTAssertEqual(AppSettings.Backend.allCases.map(BackendCopy.shortName(for:)), ["Clairic", "OpenRouter", "Local", "Custom"])
+        XCTAssertTrue(BackendCopy.privacy(for: .openRouter).contains("Prime Intellect or io.net"))
+        XCTAssertTrue(BackendCopy.privacy(for: .openRouter).contains("zero data retention"))
         XCTAssertEqual(ExclusionsSettingsTab.emptyText,
                        "No rules yet. Screenshots that match a rule are never sent, renamed or indexed.")
     }
@@ -149,6 +152,35 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         coordinator.updateSecretDraft("newer", for: .cloudflareAPIToken)
         coordinator.commitAllSecretDrafts()
         XCTAssertEqual(try credentials.secret(for: .cloudflareAPIToken), "newer")
+    }
+
+    /// The B1 rule holds for the OpenRouter key too: a half-typed key is saved but never used until committed.
+    func testAHalfTypedOpenRouterKeyIsSavedButNotUsedUntilCommitted() throws {
+        let credentials = InMemoryCredentialStore()
+        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
+                                         credentials: credentials, physicalMemoryBytes: 16 * 1_073_741_824,
+                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        coordinator.updateSettings {
+            $0.backend = .openRouter
+            $0.uploadGrants = [.init(destination: .openRouter, grantedAt: Date())]
+        }
+        XCTAssertEqual(coordinator.readiness, .notConfigured("OpenRouter API key is not set"))
+        let rebuilds = coordinator.analyzerRebuilds
+
+        coordinator.updateSecretDraft("sk-or", for: .openRouterAPIKey)
+        try coordinator.persistSecretDraft(for: .openRouterAPIKey)
+        XCTAssertEqual(try credentials.secret(for: .openRouterAPIKey), "sk-or", "saved so it is not lost")
+        XCTAssertEqual(coordinator.analyzerRebuilds, rebuilds)
+        XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
+        coordinator.updateSettings { $0.openRouterModel = "thinkingmachines/inkling-2-mini-20261120" }
+        XCTAssertEqual(coordinator.readiness, .notConfigured("OpenRouter API key is not set"), "a rebuild keeps the committed (no) key")
+
+        coordinator.updateSecretDraft("sk-or-v1-full", for: .openRouterAPIKey)
+        try coordinator.commitSecretDraft(for: .openRouterAPIKey)
+        XCTAssertEqual(coordinator.readiness, .ready)
+        let analyzer = try XCTUnwrap(coordinator.currentAnalyzer as? OpenAICompatibleAnalyzer)
+        XCTAssertEqual(analyzer.configuration.apiKey, "sk-or-v1-full")
+        XCTAssertEqual(analyzer.configuration.model, "thinkingmachines/inkling-2-mini-20261120")
     }
 
     func testAFailedKeychainWriteIsReported() {

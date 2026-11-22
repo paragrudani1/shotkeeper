@@ -8,12 +8,20 @@ enum BackendCopy {
         + "your API token. Shotkeeper has no server of its own and sends them nowhere else."
     static let localPrivacy = "100% on-device, nothing leaves your Mac."
     static let customPrivacy = "Screenshots are sent to the endpoint you enter. If it is not on this Mac, they leave this Mac."
+    /// docs/research/openrouter.md, "Privacy routing": requests carry `zdr: true` and `data_collection: "deny"`.
+    static let openRouterPrivacy = "Screenshots are sent to OpenRouter, which passes them to a third-party provider "
+        + "(\(OpenRouterBackend.providerNames.joined(separator: " or "))) under their data policies. Shotkeeper asks "
+        + "OpenRouter to use only providers that keep no copy (zero data retention) and do not collect or train on "
+        + "the data. Shotkeeper has no server of its own."
+    static let openRouterAcknowledgement = "I understand that my screenshots are sent to OpenRouter and then to "
+        + OpenRouterBackend.providerNames.joined(separator: " or ") + "."
     static let tokenHelpURL = URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!
     static let tokenHelpText = "Create a token with Workers AI Read + Edit permissions (Cloudflare docs)"
 
     static func privacy(for backend: AppSettings.Backend) -> String {
         switch backend {
         case .clairic: return clairicPrivacy
+        case .openRouter: return openRouterPrivacy
         case .localInkling: return localPrivacy
         case .customEndpoint: return customPrivacy
         }
@@ -22,6 +30,7 @@ enum BackendCopy {
     static func name(for backend: AppSettings.Backend) -> String {
         switch backend {
         case .clairic: return "Cloudflare Clairic"
+        case .openRouter: return SetupCards.openRouterTitle
         case .localInkling: return "Inkling 2 Mini, on this Mac"
         case .customEndpoint: return "Custom endpoint"
         }
@@ -31,6 +40,7 @@ enum BackendCopy {
     static func shortName(for backend: AppSettings.Backend) -> String {
         switch backend {
         case .clairic: return "Clairic"
+        case .openRouter: return "OpenRouter"
         case .localInkling: return "Local"
         case .customEndpoint: return "Custom"
         }
@@ -90,12 +100,14 @@ struct TestResultView: View {
 
 // MARK: Model tab
 
-/// Settings → Model: a segmented picker (Clairic / Local / Custom), the consent row, the selected backend's fields
+/// Settings → Model: a segmented picker (Clairic / OpenRouter / Local / Custom), the consent row, the selected backend's fields
 /// (saved as you type; tokens to the Keychain after a pause), Test Connection, and the local model install.
 struct ModelSettingsTab: View {
     let coordinator: AppCoordinator
     /// Snapshots show a download without running one.
     var installStateOverride: LocalInstallState?
+    /// Snapshots show OpenRouter's Advanced disclosure open.
+    var showsOpenRouterAdvanced = false
     @State private var asking: ConsentRequest?
 
     var body: some View {
@@ -119,6 +131,8 @@ struct ModelSettingsTab: View {
                 switch draft.wrappedValue.backend {
                 case .clairic:
                     ClairicSettingsSection(coordinator: coordinator, draft: draft)
+                case .openRouter:
+                    OpenRouterSettingsSection(coordinator: coordinator, draft: draft, showsAdvanced: showsOpenRouterAdvanced)
                 case .localInkling:
                     LocalModelSettingsSection(coordinator: coordinator, draft: draft, stateOverride: installStateOverride)
                 case .customEndpoint:
@@ -210,6 +224,71 @@ private struct ClairicSettingsSection: View {
                 var candidate = draft
                 candidate.backend = .clairic
                 return (candidate, [.cloudflareAPIToken: tokenDraft])
+            }
+        }
+    }
+}
+
+/// OpenRouter: API key (Keychain, saved after a pause, used on commit, like the Clairic token), links to get a key
+/// and credits, the price once measured, where screenshots go with the policy links, the model under "Advanced"
+/// (saved as you type; empty = the default), and Test Connection.
+private struct OpenRouterSettingsSection: View {
+    let coordinator: AppCoordinator
+    @Binding var draft: AppSettings
+    @State private var keyDraft = ""
+    @State private var showsAdvanced: Bool
+
+    init(coordinator: AppCoordinator, draft: Binding<AppSettings>, showsAdvanced: Bool = false) {
+        self.coordinator = coordinator
+        _draft = draft
+        _showsAdvanced = State(initialValue: showsAdvanced)
+    }
+
+    var body: some View {
+        Section("OpenRouter") {
+            SecretField(title: "API key", key: .openRouterAPIKey, coordinator: coordinator, text: $keyDraft,
+                        removeTitle: "Remove saved API key",
+                        removeMessage: "Shotkeeper stops naming screenshots with OpenRouter until you enter a key again.")
+            LabeledContent {
+                HStack(spacing: 14) {
+                    Link("Get a key", destination: OpenRouterBackend.keysURL)
+                    Link("Add credits", destination: OpenRouterBackend.creditsURL)
+                }
+            } label: {
+                EmptyView()
+            }
+            // Hidden until the live test measured it (core `OpenRouterPricing`, nil until then).
+            if let price = OpenRouterPricing.perThousandText() {
+                LabeledContent("Cost") { Text(price).foregroundStyle(Color.primary) }
+            }
+            DisclosureGroup("Advanced", isExpanded: $showsAdvanced) {
+                TextField("Model", text: Binding(
+                    get: { draft.openRouterModel ?? "" },
+                    set: { draft.openRouterModel = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }),
+                    prompt: Text(OpenRouterBackend.defaultModel))
+                Text("Leave empty for \(OpenRouterBackend.defaultModel). Requests turn reasoning off and ask for "
+                     + "zero data retention.")
+                    .font(.callout)
+                    .foregroundStyle(Brand.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            TestConnectionRow(coordinator: coordinator) {
+                var candidate = draft
+                candidate.backend = .openRouter
+                return (candidate, [.openRouterAPIKey: keyDraft])
+            }
+        }
+        Section("Privacy") {
+            LabeledContent {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Link("OpenRouter privacy policy", destination: OpenRouterBackend.privacyPolicyURL)
+                    Link("Provider data policies", destination: OpenRouterBackend.providerDataPolicyURL)
+                    Link("Zero data retention", destination: OpenRouterBackend.zeroDataRetentionURL)
+                }
+            } label: {
+                Text("Requests ask for zero data retention and no data collection. Both providers of Inkling 2 Mini "
+                     + "qualify today; if none does, OpenRouter refuses the request instead of sending it elsewhere.")
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

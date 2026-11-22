@@ -79,6 +79,16 @@ enum UISnapshotCatalog {
             UISnapshot("setup-3-local-32gb") { Fixtures.setup(.connect, choice: .localInkling, memoryGB: 32) },
             UISnapshot("setup-3-8gb") { Fixtures.setup(.connect, memoryGB: 8) },
             UISnapshot("setup-3-custom-rerun") { Fixtures.setup(.connect, choice: .customEndpoint, backend: .customEndpoint) },
+            // OpenRouter (Inkling 2 Mini through OpenRouter): empty, and ready to continue after a test.
+            UISnapshot("setup-3-openrouter") { Fixtures.setup(.connect, choice: .openRouter) },
+            UISnapshot("setup-3-openrouter-ready") {
+                Fixtures.setup(.connect, choice: .openRouter, openRouterKey: "fake", acknowledged: true, test: .succeeded)
+            },
+            UISnapshot("setup-3-openrouter-out-of-credits") {
+                Fixtures.setup(.connect, choice: .openRouter, openRouterKey: "fake", acknowledged: true, test: .failed(
+                    ConnectionTestText.failure(AnalyzerError.badRequest(status: 402, message: "x"), backend: .openRouter)))
+            },
+            UISnapshot("setup-3-openrouter-8gb") { Fixtures.setup(.connect, choice: .openRouter, memoryGB: 8) },
             UISnapshot("setup-4-waiting") { Fixtures.setup(.tryIt) },
             UISnapshot("setup-4-waiting-download") {
                 Fixtures.setup(.tryIt, phase: .downloading(0.42), backend: .localInkling)
@@ -97,6 +107,10 @@ enum UISnapshotCatalog {
             UISnapshot("settings-general-kebab-date") { Fixtures.settings(.general, kebabWithDate: true) },
             UISnapshot("settings-model-clairic") { Fixtures.settings(.model) },
             UISnapshot("settings-model-custom-consent") { Fixtures.settings(.model, backend: .customEndpoint) },
+            UISnapshot("settings-model-openrouter-consent") { Fixtures.settings(.model, backend: .openRouter) },
+            UISnapshot("settings-model-openrouter") {
+                Fixtures.settings(.model, backend: .openRouter, openRouterAllowed: true, openRouterAdvanced: true)
+            },
             UISnapshot("settings-model-local-not-installed") {
                 Fixtures.settings(.model, backend: .localInkling, install: Fixtures.install(.notInstalled))
             },
@@ -418,7 +432,8 @@ enum Fixtures {
     static func setup(_ step: SetupStep, choice: AppSettings.Backend = .clairic, consent: Bool = false,
                       account: String = "", token: String = "", test: ConnectionTestState = .idle,
                       tryIt: TryItState? = nil, phase: RuntimePhase = .notInstalled, memoryGB: UInt64 = 16,
-                      backend: AppSettings.Backend = .clairic, shortcut: HotKeyShortcut = .defaultSearch) -> some View {
+                      backend: AppSettings.Backend = .clairic, shortcut: HotKeyShortcut = .defaultSearch,
+                      openRouterKey: String = "", acknowledged: Bool = false) -> some View {
         var services = setupServices(memoryGB: memoryGB, phase: phase, backend: backend)
         services.searchShortcut = { shortcut }
         let model = SetupModel(services: services)
@@ -430,6 +445,8 @@ enum Fixtures {
         model.flow = flow
         model.accountID = account
         model.tokenDraft = token
+        model.openRouterKeyDraft = openRouterKey
+        model.openRouterAcknowledged = acknowledged
         model.test = test
         return SetupView(model: model)
     }
@@ -440,11 +457,13 @@ enum Fixtures {
     static let customShortcut = HotKeyShortcut(keyCode: KeyCode.k, modifiers: [.control, .option])
 
     /// A coordinator in a fresh temp folder with in-memory credentials: nothing touches the user's files or Keychain.
-    static func settingsCoordinator(_ configure: (inout AppSettings) -> Void, token: Bool) -> AppCoordinator {
+    static func settingsCoordinator(_ configure: (inout AppSettings) -> Void, token: Bool,
+                                    openRouterKey: Bool = false) -> AppCoordinator {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("ShotkeeperSnapshot-\(UUID().uuidString)", isDirectory: true)
         let credentials = InMemoryCredentialStore()
         if token { try? credentials.setSecret("fake-token", for: .cloudflareAPIToken) }
+        if openRouterKey { try? credentials.setSecret("fake-key", for: .openRouterAPIKey) }
         let coordinator = AppCoordinator(supportDirectory: folder, credentials: credentials,
                                          physicalMemoryBytes: 16 * 1_073_741_824,
                                          applicationSupport: folder, logDirectory: folder)
@@ -471,7 +490,8 @@ enum Fixtures {
     }
 
     static func settings(_ tab: SettingsTab, backend: AppSettings.Backend = .clairic, install: LocalInstallState? = nil,
-                         rules: Bool = false, kebabWithDate: Bool = false) -> some View {
+                         rules: Bool = false, kebabWithDate: Bool = false, openRouterAllowed: Bool = false,
+                         openRouterAdvanced: Bool = false) -> some View {
         let coordinator = settingsCoordinator({ settings in
             settings.backend = backend
             settings.clairicAccountID = account
@@ -482,12 +502,13 @@ enum Fixtures {
                 settings.customModelName = "inkling-2-mini"
             }
             if backend == .clairic { settings.uploadGrants = [.init(destination: .cloudflare, grantedAt: now)] }
+            if openRouterAllowed { settings.uploadGrants = [.init(destination: .openRouter, grantedAt: now)] }
             if rules {
                 settings.excludeRules.rules = [.init(.filenameContains, "bank"), .init(.folder, "~/Desktop/Private"),
                                                .init(.filenameGlob, "*invoice*")]
             }
             if kebabWithDate { settings.filenameStyle = FilenameStyle(casing: .kebab, datePrefix: true) }
-        }, token: backend == .clairic)
+        }, token: backend == .clairic, openRouterKey: backend == .openRouter)
         let content: AnyView
         var height = SettingsView.size.height
         switch tab {
@@ -495,8 +516,10 @@ enum Fixtures {
             content = AnyView(GeneralSettingsTab(coordinator: coordinator, navigation: SettingsNavigation(), showSetup: {}))
             height = 1_000
         case .model:
-            content = AnyView(ModelSettingsTab(coordinator: coordinator, installStateOverride: install))
+            content = AnyView(ModelSettingsTab(coordinator: coordinator, installStateOverride: install,
+                                               showsOpenRouterAdvanced: openRouterAdvanced))
             if backend == .localInkling { height = 640 }
+            if backend == .openRouter { height = 760 }
         case .exclusions:
             content = AnyView(ExclusionsSettingsTab(coordinator: coordinator))
         case .about:

@@ -38,6 +38,15 @@ struct SetupServices {
     var window: @MainActor () -> NSWindow? = { nil }
     /// The search shortcut steps 1 and 5 show: the registered one, else the saved one.
     var searchShortcut: @MainActor () -> HotKeyShortcut = { .defaultSearch }
+    /// An OpenRouter key is saved in the Keychain (re-read only when `credentialsRevision` changes).
+    var hasSavedOpenRouterKey: @MainActor () -> Bool = { false }
+    /// Step 3 "Continue" with OpenRouter: the key goes to the Keychain here (empty = keep the saved one). OpenRouter
+    /// is allowed only when `agreedThisRun` (step 2's "I Agree" in this window; step 3's checkbox gates Continue).
+    var saveOpenRouter: @MainActor (_ key: String, _ agreedThisRun: Bool) -> Void = { _, _ in }
+    /// Test Connection with the typed (unsaved) OpenRouter key; sends only the generated test image.
+    var testOpenRouter: @MainActor (_ key: String) async -> Result<String, AnalyzerFailure> = { _ in
+        .failure(AnalyzerFailure(message: "Not available"))
+    }
 
     @MainActor
     static func live(coordinator: AppCoordinator, openShortcutSettings: @escaping @MainActor () -> Void,
@@ -74,7 +83,14 @@ struct SetupServices {
                 close()
             },
             window: { NSApp.windows.first { $0.title == SetupView.windowTitle && $0.isVisible } },
-            searchShortcut: { coordinator.activeSearchShortcut ?? coordinator.settings.searchShortcut })
+            searchShortcut: { coordinator.activeSearchShortcut ?? coordinator.settings.searchShortcut },
+            hasSavedOpenRouterKey: { coordinator.hasSecret(.openRouterAPIKey) },
+            saveOpenRouter: { key, agreed in coordinator.saveOpenRouterSetup(key: key, agreedThisRun: agreed) },
+            testOpenRouter: { key in
+                var candidate = coordinator.settings
+                candidate.backend = .openRouter
+                return await coordinator.testConnection(settings: candidate, secrets: [.openRouterAPIKey: key])
+            })
     }
 }
 
@@ -98,6 +114,18 @@ final class SetupModel {
             if tokenDraft != oldValue { resetTest() }
         }
     }
+    /// The typed OpenRouter key. Never logged, never saved before step 3's Continue.
+    var openRouterKeyDraft = "" {
+        didSet {
+            flow.inputs.hasOpenRouterKeyDraft = !openRouterKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if openRouterKeyDraft != oldValue { resetTest() }
+        }
+    }
+    /// Step 3's OpenRouter checkbox.
+    var openRouterAcknowledged: Bool {
+        get { flow.inputs.openRouterAcknowledged }
+        set { flow.inputs.openRouterAcknowledged = newValue }
+    }
     var accountID: String {
         get { flow.inputs.accountID }
         set {
@@ -114,6 +142,7 @@ final class SetupModel {
     /// never shows.
     @ObservationIgnored private var testRun: UUID?
     @ObservationIgnored private var savedTokenCache: (revision: Int, value: Bool)?
+    @ObservationIgnored private var savedOpenRouterKeyCache: (revision: Int, value: Bool)?
     @ObservationIgnored private var observerID: UUID?
     private var installTask: Task<Void, Never>?
 
@@ -137,12 +166,21 @@ final class SetupModel {
         return value
     }
 
+    private var hasSavedOpenRouterKey: Bool {
+        let revision = services.credentialsRevision()
+        if let cache = savedOpenRouterKeyCache, cache.revision == revision { return cache.value }
+        let value = services.hasSavedOpenRouterKey()
+        savedOpenRouterKeyCache = (revision, value)
+        return value
+    }
+
     var cards: SetupCards { flow.cards }
 
     /// The flow with live inputs (saved token, local runtime) and step 4's waiting line. Views render this.
     var current: SetupFlow {
         var current = flow
         current.inputs.hasSavedToken = hasSavedToken
+        current.inputs.hasSavedOpenRouterKey = hasSavedOpenRouterKey
         current.inputs.localModel = Self.localModelState(services.runtimePhase())
         if current.step == .tryIt { current.tryIt = TryIt.withNote(waitingNote, in: current.tryIt) }
         return current
@@ -196,6 +234,9 @@ final class SetupModel {
         case .saveConnection(.clairic):
             services.saveClairic(flow.inputs.accountID, tokenDraft, agreedThisRun)
             tokenDraft = ""
+        case .saveConnection(.openRouter):
+            services.saveOpenRouter(openRouterKeyDraft, agreedThisRun)
+            openRouterKeyDraft = ""
         case .saveConnection(.localInkling):
             if let model = cards.local.model { services.chooseLocal(model) }
         case .saveConnection(.customEndpoint):
@@ -214,12 +255,13 @@ final class SetupModel {
         flow.back()
     }
 
+    /// Another card: the Test Connection line belonged to the old one.
     func choose(_ backend: AppSettings.Backend) {
-        flow.choose(backend)
+        if flow.choose(backend) { resetTest() }
     }
 
     func chooseNext() {
-        flow.chooseNext()
+        if flow.chooseNext() { resetTest() }
     }
 
     func runTest() {
@@ -229,10 +271,18 @@ final class SetupModel {
         testRun = run
         let account = flow.inputs.accountID
         let token = tokenDraft
+        let openRouterKey = openRouterKeyDraft
+        let backend = flow.choice
         Task {
-            let result = await services.testClairic(account, token)
+            let result: Result<String, AnalyzerFailure>
+            if backend == .openRouter {
+                result = await services.testOpenRouter(openRouterKey)
+            } else {
+                result = await services.testClairic(account, token)
+            }
             // Dropped when the inputs changed meanwhile (`resetTest`) or another run started.
-            guard testRun == run, account == flow.inputs.accountID, token == tokenDraft else { return }
+            guard testRun == run, backend == flow.choice, account == flow.inputs.accountID, token == tokenDraft,
+                  openRouterKey == openRouterKeyDraft else { return }
             testRun = nil
             switch result {
             case .success: test = .succeeded

@@ -254,6 +254,7 @@ final class AppCoordinator {
         // A Process Existing request was for the destination selected then: never carried to another one.
         if destinationChanged { processExistingRequests.invalidateAll() }
         if destinationChanged || new.clairicAccountID != old.clairicAccountID || new.customModelName != old.customModelName
+            || new.openRouterModel != old.openRouterModel
             || new.localModelVariantID != old.localModelVariantID { // consent un-holds cloud backends
             rebuildAnalyzer()
             Task { await localRuntime.refresh(for: localVariant) }
@@ -359,7 +360,10 @@ final class AppCoordinator {
                                             physicalMemoryBytes: physicalMemoryBytes)
         analyzerBox.value = AnalyzerSnapshot(analyzer: analyzer, settings: settings)
         let token = ((try? store.secret(for: .cloudflareAPIToken)) ?? nil) ?? ""
-        readiness = BackendGate.readiness(settings: settings, hasClairicToken: !token.isEmpty)
+        let openRouterKey = (((try? store.secret(for: .openRouterAPIKey)) ?? nil) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        readiness = BackendGate.readiness(settings: settings, hasClairicToken: !token.isEmpty,
+                                          hasOpenRouterKey: !openRouterKey.isEmpty)
         // A queue held on "not configured"/"unauthorized" retries with the new analyzer.
         if case .error = queueStatus, let queue { Task { await queue.resume() } }
         startWatchingIfReady()
@@ -640,6 +644,17 @@ final class AppCoordinator {
         }
     }
 
+    /// Setup step 3 "Continue" with OpenRouter: the key goes to the Keychain now (never while typing), then the
+    /// backend is saved, and OpenRouter is allowed from now on when `agreedThisRun` (step 2's "I Agree" in this setup
+    /// run; step 3's OpenRouter checkbox is required to get here). An empty key keeps the saved one.
+    func saveOpenRouterSetup(key: String, agreedThisRun: Bool) {
+        if !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { setSecret(key, for: .openRouterAPIKey) }
+        updateSettings {
+            $0.backend = .openRouter
+            if agreedThisRun { $0 = BackendGate.granting(.openRouter, in: $0) }
+        }
+    }
+
     /// Setup step 3 "Continue" with the local model.
     func chooseLocalBackend(_ variant: ModelVariant) {
         updateSettings {
@@ -667,7 +682,7 @@ final class AppCoordinator {
     /// Runs one analysis of a generated image with the given (unsaved) settings and secrets.
     func testConnection(settings candidate: AppSettings, secrets: [CredentialKey: String]) async -> Result<String, AnalyzerFailure> {
         let store = InMemoryCredentialStore()
-        for key in [CredentialKey.cloudflareAPIToken, .customEndpointAPIKey] {
+        for key in [CredentialKey.cloudflareAPIToken, .customEndpointAPIKey, .openRouterAPIKey] {
             let override = secrets[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let override, !override.isEmpty {
                 try? store.setSecret(override, for: key)
@@ -679,6 +694,7 @@ final class AppCoordinator {
         // live on this copy only; nothing is saved.
         var candidate = candidate
         candidate = BackendGate.granting(.cloudflare, in: candidate, at: .distantPast)
+        candidate = BackendGate.granting(.openRouter, in: candidate, at: .distantPast)
         candidate = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: candidate.customEndpointURL),
                                          in: candidate, at: .distantPast)
         let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,

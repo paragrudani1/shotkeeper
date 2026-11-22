@@ -76,6 +76,63 @@ final class SetupModelTests: TempDirectoryTestCase {
         model.stop()
     }
 
+    func testOpenRouterIsAllowedOnlyByIAgreeThenItsCheckboxAndContinue() throws {
+        let coordinator = makeCoordinator()
+        coordinator.startServices()
+        defer { coordinator.stopServices() }
+        let model = makeModel(coordinator)
+        model.pressPrimary()
+        model.flow.consentChecked = true
+        model.pressPrimary() // I Agree
+        model.choose(.openRouter)
+        model.openRouterKeyDraft = "sk-or-v1-secret"
+        XCTAssertNil(try credentials.secret(for: .openRouterAPIKey), "typing stores nothing")
+        XCTAssertEqual(model.current.primary.title, "Skip", "the OpenRouter checkbox is not ticked yet")
+        model.openRouterAcknowledged = true
+        XCTAssertEqual(model.current.primary.title, "Continue")
+        let before = Date()
+        model.pressPrimary() // Continue with OpenRouter
+        XCTAssertEqual(try credentials.secret(for: .openRouterAPIKey), "sk-or-v1-secret")
+        XCTAssertEqual(model.openRouterKeyDraft, "", "the typed key is not kept in the window")
+        XCTAssertEqual(coordinator.settings.backend, .openRouter)
+        let grant = try XCTUnwrap(coordinator.settings.grant(for: .openRouter))
+        XCTAssertGreaterThanOrEqual(grant.grantedAt, before, "from now on, not before")
+        XCTAssertNil(coordinator.settings.grant(for: .cloudflare), "OpenRouter's Continue does not allow Cloudflare")
+        XCTAssertEqual(coordinator.readiness, .ready)
+        XCTAssertTrue(coordinator.isWatching)
+        XCTAssertTrue(coordinator.currentAnalyzer is OpenAICompatibleAnalyzer)
+        let json = String(decoding: try Data(contentsOf: AppPaths.settingsFile(in: directory.appendingPathComponent("support"))),
+                          as: UTF8.self)
+        XCTAssertFalse(json.contains("sk-or-v1-secret"), "the key never goes to settings.json")
+        model.stop()
+    }
+
+    func testSaveOpenRouterSetupGrantsOnlyWithThisRunsAgreement() {
+        let coordinator = makeCoordinator()
+        coordinator.acceptPrivacyStep() // an earlier run
+        coordinator.saveOpenRouterSetup(key: "sk-or-v1-key", agreedThisRun: false)
+        XCTAssertNil(coordinator.settings.grant(for: .openRouter))
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        XCTAssertEqual(BackendGate.consentRequest(for: coordinator.settings)?.destination, .openRouter,
+                       "Settings asks, naming OpenRouter and its providers")
+        coordinator.saveOpenRouterSetup(key: "", agreedThisRun: true)
+        XCTAssertNotNil(coordinator.settings.grant(for: .openRouter))
+        XCTAssertEqual(coordinator.readiness, .ready, "an empty key keeps the saved one")
+    }
+
+    func testOpenRouterTestConnectionWithoutAKeySendsNothing() async throws {
+        let coordinator = makeCoordinator()
+        let model = makeModel(coordinator)
+        model.choose(.openRouter)
+        model.runTest()
+        for _ in 0..<500 where model.test == .running { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.test, .failed("OpenRouter API key is not set."))
+        XCTAssertNil(try credentials.secret(for: .openRouterAPIKey))
+        model.choose(.clairic)
+        XCTAssertEqual(model.test, .idle, "another card drops the old result")
+        model.stop()
+    }
+
     func testPickingLocalInSetupGrantsNothing() {
         let coordinator = makeCoordinator()
         coordinator.updateSettings { $0.backend = .localInkling }
