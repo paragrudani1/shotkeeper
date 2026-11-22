@@ -104,3 +104,8 @@ func analysis(title: String?, confidence: Double = 0.9, tags: [String] = ["invoi
 func settle(_ rounds: Int = 200) async {
     for _ in 0..<rounds { await Task.yield() }
 }
+
+extension AppSettings {
+    /// Test shorthand: Cloudflare allowed since `.distantPast` (an upgraded or long-configured user).
+    static let cloudflareSinceEver = UploadGrant(destination: .cloudflare, grantedAt: .distantPast)
+}

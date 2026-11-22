@@ -123,7 +123,7 @@ final class AnalyzerFactoryTests: XCTestCase {
         // Configured in Settings but setup's privacy notice not accepted: nothing may be sent yet.
         try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
                                       contains: "Finish setup")
-        settings.hasSeenPrivacyNotice = true
+        settings.uploadGrants = [.init(destination: .cloudflare, grantedAt: .distantPast)]
         let analyzer = AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
         XCTAssertTrue(analyzer is CloudflareClairicAnalyzer)
         XCTAssertEqual(analyzer.backendID, "clairic")
@@ -132,7 +132,7 @@ final class AnalyzerFactoryTests: XCTestCase {
     func testClairicRequestUsesTrimmedAccountAndKeychainToken() throws {
         var settings = AppSettings()
         settings.clairicAccountID = " acct123 "
-        settings.hasSeenPrivacyNotice = true
+        settings.uploadGrants = [.init(destination: .cloudflare, grantedAt: .distantPast)]
         let credentials = InMemoryCredentialStore([.cloudflareAPIToken: "tok"])
         let analyzer = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials,
                                                           localRuntime: nil) as? CloudflareClairicAnalyzer)
@@ -156,7 +156,8 @@ final class AnalyzerFactoryTests: XCTestCase {
         settings.customModelName = "inkling-2-mini"
         try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
                                       contains: "Finish setup")
-        settings.hasSeenPrivacyNotice = true
+        settings = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: settings.customEndpointURL),
+                                        in: settings)
         let plain = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
             as? LocalOpenAICompatibleAnalyzer)
         XCTAssertEqual(plain.configuration.baseURL, URL(string: "http://192.168.1.5:8080"))
@@ -252,7 +253,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
         XCTAssertTrue(coordinator.hasSecret(.cloudflareAPIToken))
         // Credentials alone are not enough: nothing leaves the Mac before the privacy notice is accepted.
         XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
-        coordinator.updateSettings { $0.hasSeenPrivacyNotice = true }
+        coordinator.allowUploads(to: .cloudflare, endpoint: nil)
         XCTAssertTrue(coordinator.currentAnalyzer is CloudflareClairicAnalyzer)
 
         coordinator.updateSettings {
@@ -260,6 +261,9 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
             $0.customEndpointURL = URL(string: "http://127.0.0.1:9")
             $0.customModelName = "m"
         }
+        XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer, "Cloudflare consent does not cover a custom endpoint")
+        coordinator.allowUploads(to: .customEndpoint,
+                                 endpoint: CustomEndpointIdentity(url: coordinator.settings.customEndpointURL))
         XCTAssertTrue(coordinator.currentAnalyzer is LocalOpenAICompatibleAnalyzer)
 
         coordinator.updateSettings { $0.backend = .localInkling }
@@ -307,7 +311,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
         XCTAssertEqual(queued, 1, "the held screenshot is still waiting, not processed")
     }
 
-    func testTestConnectionDoesNotNeedThePrivacyNoticeForTheGeneratedImage() async {
+    func testTestConnectionSendsOnlyTheGeneratedImageAndSavesNoConsent() async {
         let coordinator = makeCoordinator()
         var candidate = AppSettings()
         candidate.backend = .customEndpoint
@@ -317,6 +321,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
         let result = await coordinator.testConnection(settings: candidate, secrets: [:])
         guard case .failure(let failure) = result else { return XCTFail("port 1 cannot answer") }
         XCTAssertFalse(failure.message.contains("Finish setup"), failure.message)
+        XCTAssertEqual(coordinator.settings.uploadGrants, [], "the test's own grants are never saved")
     }
 
     func testPauseSetsTheSkipWindowAndResumeClearsIt() {
@@ -349,7 +354,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
 
         candidate.backend = .clairic
         let missing = await coordinator.testConnection(settings: candidate, secrets: [:])
-        XCTAssertEqual(missing, .failure(AnalyzerFailure(message: "Cloudflare account ID is not set")))
+        XCTAssertEqual(missing, .failure(AnalyzerFailure(message: "Cloudflare account ID is not set.")))
     }
 }
 

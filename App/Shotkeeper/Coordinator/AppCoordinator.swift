@@ -31,6 +31,12 @@ final class AppCoordinator {
     }
     private var message = ExpiringMessage()
     private(set) var watchedFolder: URL?
+    /// The folder watcher runs. It starts only once the backend is usable (core `BackendGate`): nothing is queued,
+    /// and later uploaded, before the user chose where screenshots go. Once started it keeps running for the
+    /// session, so a token removed later shows the "Needs attention" hold instead of silently ignoring screenshots.
+    private(set) var isWatching = false
+    /// Whether the chosen backend may analyze screenshots now. Updated on every settings or secret change.
+    private(set) var readiness: BackendReadiness = .notConfigured("Starting")
     /// The menu's "Recent" rows (last 5 processed), the "Undo: <title>" target and the index count.
     private(set) var recentItems: [RecentItem] = []
     private(set) var undoCandidate: UndoRecord?
@@ -47,7 +53,10 @@ final class AppCoordinator {
     @ObservationIgnored private var undoLog: UndoLog?
     @ObservationIgnored private var processor: ScreenshotProcessor?
     @ObservationIgnored private(set) var queue: ProcessingQueue?
-    @ObservationIgnored private let analyzerBox: LockedValue<any ScreenshotAnalyzer>
+    /// The analyzer and the settings it was built from, replaced together on every rebuild. The processor reads this
+    /// pair once right before `analyze` and decides consent on it (`UploadConsent.decide`), so a rebuild while a job
+    /// prepares its image cannot send that job to a backend the decision did not cover.
+    @ObservationIgnored private let analyzerBox: LockedValue<AnalyzerSnapshot>
     @ObservationIgnored private var statusTask: Task<Void, Never>?
     @ObservationIgnored private var watcher: FolderWatcher?
     @ObservationIgnored private var watchTask: Task<Void, Never>?
@@ -57,6 +66,13 @@ final class AppCoordinator {
     @ObservationIgnored private var toastBatcher = ToastBatcher()
     @ObservationIgnored private var lastSoundAt: Date?
     @ObservationIgnored private let eventSink = LockedValue<(@MainActor @Sendable (ScreenshotEvent) -> Void)?>(nil)
+    /// Issues "Process Existing Screenshots…" requests (the destination selected at the click). The queue carries each
+    /// with its job for the whole job; all are invalidated when the backend, endpoint or grants change.
+    @ObservationIgnored let processExistingRequests = ProcessExistingRequests()
+    /// Called on the main actor after Process Existing's folder scan (tests change the destination here).
+    @ObservationIgnored var afterProcessExistingScan: (() -> Void)?
+    /// Extra listeners for pipeline events (setup's "Try it now" step), keyed by the id `addEventObserver` returned.
+    @ObservationIgnored private var eventObservers: [UUID: @MainActor (ScreenshotEvent) -> Void] = [:]
     /// Shows a toast (set by the app delegate; nil in unit tests unless a test sets it).
     @ObservationIgnored var onToast: ((ToastContent) -> Void)?
     /// Plays the rename sound (only called when `playRenameSound` is on).
@@ -73,7 +89,8 @@ final class AppCoordinator {
         let store = SettingsStore(fileURL: AppPaths.settingsFile(in: supportDirectory))
         self.settingsStore = store
         self.settings = store.current
-        self.analyzerBox = LockedValue(UnconfiguredAnalyzer(backendID: "none", reason: "Starting"))
+        self.analyzerBox = LockedValue(AnalyzerSnapshot(analyzer: UnconfiguredAnalyzer(backendID: "none", reason: "Starting"),
+                                                        settings: store.current))
 
         let phaseSink = LockedValue<(@MainActor @Sendable (RuntimePhase) -> Void)?>(nil)
         self.localRuntime = LocalModelRuntime(applicationSupport: applicationSupport, logDirectory: logDirectory,
@@ -93,13 +110,22 @@ final class AppCoordinator {
     // MARK: Derived state
 
     /// The analyzer the processor will use for the next screenshot.
-    var currentAnalyzer: any ScreenshotAnalyzer { analyzerBox.value }
+    var currentAnalyzer: any ScreenshotAnalyzer { analyzerBox.value.analyzer }
 
     var localVariant: ModelVariant { AnalyzerFactory.localVariant(for: settings, physicalMemoryBytes: physicalMemoryBytes) }
 
     var recommendation: BackendRecommendation {
         BackendRecommender.recommend(physicalMemoryBytes: physicalMemoryBytes)
     }
+
+    /// The menu's second line while the folder is not watched because no backend is usable ("Not watching yet"),
+    /// nil while watching or about to start.
+    var notWatchingReason: String? {
+        isWatching ? nil : BackendGate.statusReason(for: readiness)
+    }
+
+    /// Watching, but the selected backend's destination is not allowed: new screenshots are skipped.
+    var isSkippingForConsent: Bool { isWatching && readiness == .needsConsent }
 
     var statusLine: String {
         if let startupError { return "Error: \(startupError)" }
@@ -135,11 +161,10 @@ final class AppCoordinator {
             self.index = index
             self.undoLog = undoLog
             self.processor = ScreenshotProcessor(
-                analyzer: { box.value },
+                snapshot: { box.value },
                 imagePreparer: SettingsDrivenImagePreparer(settings: { store.current }),
                 metadataWriter: XattrMetadataWriter(),
-                index: index, undoLog: undoLog,
-                settings: { store.current })
+                index: index, undoLog: undoLog)
         } catch {
             indexProblem = UserFacingError.problem(for: error)
             startupError = "Could not open the index: \(StatusText.describe(error))"
@@ -151,6 +176,13 @@ final class AppCoordinator {
         guard !servicesStarted else { return }
         servicesStarted = true
         Task { await localRuntime.cleanUpAfterPreviousRun() }
+        startWatchingIfReady()
+    }
+
+    /// Starts the watcher (and re-queues interrupted work) once services run and the backend is usable.
+    private func startWatchingIfReady() {
+        guard servicesStarted, !isWatching, readiness == .ready else { return }
+        isWatching = true
         restartWatcher()
         if let index, let queue, let pending = try? index.entries(withStatus: .pending) {
             Task { for entry in pending { await queue.enqueue(URL(fileURLWithPath: entry.path)) } }
@@ -172,20 +204,25 @@ final class AppCoordinator {
         settings = new
         do { try settingsStore.save(new) } catch { lastMessage = "Could not save settings: \(StatusText.describe(error))" }
 
-        if new.backend != old.backend || new.clairicAccountID != old.clairicAccountID
-            || new.customEndpointURL != old.customEndpointURL || new.customModelName != old.customModelName
-            || new.localModelVariantID != old.localModelVariantID
-            || new.hasSeenPrivacyNotice != old.hasSeenPrivacyNotice { // accepting consent un-holds cloud backends
+        let destinationChanged = new.backend != old.backend || new.customEndpointURL != old.customEndpointURL
+            || new.uploadGrants != old.uploadGrants
+        // A Process Existing request was for the destination selected then: never carried to another one.
+        if destinationChanged { processExistingRequests.invalidateAll() }
+        if destinationChanged || new.clairicAccountID != old.clairicAccountID || new.customModelName != old.customModelName
+            || new.localModelVariantID != old.localModelVariantID { // consent un-holds cloud backends
             rebuildAnalyzer()
             Task { await localRuntime.refresh(for: localVariant) }
             if new.backend != .localInkling, old.backend == .localInkling { Task { await localRuntime.stop() } }
+        } else {
+            // Same analyzer; the pair carries the new rename/move/Finder settings (nothing here changes consent).
+            analyzerBox.withValue { $0 = AnalyzerSnapshot(analyzer: $0.analyzer, settings: new) }
         }
         if new.requestsPerMinute != old.requestsPerMinute, let queue {
             // In place: a rebuilt queue had to resume the old one to drain it, which ran held jobs during a pause.
             let rate = max(1, new.requestsPerMinute)
             Task { await queue.setRequestsPerMinute(rate) }
         }
-        if new.watchedFolderOverride != old.watchedFolderOverride, servicesStarted { restartWatcher() }
+        if new.watchedFolderOverride != old.watchedFolderOverride, isWatching { restartWatcher() }
         if new.idleTimeoutMinutes != old.idleTimeoutMinutes {
             let minutes = new.idleTimeoutMinutes
             Task { await localRuntime.setIdleTimeout(minutes: minutes) }
@@ -217,10 +254,13 @@ final class AppCoordinator {
     // MARK: Analyzer and queue
 
     func rebuildAnalyzer() {
-        analyzerBox.value = AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: localRuntime,
-                                                 physicalMemoryBytes: physicalMemoryBytes)
+        let analyzer = AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: localRuntime,
+                                            physicalMemoryBytes: physicalMemoryBytes)
+        analyzerBox.value = AnalyzerSnapshot(analyzer: analyzer, settings: settings)
+        readiness = BackendGate.readiness(settings: settings, hasClairicToken: hasSecret(.cloudflareAPIToken))
         // A queue held on "not configured"/"unauthorized" retries with the new analyzer.
         if case .error = queueStatus, let queue { Task { await queue.resume() } }
+        startWatchingIfReady()
     }
 
     /// Built once: rate changes go through `ProcessingQueue.setRequestsPerMinute`, so queued jobs and pause/hold
@@ -230,9 +270,12 @@ final class AppCoordinator {
         let configuration = ProcessingQueue.Configuration(concurrency: 1,
                                                           requestsPerMinute: max(1, settings.requestsPerMinute))
         let sink = eventSink
-        let queue = ProcessingQueue(configuration: configuration, handler: { url in
+        let requests = processExistingRequests
+        let queue = ProcessingQueue(configuration: configuration, jobHandler: { url, request in
+            // Checked on every attempt: a destination change since the click makes it count as none.
+            let processExisting = requests.authorization(for: request)
             do {
-                let report = try await processor.processWithReport(url)
+                let report = try await processor.processWithReport(url, processExisting: processExisting)
                 await MainActor.run { sink.value?(.processed(report)) }
             } catch {
                 if UserFacingError.shouldNotify(error) {
@@ -322,6 +365,7 @@ final class AppCoordinator {
 
     /// One pipeline event, on the main actor. Internal so tests can drive it without a model.
     func handle(_ event: ScreenshotEvent, now: Date = Date()) {
+        for observer in eventObservers.values { observer(event) }
         if case .processed(let report) = event, case .processed = report.outcome {
             message.clearAfterSuccess()
             refreshHistory()
@@ -368,14 +412,33 @@ final class AppCoordinator {
     /// Queues every screenshot in the watched folder that the index does not hold yet.
     func processExistingScreenshots() async -> Int {
         guard let index, let queue else { return 0 }
+        // Queued files would be analyzed (uploaded) as soon as a backend became usable: not before setup.
+        guard readiness == .ready else {
+            if case .notConfigured(let reason) = readiness {
+                lastMessage = "Finish setup first: \(reason)"
+            } else {
+                lastMessage = "Finish setup first"
+            }
+            return 0
+        }
+        // The destination the user is asking for: the one selected now, at the click.
+        let target = UploadTarget(settings: settings)
+        let generation = processExistingRequests.generation
         let folder = watchedFolder ?? currentWatchedFolder().folder
         let detector = self.detector
         let candidates = await Task.detached {
             ExistingScreenshotScanner.candidates(in: folder, detector: detector,
                                                  isIndexed: ExistingScreenshotScanner.indexedCheck(index))
         }.value
+        afterProcessExistingScan?()
+        // The processor honours it only while that destination is selected and allowed. A backend, endpoint or grant
+        // change during the scan: nothing is queued, the user asks again for the destination now selected.
+        guard let request = processExistingRequests.request(for: target, madeIn: generation) else {
+            lastMessage = "The destination changed. Run Process Existing again."
+            return 0
+        }
         toastBatcher.beginRun(candidates)
-        for url in candidates { await queue.enqueue(url) }
+        for url in candidates { await queue.enqueue(url, processExisting: request) }
         lastMessage = candidates.isEmpty ? "No unprocessed screenshots in \(folder.lastPathComponent)"
             : "Queued \(candidates.count) screenshot\(candidates.count == 1 ? "" : "s")"
         return candidates.count
@@ -409,6 +472,67 @@ final class AppCoordinator {
 
     // MARK: Setup helpers
 
+    /// Setup step 2 "I Agree": records that the privacy step was accepted (setup no longer opens at launch). It
+    /// grants nothing: Cloudflare is allowed when step 3 then saves Clairic (`saveClairicSetup`).
+    func acceptPrivacyStep() {
+        updateSettings { $0.hasSeenPrivacyNotice = true }
+    }
+
+    /// Settings → Model's confirmation (`BackendGate.consentRequest`) for the selected backend's destination, from
+    /// now on. `endpoint` is the one the dialog named: if the configured endpoint changed meanwhile, nothing is
+    /// granted.
+    func allowUploads(to destination: AppSettings.UploadDestination, endpoint: CustomEndpointIdentity?) {
+        updateSettings { $0 = BackendGate.granting(destination, expectedEndpoint: endpoint, in: $0) }
+    }
+
+    /// Setup step 5 "Finish": saves the choice and applies it to the login item every time, so a login item that
+    /// was removed in System Settings (or never registered) is fixed even when the setting did not change.
+    func setLaunchAtLogin(_ enabled: Bool) {
+        let unchanged = settings.launchAtLogin == enabled
+        updateSettings { $0.launchAtLogin = enabled } // applies it when it changed (and services run)
+        guard unchanged, servicesStarted else { return }
+        do { try LaunchAtLogin.apply(enabled) } catch {
+            lastMessage = "Launch at login: \(error.localizedDescription). Move Shotkeeper to /Applications and try again."
+        }
+    }
+
+    /// Setup step 3 "Continue" with Clairic: the token goes to the Keychain now (never while typing), then the
+    /// backend and account ID are saved, and Cloudflare is allowed from now on when `agreedThisRun` (step 2's
+    /// "I Agree" in this setup run, not a flag saved by an earlier one). An empty token keeps the saved one.
+    func saveClairicSetup(accountID: String, token: String, agreedThisRun: Bool) {
+        if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { setSecret(token, for: .cloudflareAPIToken) }
+        let account = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateSettings {
+            $0.backend = .clairic
+            $0.clairicAccountID = account.isEmpty ? nil : account
+            if agreedThisRun { $0 = BackendGate.granting(.cloudflare, in: $0) }
+        }
+    }
+
+    /// Setup step 3 "Continue" with the local model.
+    func chooseLocalBackend(_ variant: ModelVariant) {
+        updateSettings {
+            $0.backend = .localInkling
+            $0.localModelVariantID = variant.id
+        }
+    }
+
+    /// Calls `observer` with every pipeline event (the same ones the toast gets) until `removeEventObserver`.
+    func addEventObserver(_ observer: @escaping @MainActor (ScreenshotEvent) -> Void) -> UUID {
+        let id = UUID()
+        eventObservers[id] = observer
+        return id
+    }
+
+    func removeEventObserver(_ id: UUID) {
+        eventObservers[id] = nil
+    }
+
+    /// The index row at `path` (setup's result card reads its tags).
+    func indexEntry(atPath path: String) -> IndexedScreenshot? {
+        try? index?.lookup(byPath: path)
+    }
+
     /// Runs one analysis of a generated image with the given (unsaved) settings and secrets.
     func testConnection(settings candidate: AppSettings, secrets: [CredentialKey: String]) async -> Result<String, AnalyzerFailure> {
         let store = InMemoryCredentialStore()
@@ -420,9 +544,12 @@ final class AppCoordinator {
                 try? store.setSecret(saved, for: key)
             }
         }
-        // Only a generated image is sent here, never a user file, so the privacy-notice gate does not apply.
+        // Only a generated image is sent here, never a user file, so the consent gate does not apply. The grants
+        // live on this copy only; nothing is saved.
         var candidate = candidate
-        candidate.hasSeenPrivacyNotice = true
+        candidate = BackendGate.granting(.cloudflare, in: candidate, at: .distantPast)
+        candidate = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: candidate.customEndpointURL),
+                                         in: candidate, at: .distantPast)
         let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,
                                             physicalMemoryBytes: physicalMemoryBytes)
         do {
@@ -430,7 +557,7 @@ final class AppCoordinator {
             let analysis = try await analyzer.analyze(payload, context: ConnectionTestImage.context)
             return .success(ConnectionTestImage.summary(analysis))
         } catch {
-            return .failure(AnalyzerFailure(message: StatusText.describe(error)))
+            return .failure(AnalyzerFailure(message: ConnectionTestText.failure(error, backend: candidate.backend)))
         }
     }
 

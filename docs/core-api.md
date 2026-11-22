@@ -19,15 +19,18 @@ let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .u
     .appendingPathComponent("Shotkeeper")
 let index = try ScreenshotIndex(fileURL: support.appendingPathComponent("index.sqlite"))
 let undoLog = UndoLog(fileURL: support.appendingPathComponent("undo.jsonl"))
+let box = LockedValue(AnalyzerSnapshot(analyzer: makeAnalyzer(settings), settings: settings))  // replaced whole on rebuild
+let requests = ProcessExistingRequests()
 let processor = ScreenshotProcessor(
-    analyzer: { currentAnalyzer() },              // re-read per screenshot: backend switches apply at once
+    snapshot: { box.value },                       // analyzer + the settings it was built from, read together
     imagePreparer: ImageIOPreparer(), metadataWriter: XattrWriter(),
-    index: index, undoLog: undoLog,
-    settings: { settingsStore.current })           // AppSettings, read once per screenshot
+    index: index, undoLog: undoLog)
 let queue = ProcessingQueue(
     configuration: .init(concurrency: 1, requestsPerMinute: settings.requestsPerMinute),
     probe: { await localServerHealthy() },         // optional; e.g. GET MLXRuntimePlan.healthURL(port:)
-    handler: { _ = try await processor.process($0) })
+    jobHandler: { url, request in                  // request: carried by the job, every attempt
+        _ = try await processor.process(url, processExisting: requests.authorization(for: request)) })
+// Process Existing: queue.enqueue(url, processExisting: requests.request(for: target, madeIn: generationAtClick))
 for await status in await queue.statusUpdates() { menuBar.show(status) }
 ```
 For the toast, the handler calls `processor.processWithReport(url)` and feeds a `ScreenshotEvent` to a `ToastBatcher`
@@ -63,7 +66,7 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `.error` means held on `unauthorized`/`notConfigured`: show "Fix settings", call `resume()` after the user fixes them.
   - `QueueClock`/`SystemQueueClock`, `BackoffPolicy`, `TokenBucket`.
 - **Pipeline/**
-  - `ScreenshotProcessor`: `process(_:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`),
+  - `ScreenshotProcessor(snapshot:…)`: `process(_:processExisting:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`; `.awaitingConsent` = `UploadConsent.decide` refused),
     `undoLast()`, `undo(id:)`. Throws analyzer/preparer errors after recording `failed` in the index; the file is untouched.
     - `processWithReport(_:) -> ProcessingReport` (`originalURL`, `outcome`, `undoRecordID`): what the toast needs.
     - `rename(_:to:) -> ManualRenameResult` (toast "Edit name"): `FilenameSanitizer` + original extension + `FileOrganizer`
@@ -91,6 +94,29 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `SearchResultItem`: title (file stem), `subtitle(now:time:)` ("x.com · 5 min ago"), `accessibilityLabel(now:time:)`,
     `hashtags`, `metadata(time:)` (Source / Type / Taken / Folder). `IndexUnavailableError` → the error state.
   - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`.
+- **Setup/** (first-run setup; the app renders it)
+  - **`UploadConsent.decide(target:grants:capturedAt:processExisting:) -> UploadDecision`** (`Setup/UploadConsent.swift`):
+    THE consent decision (CODING_STANDARDS #2), pure. `.allow` for `UploadTarget.thisMac`; for `.cloudflare` /
+    `.customEndpoint(identity)` only when a grant covers the target AND (`capturedAt >= grantedAt` OR a
+    `ProcessExistingAuthorization` made for the same target); else `.skip(.destinationNotAllowed)` /
+    `.skip(.takenBeforeGrant)`. `decide(settings:capturedAt:processExisting:)` for the selected backend.
+    `effectiveCaptureTime(creationDate:modificationDate:nameDate:)` = the earliest, `.distantPast` when none (fails
+    closed); the name time is `ScreenshotDetector.captureDate(fromFilename:timeZone:)`; the processor reads a file's
+    dates (`effectiveCaptureTime(of:timeZone:)`) before and after preparing it and uses the earlier. `ScreenshotProcessor` is its
+    only file-level caller: on the `AnalyzerSnapshot` read once after preparing the image, right before `analyze`.
+    `ProcessExistingRequests` issues generation-stamped `ProcessExistingRequest`s and `invalidateAll()`s them on a
+    backend/endpoint/grant change; `ProcessingQueue.enqueue(_:processExisting:)` carries one with its job for every
+    attempt (retries, holds) and drops it when the job ends; a running job does not take on a later request. `UploadConsent.grant(for:in:)` is the shared matching rule.
+  - `BackendGate.readiness(settings:hasClairicToken:) -> BackendReadiness` (`.ready`, `.needsConsent`,
+    `.notConfigured(reason)`): what the UI shows and offers (the analyzer factory's hold, `mayWatch` for the folder
+    watcher, Process Existing refused unless ready). `consentRequest(for:) -> ConsentRequest?` +
+    `granting(_:expectedEndpoint:in:at:)` (rounded up to the next whole second) for Settings' confirmation. Grants:
+    `AppSettings.uploadGrants`, `CustomEndpointIdentity` (scheme + host + port).
+  - `SetupFlow` (5 `SetupStep`s, `showsBack`, `primary` title/enabled/`SetupPrimaryAction`, `advance()`, `back()`,
+    `choose(_:)`), `SetupCards.make(physicalMemoryBytes:)` (the two step-3 cards), `ClairicPricing.perThousandText()`,
+    `TryIt.apply(_:entry:to:)` (step 4 from a `ScreenshotEvent`), `ConnectionTestText.failure(_:backend:)`.
+- **Brand/**
+  - `IconGeometry.appIcon` / `.menuBarGlyph`: unit-square corners and sparkle of the app icon and the menu bar glyph.
 - **Settings/**
   - `AppSettings`: all settings with defaults; `encoded()` / `AppSettings.decode(_:)` (missing/bad keys → defaults).
     `showRenameToast` (default true) and `playRenameSound` (default false) drive the toast and the sound.

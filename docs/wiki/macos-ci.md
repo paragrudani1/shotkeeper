@@ -50,3 +50,10 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
   The Keychain tests ran (not skipped) on `macos-latest`.
 - 2026-11-21: `gh run view` lists ARTIFACTS a few seconds after the run completes; check the job log
   ("Artifact Shotkeeper-unsigned has been successfully uploaded") before concluding the upload failed.
+
+## Outages
+- 2026-11-21 ~20:07 UTC: from run 44944596470 on, every job of every run failed in about 2 s with no runner and
+  zero steps, including re-runs (PR #6, heads `80113d7` and `b9a7009`). The PAT gets 403 on billing and check
+  annotations, so the cause could not be read; an exhausted Actions minutes/spending limit is suspected (private
+  repo, macOS minutes count 10×). Reported to Parag; no workaround per AGENTS.md. Diagnose with the job's
+  `runner_name` empty and `steps` length 0 in `gh-shotkeeper api repos/paragrudani1/shotkeeper/actions/runs/<id>/jobs`.

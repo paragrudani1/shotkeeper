@@ -195,3 +195,246 @@ values clipped by the button row; spacing was tightened so a 2-line description 
 - Multi-screen placement.
 - VoiceOver reading rows, chips (selected state) and buttons.
 - The material look (snapshots draw an opaque background).
+
+## PR 3: first-run setup (branch `t3/ui-pr3-setup`)
+
+Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). App, gate wiring and snapshots: `65add2b`.
+
+### Core rules (Linux-tested, `SetupTests.swift`)
+- 2026-11-21 (`6afa5aa`): `SetupFlow` is the step machine. Back on steps 2–4 only. Primary button per step:
+  "Get Started"; "I Agree" (disabled until the box is ticked); step 3 "Continue" once the selected card's input is
+  complete, else "Skip" (the spec names no step-3 button; "Skip" is the user's "Skip on step 3"); step 4 "Skip"
+  while waiting or after a problem, "Continue" after a result or when no model is connected; "Finish".
+  Step 3 is complete for Clairic with an account ID and a token (typed now or already in the Keychain), for local
+  once the install was started (it finishes in the background).
+- 2026-11-21 (`6afa5aa`): consent gate = core `BackendGate`. Clairic and custom endpoints need account/token or
+  URL/model AND `hasSeenPrivacyNotice`; local needs nothing (nothing leaves the Mac). A custom endpoint on 127.0.0.1
+  still needs consent (the app cannot tell where a URL ends up). `AnalyzerFactory` now asks the gate instead of
+  repeating the checks. The flag keeps its name (no migration, so existing consents stay valid); it now means
+  "accepted", and only step 2's "I Agree" sets it. Before, the old single-page setup set it on "Use …" for any
+  backend, including local. *Superseded by the review fixes below (`4472f0b`): consent is per destination.*
+- 2026-11-21 (`6afa5aa`): the Clairic card's cost is computed, not copied: `ClairicPricing` = the measured
+  8,242 tokens for a 1280×800 screenshot ([clairic-field-schema](clairic-field-schema.md)) × $0.24/M (standard
+  price after the promo ends 2026-12-01) = $1.98 → **"About $2 for 1,000 screenshots"**. Deviation: the spec's
+  mockup says "$1"; the task said to compute it from the measured cost. It follows `maxImageLongSide`.
+- 2026-11-21 (`6afa5aa`): `SetupCards` words the two cards from `BackendRecommender` (recommendation by RAM as
+  before) and `ModelCatalog` (disk "about N GB" = download size rounded). 16–23 GB: Clairic [Recommended]
+  "Best for this Mac (16 GB)…", local [Experimental] "Private, but slow and lower quality on 16 GB…". ≥ 24 GB: local
+  [Recommended] (+ [Experimental] while the build is not verified with mlx-lm), Clairic "Fast, nothing to download…".
+  Below 16 GB the local card is shown disabled with "Needs a Mac with at least 16 GB of memory. This Mac has 8 GB."
+  A custom endpoint has no card; it stays in Settings → Model.
+- 2026-11-21 (`6afa5aa`): `TryIt` maps the coordinator's pipeline events (the same `ScreenshotEvent`s the toast
+  gets) to step 4: a processed file → result card (tags from the index row; a kept name shows "kept its name"
+  instead of a struck-through old name); a failed file, an excluded or a paused one → a readable problem while it
+  keeps waiting; missing/already indexed/restored files change nothing. A shown result stays.
+- 2026-11-21 (`6afa5aa`): `ConnectionTestText` maps Test Connection errors to sentences ("Cloudflare did not accept
+  the token. Check the account ID, and that the token has Workers AI Read and Edit permissions.", "Could not reach
+  Cloudflare…", HTTP 404 → "could not find this account"). Server messages never reach the text. Settings' test
+  buttons use it too.
+- 2026-11-21 (`6afa5aa`): `IconGeometry` holds the icon shape as unit-square numbers: squircle radius 22.5%, corner
+  stroke 5.6%, sparkle 27% (spec), corner inset 22% and arm 16% (not in the spec; chosen to match the mockup's
+  proportions). The menu bar glyph's PR 1 numbers moved into `IconGeometry.menuBarGlyph` unchanged. The icon fill is
+  #5856D6 in both appearances (an app icon does not follow dark mode). PR 4 should export the SVG and the asset
+  catalog from this type.
+
+### App
+- 2026-11-21 (`65add2b`): **watching waits for a usable backend.** The coordinator starts the folder watcher (and
+  re-queues `pending` rows) only when `BackendGate` says ready, re-checked after every settings or secret change.
+  Before, the watcher ran from launch and screenshots taken before setup waited in a held queue, to be uploaded
+  once credentials appeared. (Review fix `4472f0b`: a watcher started for Local still saw screenshots while the
+  user switched to Clairic before consenting; those are now skipped, see below.) Once started it keeps running for the session, so a token removed later still shows
+  "Needs attention" and the error toast. "Process Existing Screenshots…" also refuses before setup ("Finish setup
+  first: …"). While not watching, the menu shows an orange "Not watching yet" + the reason, and "Finish Setup…"
+  (also after consent when step 3 was skipped).
+- 2026-11-21 (`65add2b`): setup is `SetupView` + `SetupModel` over `SetupServices` (closures; `live` wires the
+  coordinator, snapshots pass fixed values). A fixed 720×520 window titled "Set Up Shotkeeper", opened at first
+  launch while `hasSeenPrivacyNotice` is false (as before), from the menu's "Finish Setup…" and from Settings →
+  General "Run setup again…" (moved there from the Model tab). Every open starts at step 1; a re-run pre-ticks
+  step 2's box, preselects the configured card and shows the current login-item setting.
+- 2026-11-21 (`65add2b`): the token is held only in the window's `tokenDraft` and goes to the Keychain on step 3's
+  Continue (`AppCoordinator.saveClairicSetup`); the draft is then cleared. Test Connection sends the typed account
+  ID and token with the generated test image only and stores nothing.
+- 2026-11-21 (`65add2b`): step 4 listens through `AppCoordinator.addEventObserver` (called from `handle(_:)`, next to
+  the toast), registered while the window is open. The rename toast still shows too. When step 3 was skipped (no
+  usable backend), step 4 shows "No model connected" with "Go Back to connect one, or do it later in Settings →
+  Model." and the primary button reads "Continue". With the local model downloading, the waiting zone shows the
+  download progress. The dashed zone is not a drop target: the spec only describes its look, and the result must
+  come from a real new screenshot.
+- 2026-11-21 (`65add2b`): keys. Return = primary (when enabled), Esc = Back on steps 2–4 (deviation: steps 1 and 5
+  have no Esc action; the window's close button closes). The cards are `Button`s with `.isSelected`; ←/→/↑/↓ switch
+  the card that has focus. As in every Mac app, Tab reaches buttons, checkboxes and the cards only with System
+  Settings → Keyboard → "Keyboard navigation" on; text fields are always in the Tab loop.
+- 2026-11-21 (`65add2b`): "Change Shortcut…" opens Settings → General (where PR 4's recorder goes), which now shows a
+  read-only "Search shortcut ⌥⌘S" row. `SettingsNavigation` switches the tab even when Settings is already open.
+- 2026-11-21 (`65add2b`): "Open Shotkeeper when I log in" is applied on Finish through `updateSettings`, which calls
+  `LaunchAtLogin` (SMAppService). It is on for a first run. A failure (app not in /Applications) shows as the menu
+  message, not in the closed window.
+- 2026-11-21 (`65add2b`): `AppIconView` (72 pt in step 1) and `MenuBarGlyphView` (step 5) are SwiftUI shapes over
+  `IconGeometry`; `MenuBarGlyph` (the status item's template image) draws the same geometry with AppKit.
+- 2026-11-21 (`65add2b`): text colours added for 4.5:1: error text light #C4281C / dark #FF7B72 (systemRed is 3.6:1
+  on white), warning text (Experimental badge, local note) light #8A4600 / dark #FFB340.
+
+### Review fixes (review of `80113d7`, commit `4472f0b`)
+- 2026-11-21: **consent per destination.** *Superseded 2026-11-22 (consent re-review, below): grants with a time and
+  an endpoint identity; step 2 grants nothing by itself.* New key `acceptedUploadDestinations` (`cloudflare`, `customEndpoint`) +
+  `acceptedCustomEndpointHost`. `BackendGate` checks the selected backend's destination; a custom endpoint only for
+  the allowed host (another host is asked again; the port does not matter). Step 2's "I Agree" grants `.cloudflare`
+  only (its text names Cloudflare) and still sets `hasSeenPrivacyNotice`, which now only means "setup's privacy step
+  was done" (setup opens at launch while false; the menu shows "Finish Setup…").
+- 2026-11-21: **upgrade.** *Superseded 2026-11-22: a custom endpoint is no longer migrated.* A settings file without the new key is migrated once at load: the old flag counts only
+  for the destination of the backend stored with it (Clairic → `.cloudflare`; custom → `.customEndpoint` for the
+  stored URL's host; Local → nothing, because the old setup set the flag for Local too). Once the key exists it is
+  never re-seeded. Test: `SettingsTests.testUpgradeSeedsConsentOnlyForTheStoredBackend`.
+- 2026-11-21: **skip, don't hold.** Without consent for the destination, `ScreenshotProcessor` returns
+  `.skipped(.awaitingConsent)` (like Pause: not indexed, file untouched) before reading the file. Before, the
+  analyzer threw `.notConfigured`, the queue held the file, and "I Agree" resumed the queue and uploaded a screenshot
+  taken before the consent (path: Local first so watching started, then Clairic). While watching with consent
+  missing, the menu says "Skipping new screenshots: sending them is not allowed yet" + "Finish Setup…".
+  A skipped file can still be processed later by an explicit "Process Existing Screenshots…" after consent.
+- 2026-11-21: **Settings → Model confirmation.** While the selected backend's destination is not allowed, Model shows
+  "Screenshots will be sent to gpu-box.lan. Nothing is sent until you allow it." + "Allow…", which opens a
+  confirmation naming the destination (core `BackendGate.consentPrompt`). It opens by itself when the backend is
+  switched; while a URL is typed only the row updates (no dialog per keystroke). Clairic can be allowed there too
+  (the dialog names "your Cloudflare account"), for users who chose Local in setup and switch later.
+- 2026-11-21: **step 4 timing.** `SetupFlow.tryItOpenedAt` is set when step 4 opens; `TryIt.apply` ignores a
+  processed file whose index `capturedAt` (or a failed file whose creation date) is more than 5 s
+  (`TryIt.slack`) before it, so a backlog file finishing then is not shown as "your" screenshot. An unknown date
+  is not a reason to hide a result or a problem.
+- 2026-11-21: **Return on step 3.** "Skip" is a secondary button without the default action
+  (`SetupPrimaryButton.isDefaultAction`); Return in a field moves to the next empty field (Account ID → token).
+  Once the card is complete, "Continue" is the default again.
+- 2026-11-21: **re-run with a custom endpoint**: a third card "Custom endpoint — Keeps using <host>" is shown and
+  preselected, and Continue keeps it, so Return no longer switches the backend to Clairic.
+- 2026-11-21: nits. The VoiceOver announcement goes to the setup window (after ⌘⇧4 another app is key), else the
+  app. Each Test Connection run is tagged; editing the account ID or token drops the running result. The Keychain
+  is read once per `credentialsRevision`, not per render. On a re-run the login checkbox shows the real login item
+  (`SMAppService` status), and Finish applies it every time (`LaunchAtLogin.apply`, no-op when it already matches).
+  Space ticks the checkboxes on steps 2 and 5 (`keyboardShortcut(.space, modifiers: [])`; those steps have no text
+  field). The unavailable card's reason is primary text (secondary measured ~3.9:1 on the card in light mode).
+- 2026-11-21: **restart during a local download.** The download runs in the app; quitting stops it. After a
+  restart the model shows "Not installed" (no completion marker), screenshots are held with "Needs attention: …not
+  installed", and Settings → Model → "Install and download" continues: `hf download` resumes the files already on
+  disk ([app-implementation](app-implementation.md)). Setup does not reopen for it. No automatic resume yet.
+- 2026-11-21 (deviation, narrowed): without "Keyboard navigation", "Change Shortcut…" on step 5 and the Settings
+  "Allow…" button are reachable only with the mouse or VoiceOver; Return, Esc, Space (checkboxes) and the text
+  fields work without it.
+
+### Snapshot review of the review fixes (run 44949751528, head `67c2f63`, first macOS compile of `4472f0b`: green)
+- 2026-11-22: measured contrast in `setup-3-8gb` (pixels): the unavailable card's reason is now 14.3:1 light /
+  11.7:1 dark. But system `.secondary` text measured 3.8–3.9:1 on white in light mode (welcome body 3.94, footer
+  "Step 1 of 5" 3.81, selected card subtitle 3.84 on its indigo tint, unavailable card title 3.94), below the spec's
+  4.5:1. Setup now uses `Brand.secondaryText` (primary label colour at 72%: ~6:1 light, ~8:1 dark) for secondary
+  text; icons keep `.secondary` (non-text, 3:1). The toast, menu, search and settings views still use system
+  `.secondary`: open for PR 4 (accessibility).
+- 2026-11-22: `setup-3-custom-rerun` fits three cards; the host wraps inside the narrow card ("gpu-box.lan").
+  `menu-setup-unfinished` now shows a real reason ("Cloudflare account ID is not set") instead of a fixture string.
+
+### Consent re-review fixes (review of `4472f0b`; commit `7a605ef`, macOS build fix `4202a98`, test fixes `9a57edc`; green run 44974939592)
+- 2026-11-22: **one choke point with a grant time.** `AppSettings.uploadGrants` replaces the set: one
+  `UploadGrant(destination, grantedAt, endpoint)` per destination. `ScreenshotProcessor` returns
+  `.skipped(.awaitingConsent)` when the selected backend's destination is not allowed OR the file's `capturedAt`
+  (creation date) is before the grant (`BackendGate.mayAnalyze`). This closes the blocker (jobs held by Local "not
+  installed" resumed by the Clairic rebuild after "I Agree" + Continue, and uploaded; same for an offline custom
+  endpoint A replaced by B) and the re-event path (a Preview save or moving the file back re-queues a file skipped
+  before consent). Granting again keeps the first time; a new custom endpoint gets a new time.
+- 2026-11-22: **Process Existing** is an explicit user action on existing files: the coordinator marks those paths
+  (`explicitRequests`, removed once processed) and the processor skips the time rule for them
+  (`explicitlyRequested`), never the destination rule. The confirmation text says so.
+- 2026-11-22: **endpoint identity** = scheme + lowercased host + effective port (`CustomEndpointIdentity`); the prompt
+  shows `host:port`, with `http://` when not TLS ("Screenshots will be sent to http://gpu-box.lan:8080"). "Allow"
+  grants exactly the endpoint the dialog named (`granting(_:expectedEndpoint:)`); a mismatch grants nothing.
+- 2026-11-22: **upgrade**: only `hasSeenPrivacyNotice` + a stored Clairic backend becomes a Cloudflare grant, dated
+  `.distantPast`. A custom endpoint is not migrated (Settings asks once); Local grants nothing.
+- 2026-11-22: **step 2 grants nothing.** "I Agree" records the privacy step (`hasSeenPrivacyNotice`); Cloudflare is
+  allowed when step 3 then saves Clairic (`saveClairicSetup`, only after step 2). Chosen over skipping step 2 on a
+  re-run because it is one rule for first runs and re-runs: picking Local or keeping Custom never grants Cloudflare.
+  Deviation from the spec's "consent is stored only after this step": it is stored at step 3's Continue, which
+  cannot be reached without step 2's "I Agree".
+- 2026-11-22: step 4 slack is 1 s (`TryIt.slack`): the file is created after ⌘⇧4, so its date cannot be earlier than
+  the step; 1 s only absorbs clock rounding.
+- 2026-11-22: Test Connection's grants live on the candidate copy only; a test asserts nothing is saved.
+- 2026-11-22: lessons from the first macOS run of `7a605ef`: a test that needs the local backend to *hold* a job
+  must give it a real image (a 3-byte "PNG" fails in the image preparer, which is a final failure, not a hold);
+  on a re-run step 2's box is ticked only when Cloudflare was allowed before, so a Custom user ticks it again.
+  The re-run's custom card names the endpoint like the dialog ("Keeps using http://gpu-box.lan:8080").
+
+### Consent choke point (review 3 of `9a57edc`; commit `a86feb3`, green run 44977927655)
+Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they differ (they stay as the record).
+- 2026-11-22: **one decision, one file.** `UploadConsent.decide(target:grants:capturedAt:processExisting:) ->
+  UploadDecision` in `Sources/ShotkeeperCore/Setup/UploadConsent.swift` is the only place that decides whether a
+  file may go to a destination. Pure: `.allow` for `UploadTarget.thisMac`; a cloud target only when a grant covers
+  it (custom: same scheme + host + port) AND the file was taken at/after `grantedAt`, or a Process Existing request
+  was made for that same target. `BackendGate.mayAnalyze` is gone; `BackendGate` (readiness, watcher gate, Settings
+  prompt, granting) only drives the UI and matches grants through the same `UploadConsent.grant(for:in:)`. Kept as
+  cheap defense in depth: the analyzer factory's "Needs attention" hold without a grant, `mayWatch`, Process Existing
+  refused unless ready. Tests: `UploadConsentTests` (every review path, upgrade, clock edges).
+- 2026-11-22: **atomic snapshot (B2).** The coordinator keeps `AnalyzerSnapshot(analyzer, settings)` in one
+  `LockedValue`, replaced whole on every rebuild (and with the new settings on other changes). `ScreenshotProcessor`
+  reads it once after hashing and preparing the image, decides on it, then analyzes with that pair's analyzer and
+  uses its settings for rename/move/Finder; nothing is written for a refused file. An early decision on the snapshot
+  at the start only avoids reading and indexing files that cannot go anywhere. Test: a preparer that switches Local →
+  Clairic mid-job (`testSwitchingToACloudBackendWhilePreparingDoesNotSendTheFile`), plus revoke and Clairic → Local.
+- 2026-11-22: **Process Existing (B1).** Each request is `ProcessExistingAuthorization(target:)`, the target selected
+  at the click (`ProcessExistingRequests`, core). The queue handler `take`s the path's request when a run starts, so
+  it is gone after that run whatever the outcome (processed, skipped, failed, held). All requests are cleared when
+  the backend, endpoint URL or grants change; a `generation` check drops requests if that happens during the folder
+  scan. Consequence: a Process Existing file that gets 429/5xx or a hold is retried under the normal time rule and
+  skipped if it predates the grant; it stays unindexed, so the next Process Existing offers it again. Fails closed.
+- 2026-11-22: **capture time for consent** = the earlier of the creation date and the time in the screenshot name
+  (`ScreenshotDetector.captureDate(fromFilename:timeZone:)`: first `yyyy-MM-dd`, then `h.mm.ss`; AM/PM, 午前/午後,
+  上午/下午, 오전/오후), so a copy, download or AirDrop of an old screenshot is not "new". Neither readable:
+  `.distantPast` (fails closed). The index, toast and Pause keep the old best guess (creation, modification, now()).
+- 2026-11-22: nits. Grants are rounded UP to the next whole second (settings store whole seconds). The Settings
+  dialog presents the `ConsentRequest` captured on "Allow…" (`confirmationDialog(_:isPresented:presenting:)`), so
+  its text and "Allow" do not follow later edits. `saveClairicSetup(accountID:token:agreedThisRun:)` grants Cloudflare
+  only for this setup run's "I Agree" (`SetupModel.agreedThisRun`), not the saved `hasSeenPrivacyNotice`.
+
+- 2026-11-22 (review 4 of `a86feb3`, approved; commit `0d844e4`, green run 44979988085): **a Process Existing request lasts the whole job.**
+  Supersedes "taken when a run starts" above: `ProcessingQueue.enqueue(_:processExisting:)` carries the
+  generation-stamped `ProcessExistingRequest` with the job and hands it to every attempt (a 429 retry or a hold no
+  longer loses it); it is dropped when the job ends, and a running job does not take on a second request, so nothing
+  is left for a later run (S1, S2). `ProcessExistingRequests.invalidateAll()` on a backend/endpoint/grant change makes
+  every earlier request count as none at the next attempt. A change during the folder scan queues nothing: "The
+  destination changed. Run Process Existing again." Capture time for consent now also includes the modification date
+  (archives, `rsync -t`), the processor reads the dates again after preparing and uses the earlier read, and the name's
+  time uses `TimeZone.autoupdatingCurrent`. `BackendGate.hasUploadConsent` derives from `UploadTarget`.
+
+### What CI cannot check (Parag, on a real Mac)
+- First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
+  app (no Dock icon) while it is open.
+- Return = primary, Esc = Back; Return in the token field continues. With "Keyboard navigation" on: Tab reaches the
+  cards, checkboxes and buttons, Space selects a card, ←/→ switch cards; VoiceOver reads "selected" on the chosen card,
+  "Setup progress, Step 3 of 5" on the dots.
+- Test Connection with a real account ID and token (success line), with a wrong token (red text).
+- Continue: the token is in the Keychain (Keychain Access, service `dev.shotkeeper.Shotkeeper`), then a ⌘⇧4
+  screenshot shows the result card in step 4 (and the toast). Before setup is done, a screenshot is not renamed
+  and the menu says "Not watching yet".
+- Local on a 16 GB Mac: Install and Download, progress, Cancel; Continue while it downloads; step 4's download line.
+- "Change Shortcut…" brings Settings → General to the front over setup; "Run setup again…" there opens step 1.
+- "Open Shotkeeper when I log in": with the app in /Applications, it appears in System Settings → General → Login Items.
+- The 72 pt icon and the menu bar glyph in step 5 look sharp on a Retina screen.
+- (review fixes) Step 3 with an empty token: Return in Account ID moves to the token field and does not skip.
+  Space ticks the step 2 and step 5 checkboxes with "Keyboard navigation" off.
+- (review fixes) Settings → Model → Custom with a URL: the "Screenshots will be sent to <host>" dialog appears;
+  nothing is renamed before "Allow"; changing the host asks again.
+- (consent re-review) Close setup without agreeing, pick Local in Settings (not installed), take a screenshot, then run
+  setup: I Agree, Clairic, Continue. The earlier screenshot keeps its name; a new one is renamed.
+- (consent re-review) Open a screenshot taken before Clairic was allowed in Preview and save it: it keeps its name.
+  "Process Existing Screenshots…" does rename it (an explicit request).
+- (choke point) Pick Local (not installed), choose "Process Existing Screenshots…" (all held "not installed"), then
+  run setup: I Agree, Clairic, Continue. None of those screenshots is renamed. "Process Existing" again on Clairic
+  renames them.
+- (choke point) AirDrop or download an old screenshot (name keeps its date) after Clairic was allowed: it keeps its
+  name. A new ⌘⇧4 screenshot is renamed.
+- (choke point) Settings → Model → switch to Custom with a URL: the dialog opens by itself naming the endpoint;
+  Cancel, then "Allow…" opens it again with the same text; "Allow" removes the orange row.
+- (review fixes) Upgrade from a build with the old setup (upgraded users only): a Clairic user keeps working
+  without being asked again; a user whose stored backend was Local or Custom is asked once when they use Clairic or
+  their endpoint.
+- (review fixes) A VoiceOver announcement "It works…" when the step 4 result appears while another app is in front.
+
+### Snapshot review
+- 2026-11-21: run 44945029445 (21 setup/icon images × light/dark) matched the spec except the 8 GB state: the
+  unavailable local card was a disabled button, and its reason text was dimmed twice to unreadable. It is now a
+  plain view with secondary text; VoiceOver reads "…, not available on this Mac. Needs a Mac with at least 16 GB…".
+  The `menu-setup-unfinished` fixture now shows the "Not watching yet" header the real menu shows.

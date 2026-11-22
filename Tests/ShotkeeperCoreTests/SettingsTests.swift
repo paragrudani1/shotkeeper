@@ -15,8 +15,35 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(s.maxImageLongSide, 1280)
         XCTAssertEqual(s.excludeRules, ExcludeRules())
         XCTAssertFalse(s.hasSeenPrivacyNotice)
+        XCTAssertEqual(s.uploadGrants, [])
         XCTAssertTrue(s.showRenameToast)
         XCTAssertFalse(s.playRenameSound)
+    }
+
+    /// Files from before per-destination consent: the old flag counts only for the stored backend's destination.
+    func testUpgradeSeedsConsentOnlyForTheStoredBackend() throws {
+        func decode(_ backend: String, flag: Bool, url: String? = nil) -> AppSettings {
+            let urlField = url.map { ",\"customEndpointURL\":\"\($0)\"" } ?? ""
+            return AppSettings.decode(Data("{\"backend\":\"\(backend)\",\"hasSeenPrivacyNotice\":\(flag)\(urlField)}".utf8))
+        }
+        let clairic = decode("clairic", flag: true)
+        XCTAssertEqual(clairic.uploadGrants, [AppSettings.UploadGrant(destination: .cloudflare, grantedAt: .distantPast)],
+                       "an upgraded Clairic user keeps working; .distantPast covers screenshots already sent")
+        XCTAssertTrue(clairic.hasSeenPrivacyNotice, "setup does not open again")
+
+        let local = decode("localInkling", flag: true)
+        XCTAssertEqual(local.acceptedUploadDestinations, [], "the old setup set the flag for local too: no upload consent")
+        XCTAssertTrue(local.hasSeenPrivacyNotice)
+
+        let custom = decode("customEndpoint", flag: true, url: "http://LLM.lan:8080/v1")
+        XCTAssertEqual(custom.uploadGrants, [], "a custom endpoint is not migrated: Settings asks once, naming it")
+
+        XCTAssertEqual(decode("clairic", flag: false).uploadGrants, [])
+
+        // Once the key exists it is the truth: an emptied list is not re-seeded from the old flag.
+        var saved = clairic
+        saved.uploadGrants = []
+        XCTAssertEqual(AppSettings.decode(try saved.encoded()).uploadGrants, [])
     }
 
     func testSettingsFileFromBeforeTheToastSettingsStillDecodes() throws {
@@ -74,6 +101,11 @@ final class SettingsTests: XCTestCase {
         s.clairicAccountID = "abc123"
         s.excludeRules.pause(for: 600, from: Date(timeIntervalSince1970: 1_800_000_000))
         s.hasSeenPrivacyNotice = true
+        s.uploadGrants = [
+            .init(destination: .cloudflare, grantedAt: Date(timeIntervalSince1970: 1_800_000_000)),
+            .init(destination: .customEndpoint, grantedAt: Date(timeIntervalSince1970: 1_800_000_100),
+                  endpoint: CustomEndpointIdentity(url: URL(string: "http://127.0.0.1:8080/v1"))),
+        ]
         XCTAssertEqual(AppSettings.decode(try s.encoded()), s)
         XCTAssertFalse(String(decoding: try s.encoded(), as: UTF8.self).lowercased().contains("token"), "no secrets in settings")
     }

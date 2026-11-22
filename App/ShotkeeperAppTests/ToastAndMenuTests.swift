@@ -234,11 +234,22 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
     func testMenuStateFromCoordinator() {
         let coordinator = makeCoordinator()
         let state = MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S", version: "0.1.0")
-        XCTAssertEqual(state.status.dot, .green)
-        XCTAssertEqual(state.status.detail, "Idle · 0 screenshots in the index")
+        // A fresh install watches nothing until setup chose a usable backend.
+        XCTAssertEqual(state.status, MenuStatusSummary(dot: .orange, headline: "Not watching yet",
+                                                       detail: "Cloudflare account ID is not set"))
         XCTAssertEqual(state.undoTitle, "Undo")
         XCTAssertFalse(state.canUndo)
         XCTAssertTrue(state.showsFinishSetup)
         XCTAssertNil(state.download)
+
+        // Consent given but the backend step skipped: still "Finish Setup…".
+        coordinator.acceptPrivacyStep()
+        XCTAssertTrue(MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S").showsFinishSetup)
+
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
+        let ready = MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S", version: "0.1.0")
+        XCTAssertEqual(ready.status.dot, .green)
+        XCTAssertEqual(ready.status.detail, "Idle · 0 screenshots in the index")
+        XCTAssertFalse(ready.showsFinishSetup)
     }
 }

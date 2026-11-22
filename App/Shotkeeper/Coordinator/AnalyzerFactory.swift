@@ -70,12 +70,11 @@ enum AnalyzerFactory {
     static func make(settings: AppSettings, credentials: any CredentialStore,
                      localRuntime: (any LocalModelServing)?,
                      physicalMemoryBytes: UInt64 = SystemInfo.physicalMemoryBytes) -> any ScreenshotAnalyzer {
+        // Account/token/URL/model checks are core `BackendGate`. Its consent check here only gives the "Needs
+        // attention" hold and costs nothing; whether a file is sent is decided by `UploadConsent.decide` in the
+        // processor (CODING_STANDARDS #2).
         switch settings.backend {
         case .clairic:
-            let accountID = settings.clairicAccountID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !accountID.isEmpty else {
-                return UnconfiguredAnalyzer(backendID: "clairic", reason: "Cloudflare account ID is not set")
-            }
             let token: String
             do {
                 token = (try credentials.secret(for: .cloudflareAPIToken) ?? "")
@@ -83,22 +82,22 @@ enum AnalyzerFactory {
             } catch {
                 return UnconfiguredAnalyzer(backendID: "clairic", reason: "Could not read the API token from the Keychain")
             }
-            guard !token.isEmpty else {
-                return UnconfiguredAnalyzer(backendID: "clairic", reason: "Cloudflare API token is not set")
+            let readiness = BackendGate.readiness(settings: settings, hasClairicToken: !token.isEmpty)
+            if let reason = BackendGate.reason(for: readiness) {
+                return UnconfiguredAnalyzer(backendID: "clairic", reason: reason)
             }
-            guard settings.hasSeenPrivacyNotice else { return awaitingConsent(backendID: "clairic") }
+            let accountID = settings.clairicAccountID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return CloudflareClairicAnalyzer(credentials: ClairicCredentials(accountID: accountID, apiToken: token))
 
         case .customEndpoint:
-            guard let url = settings.customEndpointURL, let scheme = url.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https", url.host != nil else {
+            let readiness = BackendGate.readiness(settings: settings, hasClairicToken: false)
+            if let reason = BackendGate.reason(for: readiness) {
+                return UnconfiguredAnalyzer(backendID: "local-openai", reason: reason)
+            }
+            guard let url = settings.customEndpointURL else {
                 return UnconfiguredAnalyzer(backendID: "local-openai", reason: "Custom endpoint URL is not set")
             }
             let model = settings.customModelName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !model.isEmpty else {
-                return UnconfiguredAnalyzer(backendID: "local-openai", reason: "Custom endpoint model name is not set")
-            }
-            guard settings.hasSeenPrivacyNotice else { return awaitingConsent(backendID: "local-openai") }
             let key = (try? credentials.secret(for: .customEndpointAPIKey))?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return LocalOpenAICompatibleAnalyzer(configuration: .init(
@@ -111,14 +110,6 @@ enum AnalyzerFactory {
             return ManagedLocalAnalyzer(variant: localVariant(for: settings, physicalMemoryBytes: physicalMemoryBytes),
                                         runtime: runtime)
         }
-    }
-
-    static let consentReason = "Finish setup to accept where screenshots are sent (menu → Finish Setup…)"
-
-    /// Backends that send screenshots off this Mac stay held until setup's privacy notice was accepted, even when
-    /// Settings already holds working credentials: nothing leaves the Mac before that.
-    private static func awaitingConsent(backendID: String) -> UnconfiguredAnalyzer {
-        UnconfiguredAnalyzer(backendID: backendID, reason: consentReason)
     }
 
     /// The saved variant, else the recommender's local pick, else the smallest build (the user chose local anyway).

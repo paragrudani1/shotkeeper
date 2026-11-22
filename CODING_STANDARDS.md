@@ -11,3 +11,5 @@ Judgement calls a reviewer enforces. Mechanical rules belong in CI, not here.
 4. **Core stays portable and tested.** `ShotkeeperCore` imports Foundation only; each behaviour has a unit test that runs without network.
 5. **Local processes stay local.** Anything the app launches binds `127.0.0.1`, is stopped on quit, and is identified before it is signalled.
 6. **Decisions are recorded.** A behaviour change that a later agent must know about gets a dated line in `docs/wiki/`.
+7. **UI works on a real Mac, not just in CI.** Panel, keyboard, Quick Look, pasteboard and drag code is checked against
+   `docs/wiki/appkit-gotchas.md`. Every spec requirement in `docs/specs/` is met or has a dated deviation with a reason in the wiki.
