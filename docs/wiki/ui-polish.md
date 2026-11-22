@@ -358,6 +358,37 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   on a re-run step 2's box is ticked only when Cloudflare was allowed before, so a Custom user ticks it again.
   The re-run's custom card names the endpoint like the dialog ("Keeps using http://gpu-box.lan:8080").
 
+### Consent choke point (review 3 of `9a57edc`; commit `a86feb3`, green run 44977927655)
+Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they differ (they stay as the record).
+- 2026-11-22: **one decision, one file.** `UploadConsent.decide(target:grants:capturedAt:processExisting:) ->
+  UploadDecision` in `Sources/ShotkeeperCore/Setup/UploadConsent.swift` is the only place that decides whether a
+  file may go to a destination. Pure: `.allow` for `UploadTarget.thisMac`; a cloud target only when a grant covers
+  it (custom: same scheme + host + port) AND the file was taken at/after `grantedAt`, or a Process Existing request
+  was made for that same target. `BackendGate.mayAnalyze` is gone; `BackendGate` (readiness, watcher gate, Settings
+  prompt, granting) only drives the UI and matches grants through the same `UploadConsent.grant(for:in:)`. Kept as
+  cheap defense in depth: the analyzer factory's "Needs attention" hold without a grant, `mayWatch`, Process Existing
+  refused unless ready. Tests: `UploadConsentTests` (every review path, upgrade, clock edges).
+- 2026-11-22: **atomic snapshot (B2).** The coordinator keeps `AnalyzerSnapshot(analyzer, settings)` in one
+  `LockedValue`, replaced whole on every rebuild (and with the new settings on other changes). `ScreenshotProcessor`
+  reads it once after hashing and preparing the image, decides on it, then analyzes with that pair's analyzer and
+  uses its settings for rename/move/Finder; nothing is written for a refused file. An early decision on the snapshot
+  at the start only avoids reading and indexing files that cannot go anywhere. Test: a preparer that switches Local →
+  Clairic mid-job (`testSwitchingToACloudBackendWhilePreparingDoesNotSendTheFile`), plus revoke and Clairic → Local.
+- 2026-11-22: **Process Existing (B1).** Each request is `ProcessExistingAuthorization(target:)`, the target selected
+  at the click (`ProcessExistingRequests`, core). The queue handler `take`s the path's request when a run starts, so
+  it is gone after that run whatever the outcome (processed, skipped, failed, held). All requests are cleared when
+  the backend, endpoint URL or grants change; a `generation` check drops requests if that happens during the folder
+  scan. Consequence: a Process Existing file that gets 429/5xx or a hold is retried under the normal time rule and
+  skipped if it predates the grant; it stays unindexed, so the next Process Existing offers it again. Fails closed.
+- 2026-11-22: **capture time for consent** = the earlier of the creation date and the time in the screenshot name
+  (`ScreenshotDetector.captureDate(fromFilename:timeZone:)`: first `yyyy-MM-dd`, then `h.mm.ss`; AM/PM, 午前/午後,
+  上午/下午, 오전/오후), so a copy, download or AirDrop of an old screenshot is not "new". Neither readable:
+  `.distantPast` (fails closed). The index, toast and Pause keep the old best guess (creation, modification, now()).
+- 2026-11-22: nits. Grants are rounded UP to the next whole second (settings store whole seconds). The Settings
+  dialog presents the `ConsentRequest` captured on "Allow…" (`confirmationDialog(_:isPresented:presenting:)`), so
+  its text and "Allow" do not follow later edits. `saveClairicSetup(accountID:token:agreedThisRun:)` grants Cloudflare
+  only for this setup run's "I Agree" (`SetupModel.agreedThisRun`), not the saved `hasSeenPrivacyNotice`.
+
 ### What CI cannot check (Parag, on a real Mac)
 - First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
   app (no Dock icon) while it is open.
@@ -380,6 +411,13 @@ Core: `6afa5aa` (`Sources/ShotkeeperCore/Setup/`, `Brand/IconGeometry.swift`). A
   setup: I Agree, Clairic, Continue. The earlier screenshot keeps its name; a new one is renamed.
 - (consent re-review) Open a screenshot taken before Clairic was allowed in Preview and save it: it keeps its name.
   "Process Existing Screenshots…" does rename it (an explicit request).
+- (choke point) Pick Local (not installed), choose "Process Existing Screenshots…" (all held "not installed"), then
+  run setup: I Agree, Clairic, Continue. None of those screenshots is renamed. "Process Existing" again on Clairic
+  renames them.
+- (choke point) AirDrop or download an old screenshot (name keeps its date) after Clairic was allowed: it keeps its
+  name. A new ⌘⇧4 screenshot is renamed.
+- (choke point) Settings → Model → switch to Custom with a URL: the dialog opens by itself naming the endpoint;
+  Cancel, then "Allow…" opens it again with the same text; "Allow" removes the orange row.
 - (review fixes) Upgrade from a build with the old setup (upgraded users only): a Clairic user keeps working
   without being asked again; a user whose stored backend was Local or Custom is asked once when they use Clairic or
   their endpoint.
