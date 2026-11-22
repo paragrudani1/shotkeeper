@@ -133,6 +133,7 @@ func describe(_ error: AnalyzerError) -> String {
     case .badRequest(let s, let m): return s == 0 ? "rejected before sending: \(m)" : "bad request \(s): \(m)"
     case .invalidResponse(let m): return "invalid response: \(m)"
     case .notConfigured(let m): return "not configured: \(m)"
+    case .accountState(let m): return "account: \(m)"
     }
 }
 
@@ -251,7 +252,7 @@ let context = AnalysisContext(originalFilename: fileURL.lastPathComponent,
 print("Image: \(fileURL.lastPathComponent) \(image.mimeType) \(image.pixelWidth)x\(image.pixelHeight), \(data.count) bytes (sent as-is)")
 if options.backend == "openrouter" {
     print("Backend: OpenRouter \(options.model ?? OpenRouterBackend.defaultModel), reasoning \(fmt(OpenRouterBackend.reasoningOff)), "
-          + "provider \(fmt(OpenRouterBackend.providerRouting))")
+          + "provider \(fmt(OpenRouterBackend.providerRouting(model: OpenRouterBackend.effectiveModel(options.model)))))")
 }
 if options.backend == "clairic" {
     let tokens = ClairicFieldSchema.estimatedImageTokens(width: image.pixelWidth, height: image.pixelHeight)
@@ -290,7 +291,7 @@ do {
 } catch let e as AnalyzerError {
     if options.backend != "clairic" { printChatUsage(recorder.allBodies) }
     if let path = options.rawPath, !recorder.allBodies.isEmpty { try? saveRaw(recorder.allBodies, to: path, backend: options.backend) }
-    fail("Analysis failed (\(analyzer.backendID)): \(describe(e))")
+    fail(scrub("Analysis failed (\(analyzer.backendID)): \(describe(e))"))
 } catch {
-    fail("Analysis failed (\(analyzer.backendID)): \(error)")
+    fail(scrub("Analysis failed (\(analyzer.backendID)): \(error)"))
 }

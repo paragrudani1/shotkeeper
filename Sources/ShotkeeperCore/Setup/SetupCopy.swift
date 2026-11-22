@@ -71,6 +71,9 @@ public struct SetupCards: Equatable, Sendable {
 
     public func card(for backend: AppSettings.Backend) -> SetupModelCard? { all.first { $0.backend == backend } }
 
+    /// Columns of the step 3 layout: up to three cards in one row, four in two rows of two.
+    public var columns: Int { all.count > 3 ? 2 : all.count }
+
     /// - Parameter customEndpointHost: the configured custom endpoint's host when it is the current backend.
     /// - Parameter openRouterPrice: `OpenRouterPricing.perThousandText()`; nil (not measured) hides the price.
     public static func make(physicalMemoryBytes: UInt64, catalog: [ModelVariant] = ModelCatalog.all,
@@ -132,13 +135,6 @@ public enum ConnectionTestText {
     public static let sending = "Sending a test image…"
     public static let success = "Connected. The test image was analyzed."
 
-    /// HTTP 402: OpenRouter's "insufficient credits" (docs/research/openrouter.md, "Errors").
-    static func outOfCredits(backend: AppSettings.Backend) -> String {
-        backend == .openRouter
-            ? "OpenRouter is out of credits. Add credits at openrouter.ai/settings/credits, then try again."
-            : "The server says the account is out of credits (HTTP 402)."
-    }
-
     /// A short, readable sentence for a failed test.
     public static func failure(_ error: any Error, backend: AppSettings.Backend) -> String {
         guard let error = error as? AnalyzerError else { return UserFacingError.problem(for: error).sentence }
@@ -154,6 +150,8 @@ public enum ConnectionTestText {
         switch error {
         case .notConfigured(let reason):
             return UserFacingProblem(message: reason).sentence
+        case .accountState(let message):
+            return UserFacingProblem(message: message).sentence
         case .unauthorized:
             if backend == .openRouter { return "OpenRouter did not accept the API key. Check the key at openrouter.ai/keys." }
             return isClairic
@@ -172,7 +170,6 @@ public enum ConnectionTestText {
             return "\(server) had a problem (HTTP \(status)). Try again in a minute."
         case .badRequest(let status, _):
             if status == 0 { return "The test image could not be sent." }
-            if status == 402 { return outOfCredits(backend: backend) }
             if isClairic, status == 404 {
                 return "Cloudflare could not find this account (HTTP 404). Check the account ID."
             }

@@ -52,9 +52,11 @@ final class UploadConsentTests: XCTestCase {
 
     /// OpenRouter is its own destination: neither Cloudflare nor a custom endpoint grant covers it, nor the other way.
     func testOpenRouterNeedsItsOwnGrant() {
-        let openRouter = AppSettings.UploadGrant(destination: .openRouter, grantedAt: grantedAt)
-        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [], capturedAt: after), .skip(.destinationNotAllowed))
-        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [cloudflare, custom(endpointA)], capturedAt: after),
+        let openRouter = AppSettings.UploadGrant(destination: .openRouter, grantedAt: grantedAt,
+                                                 openRouterModel: OpenRouterBackend.defaultModel)
+        let defaultModel = UploadTarget.openRouter(model: OpenRouterBackend.defaultModel)
+        XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [], capturedAt: after), .skip(.destinationNotAllowed))
+        XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [cloudflare, custom(endpointA)], capturedAt: after),
                        .skip(.destinationNotAllowed), "Cloudflare or a custom endpoint does not cover OpenRouter")
         XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [openRouter], capturedAt: after),
                        .skip(.destinationNotAllowed), "OpenRouter does not cover Cloudflare")
@@ -62,21 +64,75 @@ final class UploadConsentTests: XCTestCase {
         let customAtOpenRouter = CustomEndpointIdentity(scheme: "https", host: "openrouter.ai", port: 443)
         XCTAssertEqual(UploadConsent.decide(target: .customEndpoint(customAtOpenRouter), grants: [openRouter], capturedAt: after),
                        .skip(.destinationNotAllowed))
-        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: after), .allow)
-        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: before),
+        XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [openRouter], capturedAt: after), .allow)
+        XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [openRouter], capturedAt: before),
                        .skip(.takenBeforeGrant(grantedAt: grantedAt)), "the time rule applies as for Cloudflare")
-        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: before,
-                                            processExisting: ProcessExistingAuthorization(target: .openRouter)), .allow)
-        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: before,
+        XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [openRouter], capturedAt: before,
+                                            processExisting: ProcessExistingAuthorization(target: defaultModel)), .allow)
+        XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [openRouter], capturedAt: before,
                                             processExisting: ProcessExistingAuthorization(target: .cloudflare)),
                        .skip(.takenBeforeGrant(grantedAt: grantedAt)), "Process Existing for another target lifts nothing")
+    }
+
+    /// S1: an OpenRouter grant covers one model; another model has other providers and needs its own "Allow…".
+    func testAnOpenRouterGrantCoversOnlyItsModel() {
+        var settings = AppSettings()
+        settings.backend = .openRouter
+        settings = BackendGate.granting(.openRouter, expectedOpenRouterModel: OpenRouterBackend.defaultModel,
+                                        in: settings, at: grantedAt)
+        XCTAssertEqual(UploadConsent.decide(settings: settings, capturedAt: after), .allow)
+
+        // Changing the model invalidates consent.
+        settings.openRouterModel = "vendor/other-model"
+        XCTAssertEqual(UploadConsent.decide(settings: settings, capturedAt: after), .skip(.destinationNotAllowed))
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false, hasOpenRouterKey: true), .needsConsent)
+        XCTAssertEqual(BackendGate.consentRequest(for: settings)?.prompt,
+                       "Screenshots will be sent to OpenRouter, then to the provider that serves vendor/other-model")
+
+        // Every prefix of a model ID typed (and saved) one key at a time is a model of its own: none inherits.
+        let typed = "thinkingmachines/inkling-2-mini-20261120"
+        for end in typed.indices.dropFirst() {
+            settings.openRouterModel = String(typed[..<end])
+            guard OpenRouterBackend.effectiveModel(settings.openRouterModel) != OpenRouterBackend.defaultModel else { continue }
+            XCTAssertEqual(UploadConsent.decide(settings: settings, capturedAt: after), .skip(.destinationNotAllowed),
+                           settings.openRouterModel ?? "")
+        }
+
+        // The other model gets its own grant; the default model's grant stays, with its first time.
+        settings.openRouterModel = "vendor/other-model"
+        let later = grantedAt.addingTimeInterval(3_600)
+        XCTAssertEqual(BackendGate.granting(.openRouter, expectedOpenRouterModel: OpenRouterBackend.defaultModel,
+                                            in: settings, at: later), settings, "Allow for a model no longer configured grants nothing")
+        settings = BackendGate.granting(.openRouter, expectedOpenRouterModel: "vendor/other-model", in: settings, at: later)
+        XCTAssertEqual(UploadConsent.decide(settings: settings, capturedAt: grantedAt.addingTimeInterval(10)),
+                       .skip(.takenBeforeGrant(grantedAt: later)))
+        settings.openRouterModel = nil
+        XCTAssertEqual(BackendGate.activeGrant(settings)?.grantedAt, grantedAt, "back on the default model: its original grant")
+        XCTAssertEqual(UploadConsent.decide(settings: settings, capturedAt: after), .allow)
+        XCTAssertEqual(settings.uploadGrants.filter { $0.destination == .openRouter }.count, 2)
+
+        // A grant without a model (none is ever written so) covers nothing.
+        let modelless = AppSettings.UploadGrant(destination: .openRouter, grantedAt: .distantPast)
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter(model: OpenRouterBackend.defaultModel), grants: [modelless],
+                                            capturedAt: after), .skip(.destinationNotAllowed))
+        // Process Existing for one model lifts nothing for another.
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter(model: "vendor/other-model"), grants: settings.uploadGrants,
+                                            capturedAt: .distantPast,
+                                            processExisting: ProcessExistingAuthorization(target: .openRouter(
+                                                model: OpenRouterBackend.defaultModel))),
+                       .skip(.takenBeforeGrant(grantedAt: later)))
     }
 
     func testTheTargetFollowsTheSelectedBackend() {
         var settings = AppSettings()
         XCTAssertEqual(UploadTarget(settings: settings), .cloudflare)
         settings.backend = .openRouter
-        XCTAssertEqual(UploadTarget(settings: settings), .openRouter)
+        XCTAssertEqual(UploadTarget(settings: settings), .openRouter(model: "thinkingmachines/inkling-2-mini"))
+        settings.openRouterModel = "  "
+        XCTAssertEqual(UploadTarget(settings: settings), .openRouter(model: "thinkingmachines/inkling-2-mini"), "blank = default")
+        settings.openRouterModel = " vendor/other "
+        XCTAssertEqual(UploadTarget(settings: settings), .openRouter(model: "vendor/other"))
+        settings.openRouterModel = nil
         settings.backend = .localInkling
         XCTAssertEqual(UploadTarget(settings: settings), .thisMac)
         settings.backend = .customEndpoint

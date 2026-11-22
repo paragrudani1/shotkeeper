@@ -7,8 +7,9 @@ public enum UploadTarget: Hashable, Sendable {
     case thisMac
     /// The user's Cloudflare account (Clairic).
     case cloudflare
-    /// OpenRouter (`OpenRouterBackend.host`), and through it the model's provider.
-    case openRouter
+    /// OpenRouter (`OpenRouterBackend.host`) for this model (`OpenRouterBackend.effectiveModel`), and through it the
+    /// model's provider. Consent for one model does not cover another (another model, other providers).
+    case openRouter(model: String)
     /// A custom OpenAI-compatible endpoint.
     case customEndpoint(CustomEndpointIdentity)
     /// A custom endpoint whose URL is not http(s) with a host. It has no identity, so it can never be allowed.
@@ -22,7 +23,7 @@ public enum UploadTarget: Hashable, Sendable {
         case .clairic:
             self = .cloudflare
         case .openRouter:
-            self = .openRouter
+            self = .openRouter(model: OpenRouterBackend.effectiveModel(settings.openRouterModel))
         case .customEndpoint:
             self = CustomEndpointIdentity(url: settings.customEndpointURL).map { .customEndpoint($0) } ?? .unidentifiedEndpoint
         }
@@ -60,15 +61,16 @@ public enum UploadSkipReason: Equatable, Sendable {
 /// matching rule, and only decides what the UI offers.
 public enum UploadConsent {
     /// The grant that covers `target`, nil when none does. A custom endpoint is covered only by a grant naming the
-    /// same identity; the local model and an unidentified endpoint have none.
+    /// same identity, OpenRouter only by a grant naming the same model; the local model and an unidentified endpoint
+    /// have none.
     public static func grant(for target: UploadTarget, in grants: [AppSettings.UploadGrant]) -> AppSettings.UploadGrant? {
         switch target {
         case .thisMac, .unidentifiedEndpoint:
             return nil
         case .cloudflare:
             return grants.first { $0.destination == .cloudflare }
-        case .openRouter:
-            return grants.first { $0.destination == .openRouter }
+        case .openRouter(let model):
+            return grants.first { $0.destination == .openRouter && $0.openRouterModel == model }
         case .customEndpoint(let identity):
             return grants.first { $0.destination == .customEndpoint && $0.endpoint == identity }
         }

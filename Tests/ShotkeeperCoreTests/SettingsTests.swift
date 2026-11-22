@@ -42,7 +42,7 @@ final class SettingsTests: XCTestCase {
         // OpenRouter did not exist before per-destination consent: old settings never grant it, whatever they hold.
         for old in [clairic, local, custom, decode("openRouter", flag: true)] {
             XCTAssertNil(old.grant(for: .openRouter))
-            XCTAssertNil(UploadConsent.grant(for: .openRouter, in: old.uploadGrants))
+            XCTAssertNil(UploadConsent.grant(for: .openRouter(model: OpenRouterBackend.defaultModel), in: old.uploadGrants))
         }
 
         // Once the key exists it is the truth: an emptied list is not re-seeded from the old flag.
@@ -139,7 +139,8 @@ final class SettingsTests: XCTestCase {
             .init(destination: .cloudflare, grantedAt: Date(timeIntervalSince1970: 1_800_000_000)),
             .init(destination: .customEndpoint, grantedAt: Date(timeIntervalSince1970: 1_800_000_100),
                   endpoint: CustomEndpointIdentity(url: URL(string: "http://127.0.0.1:8080/v1"))),
-            .init(destination: .openRouter, grantedAt: Date(timeIntervalSince1970: 1_800_000_200)),
+            .init(destination: .openRouter, grantedAt: Date(timeIntervalSince1970: 1_800_000_200),
+                  openRouterModel: "thinkingmachines/inkling-2-mini-20261120"),
         ]
         XCTAssertEqual(AppSettings.decode(try s.encoded()), s)
         var openRouter = AppSettings()

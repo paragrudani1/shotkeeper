@@ -159,18 +159,22 @@ final class BackendGateTests: XCTestCase {
         settings.uploadGrants = [AppSettings.cloudflareSinceEver]
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: true, hasOpenRouterKey: true), .needsConsent,
                        "Cloudflare's consent is not OpenRouter's")
+        let model = OpenRouterBackend.defaultModel
         XCTAssertEqual(BackendGate.consentRequest(for: settings),
                        ConsentRequest(prompt: "Screenshots will be sent to OpenRouter, then to Prime Intellect or io.net",
-                                      destination: .openRouter, endpoint: nil))
+                                      destination: .openRouter, endpoint: nil, openRouterModel: model))
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        settings = BackendGate.granting(.openRouter, in: settings, at: now)
-        XCTAssertEqual(settings.grant(for: .openRouter), AppSettings.UploadGrant(destination: .openRouter, grantedAt: now))
+        XCTAssertEqual(BackendGate.granting(.openRouter, in: settings, at: now), settings, "Allow must name the model")
+        settings = BackendGate.granting(.openRouter, expectedOpenRouterModel: model, in: settings, at: now)
+        XCTAssertEqual(settings.grant(for: .openRouter),
+                       AppSettings.UploadGrant(destination: .openRouter, grantedAt: now, openRouterModel: model))
         XCTAssertNotNil(settings.grant(for: .cloudflare), "granting OpenRouter keeps the Cloudflare grant")
         XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false, hasOpenRouterKey: true), .ready)
         XCTAssertTrue(BackendGate.mayWatch(settings: settings, hasClairicToken: false, hasOpenRouterKey: true))
         XCTAssertFalse(BackendGate.mayWatch(settings: settings, hasClairicToken: false))
         XCTAssertNil(BackendGate.consentRequest(for: settings))
-        XCTAssertEqual(BackendGate.granting(.openRouter, in: settings, at: now.addingTimeInterval(60)).grant(for: .openRouter)?.grantedAt,
+        XCTAssertEqual(BackendGate.granting(.openRouter, expectedOpenRouterModel: model, in: settings,
+                                            at: now.addingTimeInterval(60)).grant(for: .openRouter)?.grantedAt,
                        now, "granting again keeps the first time")
         XCTAssertTrue(BackendGate.sendsScreenshotsOffThisMac(.openRouter))
         XCTAssertEqual(BackendGate.destination(of: .openRouter), .openRouter)
@@ -385,20 +389,54 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertFalse(flow.back(), "Finish has no Back")
     }
 
-    func testOpenRouterContinuesWithAKeyAndTheCheckbox() {
+    func testOpenRouterHasOneAgreeAndContinueButton() {
         var flow = SetupFlow(settings: AppSettings(), cards: cards16)
         flow.advance(); flow.consentChecked = true; flow.advance()
         XCTAssertTrue(flow.choose(.openRouter))
         XCTAssertEqual(flow.primaryAction(), .skipConnection)
         flow.inputs.hasOpenRouterKeyDraft = true
-        XCTAssertEqual(flow.primaryAction(), .skipConnection, "a key alone is not enough: step 2 named Cloudflare only")
-        flow.inputs.openRouterAcknowledged = true
-        XCTAssertEqual(flow.primary, SetupPrimaryButton(title: "Continue", isEnabled: true, action: .saveConnection(.openRouter)))
+        XCTAssertEqual(flow.primary, SetupPrimaryButton(title: "Agree and Continue", isEnabled: true,
+                                                        action: .saveConnection(.openRouter)))
+        XCTAssertTrue(flow.primary.isDefaultAction, "Return presses it")
         flow.inputs.hasOpenRouterKeyDraft = false
         flow.inputs.hasSavedOpenRouterKey = true
         XCTAssertEqual(flow.primaryAction(), .saveConnection(.openRouter), "a saved key counts")
-        flow.inputs.openRouterAcknowledged = false
-        XCTAssertEqual(flow.primaryAction(), .skipConnection)
+        flow.choose(.clairic)
+        flow.inputs.accountID = "acct"
+        flow.inputs.hasTokenDraft = true
+        XCTAssertEqual(flow.primary.title, "Continue", "only OpenRouter's button carries the agreement")
+    }
+
+    func testArrowKeysMoveInRowsAndColumns() {
+        // One row (three cards): ←/→ and ↑/↓ step through it, wrapping.
+        var flow = SetupFlow(settings: AppSettings(), cards: cards16)
+        XCTAssertEqual(flow.cards.columns, 3)
+        XCTAssertTrue(flow.choose(moving: .right)); XCTAssertEqual(flow.choice, .openRouter)
+        XCTAssertTrue(flow.choose(moving: .down)); XCTAssertEqual(flow.choice, .localInkling)
+        XCTAssertTrue(flow.choose(moving: .right)); XCTAssertEqual(flow.choice, .clairic, "wraps")
+        XCTAssertTrue(flow.choose(moving: .left)); XCTAssertEqual(flow.choice, .localInkling)
+
+        // Two rows of two (re-run with a custom endpoint): Clairic OpenRouter / Local Custom.
+        var settings = AppSettings()
+        settings.hasSeenPrivacyNotice = true
+        var grid = SetupFlow(settings: settings, cards: SetupCards.make(physicalMemoryBytes: 16 * gb, customEndpointHost: "llm.lan"))
+        XCTAssertEqual(grid.cards.columns, 2)
+        XCTAssertEqual(grid.choice, .clairic)
+        XCTAssertTrue(grid.choose(moving: .down)); XCTAssertEqual(grid.choice, .localInkling, "↓ goes to the next row")
+        XCTAssertTrue(grid.choose(moving: .right)); XCTAssertEqual(grid.choice, .customEndpoint, "→ stays in the row")
+        XCTAssertTrue(grid.choose(moving: .right)); XCTAssertEqual(grid.choice, .localInkling, "wraps within the row")
+        XCTAssertTrue(grid.choose(moving: .up)); XCTAssertEqual(grid.choice, .clairic)
+        XCTAssertTrue(grid.choose(moving: .up)); XCTAssertEqual(grid.choice, .localInkling, "wraps within the column")
+        grid.choose(.openRouter)
+        XCTAssertTrue(grid.choose(moving: .down)); XCTAssertEqual(grid.choice, .customEndpoint)
+
+        // An unavailable card is skipped; with nothing else in that column, nothing moves.
+        var small = SetupFlow(settings: settings, cards: SetupCards.make(physicalMemoryBytes: 8 * gb, customEndpointHost: "llm.lan"))
+        XCTAssertFalse(small.choose(moving: .down), "Local is unavailable on 8 GB")
+        XCTAssertEqual(small.choice, .clairic)
+        XCTAssertTrue(small.choose(moving: .right)); XCTAssertEqual(small.choice, .openRouter)
+        XCTAssertTrue(small.choose(moving: .down)); XCTAssertEqual(small.choice, .customEndpoint)
+        XCTAssertFalse(small.choose(moving: .left), "the only other card in that row is unavailable")
     }
 
     func testSavedTokenIsEnoughForClairic() {

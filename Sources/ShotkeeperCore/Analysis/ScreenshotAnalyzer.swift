@@ -53,11 +53,16 @@ public enum AnalyzerError: Error, Equatable, Sendable {
     case invalidResponse(String)
     /// Backend not configured (no credentials / no endpoint).
     case notConfigured(String)
+    /// The account or model is in a state only the user can change: out of credits, a spending limit reached, no
+    /// provider allowed to serve the model. Holds the queue like `unauthorized` until Resume; never retried by
+    /// itself. The text is Shotkeeper's own sentence (e.g. "OpenRouter is out of credits. Add credits, then choose
+    /// Resume"), never a server message.
+    case accountState(String)
 
     public var isRetryable: Bool {
         switch self {
         case .unreachable, .rateLimited, .serverError: return true
-        case .unauthorized, .badRequest, .invalidResponse, .notConfigured: return false
+        case .unauthorized, .badRequest, .invalidResponse, .notConfigured, .accountState: return false
         }
     }
 }

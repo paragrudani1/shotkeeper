@@ -23,9 +23,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         /// The custom OpenAI-compatible endpoint named in the grant (`UploadGrant.endpoint`). Granted by the
         /// Settings → Model confirmation that names it.
         case customEndpoint
-        /// OpenRouter (`openrouter.ai`), which passes screenshots on to the model's provider (Prime Intellect or
-        /// io.net). Granted when setup's step 3 saves OpenRouter after step 2's "I Agree", or by the Settings → Model
-        /// confirmation. Never granted by the legacy-consent migration.
+        /// OpenRouter (`openrouter.ai`) for one model (`UploadGrant.openRouterModel`), which passes screenshots on to
+        /// that model's provider (Prime Intellect or io.net for the default model). Granted by setup step 3's
+        /// "Agree and Continue" or by the Settings → Model confirmation, for the model they name. Never granted by
+        /// the legacy-consent migration.
         case openRouter
     }
 
@@ -34,13 +35,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public struct UploadGrant: Codable, Equatable, Sendable {
         public var destination: UploadDestination
         public var grantedAt: Date
-        /// The endpoint allowed, for `.customEndpoint`; nil for Cloudflare and OpenRouter.
+        /// The endpoint allowed, for `.customEndpoint`; nil otherwise.
         public var endpoint: CustomEndpointIdentity?
+        /// The model allowed, for `.openRouter` (`OpenRouterBackend.effectiveModel`); nil otherwise. A grant without
+        /// one covers no model.
+        public var openRouterModel: String?
 
-        public init(destination: UploadDestination, grantedAt: Date, endpoint: CustomEndpointIdentity? = nil) {
+        public init(destination: UploadDestination, grantedAt: Date, endpoint: CustomEndpointIdentity? = nil,
+                    openRouterModel: String? = nil) {
             self.destination = destination
             self.grantedAt = grantedAt
             self.endpoint = endpoint
+            self.openRouterModel = openRouterModel
         }
     }
 
@@ -76,7 +82,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// upload consent any more (2026-11-21): that is `acceptedUploadDestinations`.
     public var hasSeenPrivacyNotice: Bool = false
     /// Destinations the user allowed, with when. Empty = nothing may leave this Mac. At most one grant per
-    /// destination. Settings files written before this key existed are migrated once in `init(from:)`.
+    /// destination, except OpenRouter: one per model, so going back to a model keeps its first grant time. Settings files written before this key existed are migrated once in `init(from:)`.
     public var uploadGrants: [UploadGrant] = []
 
     /// The allowed destinations (whatever endpoint or time).

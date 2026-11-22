@@ -211,6 +211,28 @@ final class ProcessingQueueTests: XCTestCase {
         XCTAssertEqual(failed, 0)
     }
 
+    /// Out of credits / a spending limit (OpenRouter 402 without Retry-After, 403 budget): an account state the user
+    /// fixes on the provider's site. The queue holds with Shotkeeper's own text and Resume continues.
+    func testAccountStateHoldsUntilResume() async {
+        for text in [OpenRouterBackend.outOfCreditsText, OpenRouterBackend.spendingLimitText] {
+            let (handler, calls) = scripted([AnalyzerError.accountState(text)])
+            let queue = makeQueue(handler, clock: FakeClock())
+            await queue.enqueue(a)
+            await queue.enqueue(b)
+            let held = QueueStatus.error(text)
+            let status = await waitForStatus(queue) { $0 == held }
+            XCTAssertEqual(status, held)
+            await settle()
+            XCTAssertEqual(calls.get, [a], "held: nothing else runs, nothing is marked failed")
+            await queue.resume()
+            await queue.waitUntilIdle()
+            XCTAssertEqual(calls.get, [a, a, b])
+            let failed = await queue.failedCount
+            XCTAssertEqual(failed, 0)
+        }
+        XCTAssertEqual(OpenRouterBackend.outOfCreditsText, "OpenRouter is out of credits. Add credits, then choose Resume")
+    }
+
     /// Changing the rate must not drop or release queued jobs: a paused queue stays paused with its jobs.
     func testSetRequestsPerMinuteKeepsPauseAndJobsAndAppliesTheNewRate() async {
         let (handler, calls) = scripted([])

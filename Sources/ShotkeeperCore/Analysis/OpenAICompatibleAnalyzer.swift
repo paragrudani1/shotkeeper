@@ -19,8 +19,8 @@ public struct OpenAICompatibleProfile: Sendable, Equatable {
     public enum TitleConfidence: Sendable, Equatable {
         /// 1.0 when the reply parsed as JSON, 0.6 when it had to be closed (truncated) or repaired.
         case fixed
-        /// The title tokens' per-token probability from `choices[0].logprobs` (`TitleTokenConfidence`); `.fixed`
-        /// when the reply carries no logprobs.
+        /// The title tokens' per-token probability from `choices[0].logprobs` (`TitleTokenConfidence`); 0.7
+        /// (`OpenAICompatibleAnalyzer.unmeasuredConfidence`) when the reply carries none, 0.6 when repaired.
         case tokenLogprobs
     }
 
@@ -96,6 +96,9 @@ public final class OpenAICompatibleAnalyzer: ScreenshotAnalyzer {
         }
     }
 
+    /// `.tokenLogprobs` profile, JSON parsed but no logprobs to measure the title with.
+    public static let unmeasuredConfidence = 0.7
+
     public let configuration: Configuration
     private let transport: any HTTPTransport
     /// Flips to false (for the lifetime of this instance) after a server rejects the optional parameters.
@@ -126,9 +129,10 @@ public final class OpenAICompatibleAnalyzer: ScreenshotAnalyzer {
             let confidence: Double
             if extraction.wasTruncated {
                 confidence = 0.6
-            } else if profile.titleConfidence == .tokenLogprobs, let tokens = first.tokenLogprobs,
-                      let measured = TitleTokenConfidence.confidence(tokens: tokens) {
-                confidence = measured
+            } else if profile.titleConfidence == .tokenLogprobs {
+                // No logprobs back (or no title among them): parsed, but unmeasured, so below a measured "sure".
+                confidence = first.tokenLogprobs.flatMap { TitleTokenConfidence.confidence(tokens: $0) }
+                    ?? Self.unmeasuredConfidence
             } else {
                 confidence = 1.0
             }
@@ -328,7 +332,8 @@ public final class OpenAICompatibleAnalyzer: ScreenshotAnalyzer {
         // `choices[].logprobs.content[]` = `{token, logprob, bytes, top_logprobs}` (openrouter.md, "Logprobs").
         let logprobs = choice?["logprobs"]?["content"]?.arrayValue?.compactMap { item -> TokenLogprob? in
             guard let token = item["token"]?.stringValue, let logprob = item["logprob"]?.doubleValue else { return nil }
-            return TokenLogprob(token: token, logprob: logprob)
+            let bytes = item["bytes"]?.arrayValue?.compactMap { $0.intValue }.compactMap { UInt8(exactly: $0) }
+            return TokenLogprob(token: token, logprob: logprob, bytes: (bytes?.isEmpty ?? true) ? nil : bytes)
         }
         return Completion(content: content, tokenLogprobs: (logprobs?.isEmpty ?? true) ? nil : logprobs,
                           promptTokens: root["usage"]?["prompt_tokens"]?.intValue)
