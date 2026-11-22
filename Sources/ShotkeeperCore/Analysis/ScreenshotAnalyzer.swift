@@ -30,7 +30,7 @@ public struct AnalysisContext: Sendable, Equatable {
 }
 
 /// The one seam between the pipeline and a model backend. Implementations:
-/// `CloudflareClairicAnalyzer` (primary, cloud) and `LocalOpenAICompatibleAnalyzer` (optional, on-device).
+/// `CloudflareClairicAnalyzer` (primary, cloud) and `OpenAICompatibleAnalyzer` (optional, on-device).
 public protocol ScreenshotAnalyzer: Sendable {
     /// Stable id for logs/index, e.g. "clairic" or "local-openai".
     var backendID: String { get }

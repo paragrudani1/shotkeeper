@@ -23,9 +23,9 @@ private let goodJSON = """
  "key_text": "Let's ship on the 24th", "date_mentioned": "2026-11-24"}
 """
 
-final class LocalOpenAICompatibleAnalyzerTests: XCTestCase {
-    private func analyzer(_ transport: ScriptedTransport, base: String = "http://127.0.0.1:8080") -> LocalOpenAICompatibleAnalyzer {
-        LocalOpenAICompatibleAnalyzer(
+final class OpenAICompatibleAnalyzerTests: XCTestCase {
+    private func analyzer(_ transport: ScriptedTransport, base: String = "http://127.0.0.1:8080") -> OpenAICompatibleAnalyzer {
+        OpenAICompatibleAnalyzer(
             configuration: .init(baseURL: URL(string: base)!, model: "mlx-community/Inkling-2-Mini-4bit"),
             transport: transport)
     }
@@ -73,13 +73,13 @@ final class LocalOpenAICompatibleAnalyzerTests: XCTestCase {
     }
 
     func testURLJoiningAndAPIKey() throws {
-        XCTAssertEqual(LocalOpenAICompatibleAnalyzer.chatCompletionsURL(base: URL(string: "http://localhost:1234/v1/")!).absoluteString,
+        XCTAssertEqual(OpenAICompatibleAnalyzer.chatCompletionsURL(base: URL(string: "http://localhost:1234/v1/")!).absoluteString,
                        "http://localhost:1234/v1/chat/completions")
-        XCTAssertEqual(LocalOpenAICompatibleAnalyzer.chatCompletionsURL(base: URL(string: "http://localhost:11434")!).absoluteString,
+        XCTAssertEqual(OpenAICompatibleAnalyzer.chatCompletionsURL(base: URL(string: "http://localhost:11434")!).absoluteString,
                        "http://localhost:11434/v1/chat/completions")
-        XCTAssertEqual(LocalOpenAICompatibleAnalyzer.chatCompletionsURL(
+        XCTAssertEqual(OpenAICompatibleAnalyzer.chatCompletionsURL(
             base: URL(string: "http://h/custom/v1/chat/completions")!).absoluteString, "http://h/custom/v1/chat/completions")
-        let a = LocalOpenAICompatibleAnalyzer(configuration: .init(baseURL: URL(string: "http://h")!, model: "m", apiKey: "k"),
+        let a = OpenAICompatibleAnalyzer(configuration: .init(baseURL: URL(string: "http://h")!, model: "m", apiKey: "k"),
                                               transport: ScriptedTransport([]))
         XCTAssertEqual(try a.makeRequest(messages: [], includeExtras: true).value(forHTTPHeaderField: "Authorization"), "Bearer k")
         XCTAssertEqual(a.producedBy, "local:m")
@@ -177,8 +177,8 @@ final class LocalOpenAICompatibleAnalyzerTests: XCTestCase {
 
     func testContentAsPartsArray() throws {
         let body = #"{"choices":[{"message":{"role":"assistant","content":[{"type":"text","text":"{\"title\":"},{"type":"text","text":"\"X\"}"}]}}]}"#
-        XCTAssertEqual(try LocalOpenAICompatibleAnalyzer.messageContent(from: Data(body.utf8)), #"{"title":"X"}"#)
-        XCTAssertThrowsError(try LocalOpenAICompatibleAnalyzer.messageContent(from: Data(#"{"error":"x"}"#.utf8)))
+        XCTAssertEqual(try OpenAICompatibleAnalyzer.messageContent(from: Data(body.utf8)), #"{"title":"X"}"#)
+        XCTAssertThrowsError(try OpenAICompatibleAnalyzer.messageContent(from: Data(#"{"error":"x"}"#.utf8)))
     }
 
     // MARK: Server capability fallback
@@ -231,7 +231,7 @@ final class LocalOpenAICompatibleAnalyzerTests: XCTestCase {
     }
 
     func testEmptyModelIsNotConfigured() async {
-        let a = LocalOpenAICompatibleAnalyzer(configuration: .init(baseURL: URL(string: "http://h")!, model: " "),
+        let a = OpenAICompatibleAnalyzer(configuration: .init(baseURL: URL(string: "http://h")!, model: " "),
                                               transport: ScriptedTransport([]))
         await assertAnalyzerErrorCase({ _ = try await a.analyze(samplePNG(), context: sampleContext) }) {
             if case .notConfigured = $0 { return true } else { return false }

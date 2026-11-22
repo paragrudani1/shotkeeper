@@ -1,0 +1,32 @@
+{
+  "id": "gen-1795300001-QrStUvWxYzAbCdEf",
+  "object": "chat.completion",
+  "created": 1795300001,
+  "model": "thinkingmachines/inkling-2-mini",
+  "system_fingerprint": null,
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "logprobs": null,
+      "message": {
+        "role": "assistant",
+        "content": "{\"title\": \"GitHub pull request review\", \"source_app_or_site\": \"GitHub\", \"content_type\": \"code\", \"description\": \"A pull request review with two comments on a Swift file.\", \"tags\": [\"github\", \"code review\", \"swift\"], \"key_text\": \"Consider guarding against an empty model name here.\", \"date_mentioned\": null}",
+        "reasoning": null
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1390,
+    "completion_tokens": 71,
+    "total_tokens": 1461,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "cost": 0.00012555,
+    "is_byok": false
+  }
+}

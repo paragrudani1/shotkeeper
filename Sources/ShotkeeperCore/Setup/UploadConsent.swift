@@ -1,12 +1,14 @@
 import Foundation
 
-/// Where one job would send a screenshot, named the way consent is given: the user's Cloudflare account, one custom
-/// endpoint identity (scheme + host + port), or nowhere (the local model).
+/// Where one job would send a screenshot, named the way consent is given: the user's Cloudflare account, OpenRouter,
+/// one custom endpoint identity (scheme + host + port), or nowhere (the local model).
 public enum UploadTarget: Hashable, Sendable {
     /// The local model: nothing leaves this Mac.
     case thisMac
     /// The user's Cloudflare account (Clairic).
     case cloudflare
+    /// OpenRouter (`OpenRouterBackend.host`), and through it the model's provider.
+    case openRouter
     /// A custom OpenAI-compatible endpoint.
     case customEndpoint(CustomEndpointIdentity)
     /// A custom endpoint whose URL is not http(s) with a host. It has no identity, so it can never be allowed.
@@ -19,6 +21,8 @@ public enum UploadTarget: Hashable, Sendable {
             self = .thisMac
         case .clairic:
             self = .cloudflare
+        case .openRouter:
+            self = .openRouter
         case .customEndpoint:
             self = CustomEndpointIdentity(url: settings.customEndpointURL).map { .customEndpoint($0) } ?? .unidentifiedEndpoint
         }
@@ -63,6 +67,8 @@ public enum UploadConsent {
             return nil
         case .cloudflare:
             return grants.first { $0.destination == .cloudflare }
+        case .openRouter:
+            return grants.first { $0.destination == .openRouter }
         case .customEndpoint(let identity):
             return grants.first { $0.destination == .customEndpoint && $0.endpoint == identity }
         }

@@ -18,8 +18,9 @@ public enum SetupPrimaryAction: Equatable, Sendable {
     /// allowed only when step 3 then saves Clairic, so a re-run that keeps Local or a custom endpoint, or a user who
     /// picks Local, never gets a silent Cloudflare grant.
     case acceptConsent
-    /// Step 3 "Continue": save the chosen backend (the token goes to the Keychain now, never earlier); for Clairic
-    /// this is when `.cloudflare` is allowed (only reachable after step 2's "I Agree").
+    /// Step 3 "Continue": save the chosen backend (the token or key goes to the Keychain now, never earlier); for
+    /// Clairic this is when `.cloudflare` is allowed, for OpenRouter `.openRouter` (only reachable after step 2's
+    /// "I Agree").
     case saveConnection(AppSettings.Backend)
     /// Step 3 "Skip": change nothing; step 4 then shows that no model is connected.
     case skipConnection
@@ -52,13 +53,28 @@ public struct SetupConnectionInputs: Equatable, Sendable {
     public var hasTokenDraft: Bool
     public var hasSavedToken: Bool
     public var localModel: SetupLocalModelState
+    /// An OpenRouter key typed in step 3 / saved in the Keychain.
+    public var hasOpenRouterKeyDraft: Bool
+    public var hasSavedOpenRouterKey: Bool
+    /// Step 3's OpenRouter checkbox: "I understand that my screenshots are sent to OpenRouter and then to Prime
+    /// Intellect or io.net." Step 2 names Cloudflare only, so OpenRouter needs its own acknowledgement.
+    public var openRouterAcknowledged: Bool
 
     public init(accountID: String = "", hasTokenDraft: Bool = false, hasSavedToken: Bool = false,
-                localModel: SetupLocalModelState = .notInstalled) {
+                localModel: SetupLocalModelState = .notInstalled, hasOpenRouterKeyDraft: Bool = false,
+                hasSavedOpenRouterKey: Bool = false, openRouterAcknowledged: Bool = false) {
         self.accountID = accountID
         self.hasTokenDraft = hasTokenDraft
         self.hasSavedToken = hasSavedToken
         self.localModel = localModel
+        self.hasOpenRouterKeyDraft = hasOpenRouterKeyDraft
+        self.hasSavedOpenRouterKey = hasSavedOpenRouterKey
+        self.openRouterAcknowledged = openRouterAcknowledged
+    }
+
+    /// OpenRouter can be saved: a key (typed now or saved earlier) and the checkbox ticked.
+    public var openRouterComplete: Bool {
+        (hasOpenRouterKeyDraft || hasSavedOpenRouterKey) && openRouterAcknowledged
     }
 
     /// Clairic can be saved: an account ID and a token (typed now or saved earlier).
@@ -118,6 +134,7 @@ public struct SetupFlow: Equatable, Sendable {
             let complete: Bool
             switch choice {
             case .clairic: complete = inputs.clairicComplete
+            case .openRouter: complete = inputs.openRouterComplete
             case .localInkling: complete = inputs.localComplete
             case .customEndpoint: complete = true // keeps the endpoint configured in Settings
             }

@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": 402,
+    "message": "Your account or API key has insufficient credits. Add more credits and retry the request.",
+    "metadata": {
+      "limit_source": "openrouter_credits",
+      "remedy_hint": "Add credits at https://openrouter.ai/settings/credits."
+    }
+  }
+}

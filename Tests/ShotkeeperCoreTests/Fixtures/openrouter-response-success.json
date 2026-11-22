@@ -1,0 +1,760 @@
+{
+  "id": "gen-1795300000-AbCdEfGhIjKlMnOp",
+  "object": "chat.completion",
+  "created": 1795300000,
+  "model": "thinkingmachines/inkling-2-mini",
+  "system_fingerprint": null,
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "{\"title\": \"Stripe invoice for October\", \"source_app_or_site\": \"Stripe\", \"content_type\": \"receipt\", \"description\": \"A Stripe invoice for October 2026 with a total of $48.00 due on November 15.\", \"tags\": [\"invoice\", \"stripe\", \"billing\", \"october\"], \"key_text\": \"Invoice #INV-2041 Total due $48.00\", \"date_mentioned\": \"2026-11-15\"}"
+      },
+      "logprobs": {
+        "content": [
+          {
+            "token": "{\"",
+            "logprob": -0.0001,
+            "bytes": [
+              123,
+              34
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "title",
+            "logprob": -0.0001,
+            "bytes": [
+              116,
+              105,
+              116,
+              108,
+              101
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\": \"",
+            "logprob": -0.0002,
+            "bytes": [
+              34,
+              58,
+              32,
+              34
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "Stripe",
+            "logprob": -0.02,
+            "bytes": [
+              83,
+              116,
+              114,
+              105,
+              112,
+              101
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " invoice",
+            "logprob": -0.15,
+            "bytes": [
+              32,
+              105,
+              110,
+              118,
+              111,
+              105,
+              99,
+              101
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " for",
+            "logprob": -0.3,
+            "bytes": [
+              32,
+              102,
+              111,
+              114
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " October",
+            "logprob": -0.05,
+            "bytes": [
+              32,
+              79,
+              99,
+              116,
+              111,
+              98,
+              101,
+              114
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\", \"so",
+            "logprob": -0.01,
+            "bytes": [
+              34,
+              44,
+              32,
+              34,
+              115,
+              111
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "urce_a",
+            "logprob": -0.01,
+            "bytes": [
+              117,
+              114,
+              99,
+              101,
+              95,
+              97
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "pp_or_",
+            "logprob": -0.01,
+            "bytes": [
+              112,
+              112,
+              95,
+              111,
+              114,
+              95
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "site\":",
+            "logprob": -0.01,
+            "bytes": [
+              115,
+              105,
+              116,
+              101,
+              34,
+              58
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " \"Stri",
+            "logprob": -0.01,
+            "bytes": [
+              32,
+              34,
+              83,
+              116,
+              114,
+              105
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "pe\", \"",
+            "logprob": -0.01,
+            "bytes": [
+              112,
+              101,
+              34,
+              44,
+              32,
+              34
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "conten",
+            "logprob": -0.01,
+            "bytes": [
+              99,
+              111,
+              110,
+              116,
+              101,
+              110
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "t_type",
+            "logprob": -0.01,
+            "bytes": [
+              116,
+              95,
+              116,
+              121,
+              112,
+              101
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\": \"re",
+            "logprob": -0.01,
+            "bytes": [
+              34,
+              58,
+              32,
+              34,
+              114,
+              101
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "ceipt\"",
+            "logprob": -0.01,
+            "bytes": [
+              99,
+              101,
+              105,
+              112,
+              116,
+              34
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": ", \"des",
+            "logprob": -0.01,
+            "bytes": [
+              44,
+              32,
+              34,
+              100,
+              101,
+              115
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "cripti",
+            "logprob": -0.01,
+            "bytes": [
+              99,
+              114,
+              105,
+              112,
+              116,
+              105
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "on\": \"",
+            "logprob": -0.01,
+            "bytes": [
+              111,
+              110,
+              34,
+              58,
+              32,
+              34
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "A Stri",
+            "logprob": -0.01,
+            "bytes": [
+              65,
+              32,
+              83,
+              116,
+              114,
+              105
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "pe inv",
+            "logprob": -0.01,
+            "bytes": [
+              112,
+              101,
+              32,
+              105,
+              110,
+              118
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "oice f",
+            "logprob": -0.01,
+            "bytes": [
+              111,
+              105,
+              99,
+              101,
+              32,
+              102
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "or Oct",
+            "logprob": -0.01,
+            "bytes": [
+              111,
+              114,
+              32,
+              79,
+              99,
+              116
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "ober 2",
+            "logprob": -0.01,
+            "bytes": [
+              111,
+              98,
+              101,
+              114,
+              32,
+              50
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "026 wi",
+            "logprob": -0.01,
+            "bytes": [
+              48,
+              50,
+              54,
+              32,
+              119,
+              105
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "th a t",
+            "logprob": -0.01,
+            "bytes": [
+              116,
+              104,
+              32,
+              97,
+              32,
+              116
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "otal o",
+            "logprob": -0.01,
+            "bytes": [
+              111,
+              116,
+              97,
+              108,
+              32,
+              111
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "f $48.",
+            "logprob": -0.01,
+            "bytes": [
+              102,
+              32,
+              36,
+              52,
+              56,
+              46
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "00 due",
+            "logprob": -0.01,
+            "bytes": [
+              48,
+              48,
+              32,
+              100,
+              117,
+              101
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " on No",
+            "logprob": -0.01,
+            "bytes": [
+              32,
+              111,
+              110,
+              32,
+              78,
+              111
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "vember",
+            "logprob": -0.01,
+            "bytes": [
+              118,
+              101,
+              109,
+              98,
+              101,
+              114
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " 15.\",",
+            "logprob": -0.01,
+            "bytes": [
+              32,
+              49,
+              53,
+              46,
+              34,
+              44
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " \"tags",
+            "logprob": -0.01,
+            "bytes": [
+              32,
+              34,
+              116,
+              97,
+              103,
+              115
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\": [\"i",
+            "logprob": -0.01,
+            "bytes": [
+              34,
+              58,
+              32,
+              91,
+              34,
+              105
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "nvoice",
+            "logprob": -0.01,
+            "bytes": [
+              110,
+              118,
+              111,
+              105,
+              99,
+              101
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\", \"st",
+            "logprob": -0.01,
+            "bytes": [
+              34,
+              44,
+              32,
+              34,
+              115,
+              116
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "ripe\",",
+            "logprob": -0.01,
+            "bytes": [
+              114,
+              105,
+              112,
+              101,
+              34,
+              44
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " \"bill",
+            "logprob": -0.01,
+            "bytes": [
+              32,
+              34,
+              98,
+              105,
+              108,
+              108
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "ing\", ",
+            "logprob": -0.01,
+            "bytes": [
+              105,
+              110,
+              103,
+              34,
+              44,
+              32
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\"octob",
+            "logprob": -0.01,
+            "bytes": [
+              34,
+              111,
+              99,
+              116,
+              111,
+              98
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "er\"], ",
+            "logprob": -0.01,
+            "bytes": [
+              101,
+              114,
+              34,
+              93,
+              44,
+              32
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\"key_t",
+            "logprob": -0.01,
+            "bytes": [
+              34,
+              107,
+              101,
+              121,
+              95,
+              116
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "ext\": ",
+            "logprob": -0.01,
+            "bytes": [
+              101,
+              120,
+              116,
+              34,
+              58,
+              32
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "\"Invoi",
+            "logprob": -0.01,
+            "bytes": [
+              34,
+              73,
+              110,
+              118,
+              111,
+              105
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "ce #IN",
+            "logprob": -0.01,
+            "bytes": [
+              99,
+              101,
+              32,
+              35,
+              73,
+              78
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "V-2041",
+            "logprob": -0.01,
+            "bytes": [
+              86,
+              45,
+              50,
+              48,
+              52,
+              49
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " Total",
+            "logprob": -0.01,
+            "bytes": [
+              32,
+              84,
+              111,
+              116,
+              97,
+              108
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": " due $",
+            "logprob": -0.01,
+            "bytes": [
+              32,
+              100,
+              117,
+              101,
+              32,
+              36
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "48.00\"",
+            "logprob": -0.01,
+            "bytes": [
+              52,
+              56,
+              46,
+              48,
+              48,
+              34
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": ", \"dat",
+            "logprob": -0.01,
+            "bytes": [
+              44,
+              32,
+              34,
+              100,
+              97,
+              116
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "e_ment",
+            "logprob": -0.01,
+            "bytes": [
+              101,
+              95,
+              109,
+              101,
+              110,
+              116
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "ioned\"",
+            "logprob": -0.01,
+            "bytes": [
+              105,
+              111,
+              110,
+              101,
+              100,
+              34
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": ": \"202",
+            "logprob": -0.01,
+            "bytes": [
+              58,
+              32,
+              34,
+              50,
+              48,
+              50
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "6-11-1",
+            "logprob": -0.01,
+            "bytes": [
+              54,
+              45,
+              49,
+              49,
+              45,
+              49
+            ],
+            "top_logprobs": []
+          },
+          {
+            "token": "5\"}",
+            "logprob": -0.01,
+            "bytes": [
+              53,
+              34,
+              125
+            ],
+            "top_logprobs": []
+          }
+        ],
+        "refusal": null
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1450,
+    "completion_tokens": 92,
+    "total_tokens": 1542,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "cost": 0.00013635,
+    "is_byok": false,
+    "cost_details": {
+      "upstream_inference_cost": null,
+      "upstream_inference_prompt_cost": 0.00010875,
+      "upstream_inference_completions_cost": 2.76e-05
+    }
+  }
+}

@@ -50,9 +50,33 @@ final class UploadConsentTests: XCTestCase {
                        .skip(.destinationNotAllowed))
     }
 
+    /// OpenRouter is its own destination: neither Cloudflare nor a custom endpoint grant covers it, nor the other way.
+    func testOpenRouterNeedsItsOwnGrant() {
+        let openRouter = AppSettings.UploadGrant(destination: .openRouter, grantedAt: grantedAt)
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [], capturedAt: after), .skip(.destinationNotAllowed))
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [cloudflare, custom(endpointA)], capturedAt: after),
+                       .skip(.destinationNotAllowed), "Cloudflare or a custom endpoint does not cover OpenRouter")
+        XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [openRouter], capturedAt: after),
+                       .skip(.destinationNotAllowed), "OpenRouter does not cover Cloudflare")
+        // A custom endpoint at openrouter.ai is still a custom endpoint: only a grant naming it covers it.
+        let customAtOpenRouter = CustomEndpointIdentity(scheme: "https", host: "openrouter.ai", port: 443)
+        XCTAssertEqual(UploadConsent.decide(target: .customEndpoint(customAtOpenRouter), grants: [openRouter], capturedAt: after),
+                       .skip(.destinationNotAllowed))
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: after), .allow)
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: before),
+                       .skip(.takenBeforeGrant(grantedAt: grantedAt)), "the time rule applies as for Cloudflare")
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: before,
+                                            processExisting: ProcessExistingAuthorization(target: .openRouter)), .allow)
+        XCTAssertEqual(UploadConsent.decide(target: .openRouter, grants: [openRouter], capturedAt: before,
+                                            processExisting: ProcessExistingAuthorization(target: .cloudflare)),
+                       .skip(.takenBeforeGrant(grantedAt: grantedAt)), "Process Existing for another target lifts nothing")
+    }
+
     func testTheTargetFollowsTheSelectedBackend() {
         var settings = AppSettings()
         XCTAssertEqual(UploadTarget(settings: settings), .cloudflare)
+        settings.backend = .openRouter
+        XCTAssertEqual(UploadTarget(settings: settings), .openRouter)
         settings.backend = .localInkling
         XCTAssertEqual(UploadTarget(settings: settings), .thisMac)
         settings.backend = .customEndpoint

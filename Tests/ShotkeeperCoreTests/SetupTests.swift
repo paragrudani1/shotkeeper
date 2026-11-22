@@ -150,6 +150,32 @@ final class BackendGateTests: XCTestCase {
         XCTAssertNil(BackendGate.consentRequest(for: settings)?.prompt)
     }
 
+    func testOpenRouterNeedsAKeyAndItsOwnConsent() {
+        var settings = AppSettings()
+        settings.backend = .openRouter
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: true),
+                       .notConfigured("OpenRouter API key is not set"), "a caller that does not pass the key fails closed")
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false, hasOpenRouterKey: true), .needsConsent)
+        settings.uploadGrants = [AppSettings.cloudflareSinceEver]
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: true, hasOpenRouterKey: true), .needsConsent,
+                       "Cloudflare's consent is not OpenRouter's")
+        XCTAssertEqual(BackendGate.consentRequest(for: settings),
+                       ConsentRequest(prompt: "Screenshots will be sent to OpenRouter, then to Prime Intellect or io.net",
+                                      destination: .openRouter, endpoint: nil))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        settings = BackendGate.granting(.openRouter, in: settings, at: now)
+        XCTAssertEqual(settings.grant(for: .openRouter), AppSettings.UploadGrant(destination: .openRouter, grantedAt: now))
+        XCTAssertNotNil(settings.grant(for: .cloudflare), "granting OpenRouter keeps the Cloudflare grant")
+        XCTAssertEqual(BackendGate.readiness(settings: settings, hasClairicToken: false, hasOpenRouterKey: true), .ready)
+        XCTAssertTrue(BackendGate.mayWatch(settings: settings, hasClairicToken: false, hasOpenRouterKey: true))
+        XCTAssertFalse(BackendGate.mayWatch(settings: settings, hasClairicToken: false))
+        XCTAssertNil(BackendGate.consentRequest(for: settings))
+        XCTAssertEqual(BackendGate.granting(.openRouter, in: settings, at: now.addingTimeInterval(60)).grant(for: .openRouter)?.grantedAt,
+                       now, "granting again keeps the first time")
+        XCTAssertTrue(BackendGate.sendsScreenshotsOffThisMac(.openRouter))
+        XCTAssertEqual(BackendGate.destination(of: .openRouter), .openRouter)
+    }
+
     func testDestinations() {
         XCTAssertEqual(BackendGate.destination(of: .clairic), .cloudflare)
         XCTAssertEqual(BackendGate.destination(of: .customEndpoint), .customEndpoint)
@@ -220,6 +246,22 @@ final class ClairicPricingTests: XCTestCase {
 }
 
 final class SetupCardsTests: XCTestCase {
+    func testOpenRouterCardHasNoPriceUntilMeasuredAndIsNeverRecommended() {
+        for ram in [8, 16, 24, 32] {
+            let cards = SetupCards.make(physicalMemoryBytes: UInt64(ram) * gb)
+            XCTAssertEqual(cards.openRouter.title, "OpenRouter · Inkling 2 Mini")
+            XCTAssertEqual(cards.openRouter.subtitle, "Inkling 2 Mini in the cloud, with your OpenRouter key and credits.")
+            XCTAssertFalse(cards.openRouter.subtitle.contains("$"), "no unmeasured estimate")
+            XCTAssertEqual(cards.openRouter.badges, [])
+            XCTAssertFalse(cards.openRouter.isRecommended)
+            XCTAssertTrue(cards.openRouter.isAvailable)
+            XCTAssertNotEqual(cards.recommended, .openRouter)
+        }
+        let measured = SetupCards.make(physicalMemoryBytes: 16 * gb, openRouterPrice: "About $0.25 for 1,000 screenshots")
+        XCTAssertEqual(measured.openRouter.subtitle,
+                       "Inkling 2 Mini in the cloud, with your OpenRouter key and credits. About $0.25 for 1,000 screenshots.")
+    }
+
     func testSixteenGigabyteMac() {
         let cards = SetupCards.make(physicalMemoryBytes: 16 * gb)
         XCTAssertEqual(cards.recommended, .clairic)
@@ -343,6 +385,22 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertFalse(flow.back(), "Finish has no Back")
     }
 
+    func testOpenRouterContinuesWithAKeyAndTheCheckbox() {
+        var flow = SetupFlow(settings: AppSettings(), cards: cards16)
+        flow.advance(); flow.consentChecked = true; flow.advance()
+        XCTAssertTrue(flow.choose(.openRouter))
+        XCTAssertEqual(flow.primaryAction(), .skipConnection)
+        flow.inputs.hasOpenRouterKeyDraft = true
+        XCTAssertEqual(flow.primaryAction(), .skipConnection, "a key alone is not enough: step 2 named Cloudflare only")
+        flow.inputs.openRouterAcknowledged = true
+        XCTAssertEqual(flow.primary, SetupPrimaryButton(title: "Continue", isEnabled: true, action: .saveConnection(.openRouter)))
+        flow.inputs.hasOpenRouterKeyDraft = false
+        flow.inputs.hasSavedOpenRouterKey = true
+        XCTAssertEqual(flow.primaryAction(), .saveConnection(.openRouter), "a saved key counts")
+        flow.inputs.openRouterAcknowledged = false
+        XCTAssertEqual(flow.primaryAction(), .skipConnection)
+    }
+
     func testSavedTokenIsEnoughForClairic() {
         var flow = SetupFlow(settings: clairicSettings(consent: true), cards: cards16,
                              inputs: SetupConnectionInputs(hasSavedToken: true))
@@ -368,13 +426,17 @@ final class SetupFlowTests: XCTestCase {
         var flow = SetupFlow(settings: AppSettings(), cards: cards16)
         XCTAssertFalse(flow.choose(.clairic), "already selected")
         XCTAssertTrue(flow.chooseNext())
+        XCTAssertEqual(flow.choice, .openRouter)
+        XCTAssertTrue(flow.chooseNext())
         XCTAssertEqual(flow.choice, .localInkling)
         XCTAssertTrue(flow.chooseNext())
         XCTAssertEqual(flow.choice, .clairic)
 
         var small = SetupFlow(settings: AppSettings(), cards: SetupCards.make(physicalMemoryBytes: 8 * gb))
         XCTAssertFalse(small.choose(.localInkling))
-        XCTAssertFalse(small.chooseNext())
+        XCTAssertTrue(small.chooseNext(), "OpenRouter is available on any Mac")
+        XCTAssertEqual(small.choice, .openRouter)
+        XCTAssertTrue(small.chooseNext(), "skips the unavailable local card")
         XCTAssertEqual(small.choice, .clairic)
     }
 
@@ -405,8 +467,8 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertEqual(custom.primary, SetupPrimaryButton(title: "Continue", isEnabled: true,
                                                           action: .saveConnection(.customEndpoint)))
         XCTAssertTrue(custom.chooseNext())
-        XCTAssertEqual(custom.choice, .clairic, "arrows wrap over all three cards")
-        custom.chooseNext(); custom.chooseNext()
+        XCTAssertEqual(custom.choice, .clairic, "arrows wrap over all four cards")
+        custom.chooseNext(); custom.chooseNext(); custom.chooseNext()
         XCTAssertEqual(custom.choice, .customEndpoint)
 
         settings.backend = .localInkling
@@ -416,7 +478,7 @@ final class SetupFlowTests: XCTestCase {
     func testCustomCardOnlyWithAHost() {
         XCTAssertNil(SetupCards.make(physicalMemoryBytes: 16 * gb).custom)
         let cards = SetupCards.make(physicalMemoryBytes: 16 * gb, customEndpointHost: "llm.lan")
-        XCTAssertEqual(cards.all.map(\.backend), [.clairic, .localInkling, .customEndpoint])
+        XCTAssertEqual(cards.all.map(\.backend), [.clairic, .openRouter, .localInkling, .customEndpoint])
         XCTAssertEqual(cards.custom?.subtitle, "Keeps using llm.lan. Change it in Settings → Model.")
     }
 
@@ -610,6 +672,16 @@ final class ConnectionTestTextTests: XCTestCase {
                        "The server rejected the test request (HTTP 422). Check the model name.")
         XCTAssertEqual(ConnectionTestText.failure(ImagePreparerError.unreadable("test image"), backend: .clairic),
                        "The image could not be read.")
+        XCTAssertEqual(ConnectionTestText.failure(AnalyzerError.unauthorized("x"), backend: .openRouter),
+                       "OpenRouter did not accept the API key. Check the key at openrouter.ai/keys.")
+        XCTAssertEqual(ConnectionTestText.failure(AnalyzerError.unreachable("x"), backend: .openRouter),
+                       "Could not reach OpenRouter. Check the internet connection and try again.")
+        XCTAssertEqual(ConnectionTestText.failure(AnalyzerError.rateLimited(retryAfter: nil), backend: .openRouter),
+                       "OpenRouter is limiting requests right now. Try again in a minute.")
+        XCTAssertEqual(ConnectionTestText.failure(AnalyzerError.serverError(status: 503, message: "x"), backend: .openRouter),
+                       "OpenRouter had a problem (HTTP 503). Try again in a minute.")
+        XCTAssertEqual(ConnectionTestText.failure(AnalyzerError.notConfigured("OpenRouter API key is not set"), backend: .openRouter),
+                       "OpenRouter API key is not set.")
     }
 }
 

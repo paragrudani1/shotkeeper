@@ -39,6 +39,11 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(custom.uploadGrants, [], "a custom endpoint is not migrated: Settings asks once, naming it")
 
         XCTAssertEqual(decode("clairic", flag: false).uploadGrants, [])
+        // OpenRouter did not exist before per-destination consent: old settings never grant it, whatever they hold.
+        for old in [clairic, local, custom, decode("openRouter", flag: true)] {
+            XCTAssertNil(old.grant(for: .openRouter))
+            XCTAssertNil(UploadConsent.grant(for: .openRouter, in: old.uploadGrants))
+        }
 
         // Once the key exists it is the truth: an emptied list is not re-seeded from the old flag.
         var saved = clairic
@@ -126,6 +131,7 @@ final class SettingsTests: XCTestCase {
         s.backend = .customEndpoint
         s.customEndpointURL = URL(string: "http://127.0.0.1:8080/v1")
         s.customModelName = "inkling"
+        s.openRouterModel = "thinkingmachines/inkling-2-mini-20261120"
         s.clairicAccountID = "abc123"
         s.excludeRules.pause(for: 600, from: Date(timeIntervalSince1970: 1_800_000_000))
         s.hasSeenPrivacyNotice = true
@@ -133,8 +139,13 @@ final class SettingsTests: XCTestCase {
             .init(destination: .cloudflare, grantedAt: Date(timeIntervalSince1970: 1_800_000_000)),
             .init(destination: .customEndpoint, grantedAt: Date(timeIntervalSince1970: 1_800_000_100),
                   endpoint: CustomEndpointIdentity(url: URL(string: "http://127.0.0.1:8080/v1"))),
+            .init(destination: .openRouter, grantedAt: Date(timeIntervalSince1970: 1_800_000_200)),
         ]
         XCTAssertEqual(AppSettings.decode(try s.encoded()), s)
+        var openRouter = AppSettings()
+        openRouter.backend = .openRouter
+        XCTAssertEqual(AppSettings.decode(try openRouter.encoded()).backend, .openRouter)
+        XCTAssertNil(AppSettings.decode(try openRouter.encoded()).openRouterModel, "nil = the default model")
         XCTAssertFalse(String(decoding: try s.encoded(), as: UTF8.self).lowercased().contains("token"), "no secrets in settings")
     }
 
@@ -144,6 +155,8 @@ final class SettingsTests: XCTestCase {
         try store.setSecret("s3cret", for: .cloudflareAPIToken)
         XCTAssertEqual(try store.secret(for: .cloudflareAPIToken), "s3cret")
         XCTAssertNil(try store.secret(for: .customEndpointAPIKey))
+        XCTAssertNil(try store.secret(for: .openRouterAPIKey), "OpenRouter's key is a separate Keychain item")
+        XCTAssertEqual(CredentialKey.openRouterAPIKey.rawValue, "openrouter-api-key")
         try store.removeSecret(for: .cloudflareAPIToken)
         XCTAssertNil(try store.secret(for: .cloudflareAPIToken))
     }

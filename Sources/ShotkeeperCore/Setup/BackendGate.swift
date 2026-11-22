@@ -14,12 +14,15 @@ public enum BackendReadiness: Equatable, Sendable {
 /// confirmation and granting. It never decides whether a file is sent: that is `UploadConsent.decide`, called by
 /// `ScreenshotProcessor` right before `analyze`. Both match grants with `UploadConsent.grant(for:in:)`.
 ///
-/// Consent is per destination with a time (`AppSettings.uploadGrants`): `.cloudflare` when setup saves Clairic after
-/// step 2's "I Agree", or from the Settings confirmation; `.customEndpoint` from the Settings confirmation naming the
-/// endpoint, for that endpoint only (scheme + host + port). Test Connection is not gated: it sends only a generated
-/// image, never a user file.
+/// Consent is per destination with a time (`AppSettings.uploadGrants`): `.cloudflare` (`.openRouter`) when setup saves
+/// Clairic (OpenRouter) after step 2's "I Agree", or from the Settings confirmation; `.customEndpoint` from the
+/// Settings confirmation naming the endpoint, for that endpoint only (scheme + host + port). Test Connection is not
+/// gated: it sends only a generated image, never a user file.
 public enum BackendGate {
     public static let consentReason = "Finish setup to allow where screenshots are sent (or allow it in Settings → Model)"
+    /// The Settings confirmation for OpenRouter: names the third party behind it.
+    public static let openRouterConsentPrompt = "Screenshots will be sent to OpenRouter, then to "
+        + OpenRouterBackend.providerNames.joined(separator: " or ")
 
     /// True for backends that send screenshots off this Mac. A custom endpoint counts even when it is on
     /// 127.0.0.1: the app cannot tell where a URL really ends up.
@@ -31,6 +34,7 @@ public enum BackendGate {
     public static func destination(of backend: AppSettings.Backend) -> AppSettings.UploadDestination? {
         switch backend {
         case .clairic: return .cloudflare
+        case .openRouter: return .openRouter
         case .customEndpoint: return .customEndpoint
         case .localInkling: return nil
         }
@@ -55,6 +59,8 @@ public enum BackendGate {
         case .cloudflare:
             return ConsentRequest(prompt: "Screenshots will be sent to your Cloudflare account", destination: .cloudflare,
                                   endpoint: nil)
+        case .openRouter:
+            return ConsentRequest(prompt: openRouterConsentPrompt, destination: .openRouter, endpoint: nil)
         case .customEndpoint:
             guard let endpoint = CustomEndpointIdentity(url: settings.customEndpointURL) else { return nil }
             return ConsentRequest(prompt: "Screenshots will be sent to \(endpoint.display)", destination: .customEndpoint,
@@ -72,7 +78,7 @@ public enum BackendGate {
         var settings = settings
         let endpoint: CustomEndpointIdentity?
         switch destination {
-        case .cloudflare:
+        case .cloudflare, .openRouter:
             endpoint = nil
         case .customEndpoint:
             guard let current = CustomEndpointIdentity(url: settings.customEndpointURL), current == expectedEndpoint else {
@@ -87,11 +93,15 @@ public enum BackendGate {
         return settings
     }
 
-    public static func readiness(settings: AppSettings, hasClairicToken: Bool) -> BackendReadiness {
+    /// - Parameter hasOpenRouterKey: an OpenRouter API key is saved (and committed). Defaults to false, so a caller
+    ///   that does not say never makes OpenRouter ready.
+    public static func readiness(settings: AppSettings, hasClairicToken: Bool, hasOpenRouterKey: Bool = false) -> BackendReadiness {
         switch settings.backend {
         case .clairic:
             if trimmed(settings.clairicAccountID).isEmpty { return .notConfigured("Cloudflare account ID is not set") }
             if !hasClairicToken { return .notConfigured("Cloudflare API token is not set") }
+        case .openRouter:
+            if !hasOpenRouterKey { return .notConfigured("OpenRouter API key is not set") }
         case .customEndpoint:
             guard let url = settings.customEndpointURL, let scheme = url.scheme?.lowercased(),
                   scheme == "http" || scheme == "https", url.host != nil else {
@@ -106,8 +116,8 @@ public enum BackendGate {
 
     /// Whether the app may watch the screenshot folder: only with a usable backend, so nothing is queued (and later
     /// uploaded) before the user finished choosing where screenshots go.
-    public static func mayWatch(settings: AppSettings, hasClairicToken: Bool) -> Bool {
-        readiness(settings: settings, hasClairicToken: hasClairicToken) == .ready
+    public static func mayWatch(settings: AppSettings, hasClairicToken: Bool, hasOpenRouterKey: Bool = false) -> Bool {
+        readiness(settings: settings, hasClairicToken: hasClairicToken, hasOpenRouterKey: hasOpenRouterKey) == .ready
     }
 
     /// Why an analyzer holds the queue (shown as "Needs attention: …"), nil when ready.
