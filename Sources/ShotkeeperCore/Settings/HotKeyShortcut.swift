@@ -36,9 +36,14 @@ public struct HotKeyShortcut: Codable, Equatable, Hashable, Sendable {
     /// ⌥⌘S (spec).
     public static let defaultSearch = HotKeyShortcut(keyCode: KeyCode.s, modifiers: [.option, .command])
 
-    /// "⌥⌘S": modifiers in the macOS menu order ⌃⌥⇧⌘, then the key.
+    /// "⌥⌘S": modifiers in the macOS menu order ⌃⌥⇧⌘, then the key (US layout names).
     public var displayString: String {
-        modifiers.symbols + KeyCode.symbol(keyCode)
+        displayString(keyName: nil)
+    }
+
+    /// With `keyName` from the current keyboard layout (the app uses `UCKeyTranslate`), else the US name.
+    public func displayString(keyName: String?) -> String {
+        modifiers.symbols + (KeyCode.isCharacterKey(keyCode) ? (keyName ?? KeyCode.symbol(keyCode)) : KeyCode.symbol(keyCode))
     }
 
     /// "Option Command S" for VoiceOver.
@@ -89,6 +94,15 @@ public enum KeyCode {
 
     public static func isFunctionKey(_ code: Int) -> Bool { functionKeys[code] != nil }
 
+    /// Keys that type a character (letters, digits, punctuation): their name depends on the keyboard layout.
+    public static func isCharacterKey(_ code: Int) -> Bool { characters[code] != nil }
+
+    /// A–Z keys (ANSI positions).
+    public static func isLetter(_ code: Int) -> Bool {
+        guard let name = characters[code], let scalar = name.unicodeScalars.first else { return false }
+        return name.count == 1 && scalar.properties.isAlphabetic
+    }
+
     /// Whether the shortcut recorder accepts this key at all (letters, digits, punctuation, F-keys, Space, arrows…).
     public static func isKnown(_ code: Int) -> Bool {
         characters[code] != nil || functionKeys[code] != nil || specialKeys[code] != nil
@@ -113,6 +127,8 @@ public enum HotKeyProblem: Equatable, Sendable {
     case needsCommandOrControl
     /// ⌘ (with or without ⇧) + a key: a menu shortcut in most apps (⌘C, ⇧⌘N), which a global hotkey would take away.
     case usedByApps
+    /// ⌃ (with or without ⇧) + a letter: text-editing keys in every text field (⌃A start of line, ⌃E end, ⌃K kill).
+    case textEditingKey
     /// A macOS shortcut (Spotlight, screenshots, Mission Control…). `name` says what it does.
     case system(name: String)
     /// A key the recorder does not handle (Esc cancels recording; unknown keys cannot be shown).
@@ -120,13 +136,16 @@ public enum HotKeyProblem: Equatable, Sendable {
     /// `RegisterEventHotKey` failed: another app holds it (`eventHotKeyExistsErr`) or the system refused it.
     case registrationFailed(inUseByAnotherApp: Bool)
 
-    public func message(for shortcut: HotKeyShortcut) -> String {
-        let keys = shortcut.displayString
+    /// - Parameter display: the shortcut as shown (current layout); default the US names.
+    public func message(for shortcut: HotKeyShortcut, display: String? = nil) -> String {
+        let keys = display ?? shortcut.displayString
         switch self {
         case .needsCommandOrControl:
             return "Add ⌘ or ⌃ to the shortcut. Keys with only ⌥ or ⇧ type characters."
         case .usedByApps:
             return "\(keys) is a menu shortcut in many apps. Add ⌥ or ⌃."
+        case .textEditingKey:
+            return "\(keys) moves the cursor or edits text in text fields. Add ⌥ or ⌘."
         case .system(let name):
             return "\(keys) is the macOS shortcut for \(name). Choose another one."
         case .unsupportedKey:
@@ -155,6 +174,7 @@ public enum HotKeyRules {
         let mods = shortcut.modifiers
         guard mods.contains(.command) || mods.contains(.control) else { return .needsCommandOrControl }
         if mods.subtracting(.shift) == .command, !KeyCode.isFunctionKey(shortcut.keyCode) { return .usedByApps }
+        if mods.subtracting(.shift) == .control, KeyCode.isLetter(shortcut.keyCode) { return .textEditingKey }
         return nil
     }
 

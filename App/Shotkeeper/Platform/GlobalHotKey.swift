@@ -5,7 +5,8 @@ import ShotkeeperCore
 
 enum GlobalHotKeyError: Error, Equatable {
     case installHandlerFailed(OSStatus)
-    /// `eventHotKeyExistsErr` (-9878): another app registered it exclusively first; other codes: the system refused.
+    /// `eventHotKeyExistsErr` (-9878): the shortcut is already registered and cannot be shared; other codes: the
+    /// system refused it.
     case registerFailed(OSStatus)
 }
 
@@ -18,7 +19,9 @@ final class GlobalHotKey {
     private static var actions: [UInt32: @MainActor () -> Void] = [:]
     private static var nextID: UInt32 = 1
     private static var eventHandler: EventHandlerRef?
-    /// While true, hotkey presses are ignored (the shortcut recorder is listening).
+    /// While true and Shotkeeper is the active app, hotkey presses are ignored (the shortcut recorder is listening).
+    /// Checked together with `NSApp.isActive`, so a recorder that never got the keyboard cannot disable the shortcut
+    /// in other apps.
     static var isSuspended = false
 
     let shortcut: HotKeyShortcut
@@ -26,8 +29,11 @@ final class GlobalHotKey {
     // nonisolated(unsafe): read in the nonisolated deinit; otherwise only touched on the main actor.
     nonisolated(unsafe) private var hotKeyRef: EventHotKeyRef?
 
-    /// Registers exclusively (`kEventHotKeyExclusive`), so a shortcut another app already holds fails with
-    /// `eventHotKeyExistsErr` instead of being shared silently.
+    /// Registers with `kEventHotKeyExclusive` (Carbon `CarbonEvents.h`: no other registration may share it). If the
+    /// shortcut is already registered so that it cannot be shared, this fails with `eventHotKeyExistsErr`. A shortcut
+    /// another app registered without that option, or one an app handles itself (a menu key equivalent), may still
+    /// register here and then reach only one of the two: `RegisterEventHotKey` cannot detect every conflict, which is
+    /// why the recorder also checks the known macOS shortcuts and says "Shortcuts another app uses may not register."
     init(shortcut: HotKeyShortcut, action: @escaping @MainActor () -> Void) throws {
         try Self.installHandlerIfNeeded()
         self.shortcut = shortcut
@@ -75,7 +81,7 @@ final class GlobalHotKey {
     }
 
     fileprivate static func fire(id: UInt32) {
-        guard !isSuspended else { return }
+        guard !(isSuspended && NSApp.isActive) else { return }
         actions[id]?()
     }
 
@@ -139,4 +145,53 @@ private func hotKeyEventHandler(_ call: EventHandlerCallRef?, _ event: EventRef?
     let id = hotKeyID.id
     Task { @MainActor in GlobalHotKey.fire(id: id) }
     return OSStatus(noErr)
+}
+
+/// Key names from the current keyboard layout ("Y" for the Z key on a German layout), so shortcuts show the
+/// letters printed on the user's keyboard. Falls back to the US names (`KeyCode.symbol`).
+@MainActor
+enum KeyboardLayout {
+    static func name(for keyCode: Int) -> String? {
+        guard KeyCode.isCharacterKey(keyCode) else { return nil }
+        for source in [TISCopyCurrentKeyboardLayoutInputSource(), TISCopyCurrentASCIICapableKeyboardLayoutInputSource()] {
+            guard let source = source?.takeRetainedValue(),
+                  let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { continue }
+            let data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
+            if let name = translate(keyCode, layout: data) { return name }
+        }
+        return nil
+    }
+
+    private static func translate(_ keyCode: Int, layout: Data) -> String? {
+        var deadKeyState: UInt32 = 0
+        var characters = [UniChar](repeating: 0, count: 4)
+        var length = 0
+        let status = layout.withUnsafeBytes { buffer -> OSStatus in
+            guard let pointer = buffer.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return -1 }
+            return UCKeyTranslate(pointer, UInt16(keyCode), UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+                                  OptionBits(1 << kUCKeyTranslateNoDeadKeysBit), &deadKeyState, characters.count,
+                                  &length, &characters)
+        }
+        guard status == noErr, length > 0 else { return nil }
+        let text = String(utf16CodeUnits: characters, count: length).uppercased()
+        let printable = text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && !CharacterSet.whitespaces.contains($0) }
+        return printable && !text.isEmpty ? text : nil
+    }
+}
+
+extension HotKeyShortcut {
+    /// "⌥⌘S" with the current keyboard layout's key name.
+    @MainActor var display: String { displayString(keyName: KeyboardLayout.name(for: keyCode)) }
+
+    /// "Option Command S" with the current layout's key name.
+    @MainActor var spokenDisplay: String {
+        guard let name = KeyboardLayout.name(for: keyCode) else { return spokenName }
+        return modifiers.symbols.isEmpty ? name : spokenName.split(separator: " ").dropLast().joined(separator: " ") + " " + name
+    }
+}
+
+extension HotKeyProblem {
+    @MainActor func displayMessage(for shortcut: HotKeyShortcut) -> String {
+        message(for: shortcut, display: shortcut.display)
+    }
 }

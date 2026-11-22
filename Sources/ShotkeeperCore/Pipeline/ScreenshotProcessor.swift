@@ -284,14 +284,14 @@ public final class ScreenshotProcessor: Sendable {
         (try? undoLog.records())?.last
     }
 
-    /// Renames `url` to a name the user typed, with the pipeline's rules: `FilenameSanitizer`, the filename style
-    /// from Settings (casing; the capture date when "Add the date" is on and the name has none), the original
-    /// extension, no-replace "Name 2.png" collisions via `FileOrganizer`. Writes an undo record and moves the index
-    /// row (whose title becomes the new name, so search finds it).
+    /// Renames `url` to a name the user typed, with the pipeline's rules: `FilenameSanitizer`, the casing from
+    /// Settings, the original extension, no-replace "Name 2.png" collisions via `FileOrganizer`. No date is added:
+    /// the user's text is kept with or without one (the field starts with the current name, date included). Writes
+    /// an undo record and moves the index row (whose title becomes the new name, so search finds it).
     public func rename(_ url: URL, to proposedName: String) throws -> ManualRenameResult {
         let url = url.standardizedFileURL
         let style = snapshot().settings.filenameStyle
-        guard let stem = style.stem(from: proposedName, capturedAt: captureDateForName(of: url), timeZone: timeZone) else {
+        guard let stem = style.stem(from: proposedName, capturedAt: nil, timeZone: timeZone) else {
             throw ManualRenameError.unusableName(proposedName)
         }
         if stem == url.deletingPathExtension().lastPathComponent { return ManualRenameResult(finalURL: url, undoRecordID: nil) }
@@ -312,14 +312,6 @@ public final class ScreenshotProcessor: Sendable {
             _ = try? index.save(row)
         }
         return ManualRenameResult(finalURL: finalURL, undoRecordID: record.id)
-    }
-
-    /// The date "Add the date at the start" uses for a manual rename: the index's capture time (what the pipeline
-    /// used), else the file's creation date.
-    private func captureDateForName(of url: URL) -> Date? {
-        if let row = try? index.lookup(byPath: url.path), let captured = row.capturedAt { return captured }
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        return (attributes?[.creationDate] as? Date) ?? (attributes?[.modificationDate] as? Date)
     }
 
     /// After an undo: the index follows the file back, and the file is flagged so neither the watcher (which sees

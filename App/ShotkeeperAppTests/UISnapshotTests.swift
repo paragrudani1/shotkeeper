@@ -106,6 +106,12 @@ enum UISnapshotCatalog {
                     DiskSpaceCheck.evaluate(availableBytes: 6_200_000_000, downloadBytes: 10_400_000_000,
                                             alreadyOnDisk: 0, needsRuntime: true).message))
             },
+            UISnapshot("settings-model-local-partial-download") {
+                Fixtures.settings(.model, backend: .localInkling, install: Fixtures.install(.notInstalled, partial: 3_400_000_000))
+            },
+            UISnapshot("settings-model-local-beyond-estimate") {
+                Fixtures.settings(.model, backend: .localInkling, install: Fixtures.install(.downloading(0.99), beyondEstimate: true))
+            },
             UISnapshot("settings-model-local-installed") {
                 Fixtures.settings(.model, backend: .localInkling, install: Fixtures.install(.running(port: 50123)))
             },
@@ -446,17 +452,20 @@ enum Fixtures {
         return coordinator
     }
 
-    static func install(_ phase: RuntimePhase, problem: String? = nil) -> LocalInstallState {
+    static func install(_ phase: RuntimePhase, problem: String? = nil, partial: Int64 = 0,
+                        beyondEstimate: Bool = false) -> LocalInstallState {
         var stats: DownloadStats?
         if case .downloading = phase {
             var measured = DownloadStats(totalBytes: 10_400_000_000)
-            measured.record(bytes: 4_560_000_000, at: now)
-            measured.record(bytes: 4_683_000_000, at: now.addingTimeInterval(10))  // 12.3 MB/s
+            let start: Int64 = beyondEstimate ? 10_500_000_000 : 4_560_000_000
+            measured.record(bytes: start, at: now)
+            measured.record(bytes: start + 123_000_000, at: now.addingTimeInterval(10))  // 12.3 MB/s
             stats = measured
         }
         let installing: Bool = { if case .downloading = phase { return true } else { return false } }()
         return LocalInstallState(phase: phase, stats: stats, installing: installing, problem: problem,
-                                 variantName: ModelCatalog.inkling2bit.displayName, downloadGB: 10)
+                                 variantName: ModelCatalog.inkling2bit.displayName, downloadGB: 10,
+                                 partialDownloadBytes: partial)
     }
 
     static func settings(_ tab: SettingsTab, backend: AppSettings.Backend = .clairic, install: LocalInstallState? = nil,

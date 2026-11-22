@@ -86,6 +86,53 @@ final class FilenameStyleTests: XCTestCase {
         XCTAssertEqual(stem("2026-11-21", .sentence, date: true), "2026-11-21")
         XCTAssertEqual(stem("2026-11-210 units", .sentence, date: true), "2026-11-21 2026-11-210 units",
                        "not a date followed by a word")
+        XCTAssertEqual(stem("2026-11-2 foo", .sentence, date: true), "2026-11-2 Foo", "a one-digit day is a date too")
+        XCTAssertEqual(stem("2026-1-5-notes", .kebab, date: true), "2026-1-5-notes")
+    }
+
+    /// "Edit name" passes no capture date: a typed date is kept, a removed one stays removed.
+    func testATypedNameKeepsOrDropsTheDateAsTyped() {
+        let style = FilenameStyle(casing: .sentence, datePrefix: true)
+        XCTAssertEqual(style.stem(from: "acme invoice", capturedAt: nil, timeZone: utc), "Acme invoice")
+        XCTAssertEqual(style.stem(from: "2026-11-21 acme invoice", capturedAt: nil, timeZone: utc), "2026-11-21 Acme invoice")
+    }
+
+    func testSentenceCaseLeavesDomainsAndVersionsFirst() {
+        XCTAssertEqual(stem("x.com thread about chips", .sentence), "x.com thread about chips")
+        XCTAssertEqual(stem("v1.2 release notes", .sentence), "v1.2 release notes")
+        XCTAssertEqual(stem("3d printer settings", .sentence), "3d printer settings")
+    }
+
+    /// Styling a styled name again (the pipeline on a renamed file, or "Edit name" + Save without changes) changes
+    /// nothing, also at the length cap and with the date.
+    func testStylingIsIdempotentAtTheCap() throws {
+        let titles = [String(repeating: "word ", count: 40), String(repeating: "Acme invoice for November ", count: 6),
+                      "a" + String(repeating: "b", count: 120), String(repeating: "東京タワー ", count: 30)]
+        for title in titles {
+            for casing in FilenameStyle.Casing.allCases {
+                for withDate in [false, true] {
+                    let style = FilenameStyle(casing: casing, datePrefix: withDate)
+                    let first = try XCTUnwrap(style.stem(from: title, capturedAt: date, timeZone: utc))
+                    XCTAssertLessThanOrEqual(first.utf16.count, 80)
+                    XCTAssertEqual(style.stem(from: first, capturedAt: date, timeZone: utc), first, "\(casing) \(withDate) pipeline")
+                    XCTAssertEqual(style.stem(from: first, capturedAt: nil, timeZone: utc), first, "\(casing) \(withDate) edit name")
+                    if casing == .kebab { XCTAssertFalse(first.hasSuffix("-"), first) }
+                }
+            }
+        }
+        // Kebab-case backs off to the last "-" at the cap.
+        let kebab = try XCTUnwrap(FilenameStyle(casing: .kebab).stem(from: String(repeating: "sentence ", count: 12),
+                                                                     capturedAt: nil, timeZone: utc))
+        XCTAssertTrue(kebab.hasSuffix("sentence"), kebab)
+    }
+
+    func testKebabCaseNeverReturnsAnEmptyName() {
+        for title in ["©️", "™", "®", "‼️", "#️⃣", "—", "« »"] {
+            let result = FilenameStyle(casing: .kebab).stem(from: title, capturedAt: nil, timeZone: utc)
+            XCTAssertTrue(result == nil || !(result ?? "").isEmpty, "\(title) → \(String(describing: result))")
+            if let result { XCTAssertFalse(result.hasPrefix("-") || result.hasSuffix("-"), result) }
+        }
+        XCTAssertEqual(FilenameStyle.cap("abc-def", maxLength: 5, separator: "-"), "abc")
     }
 
     func testSanitizerRulesStillApply() {

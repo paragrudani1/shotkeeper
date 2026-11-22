@@ -53,8 +53,11 @@ final class DownloadStatsTests: XCTestCase {
         stats.record(bytes: 1_999_000_000, at: start.addingTimeInterval(16))
         XCTAssertEqual(stats.timeLeftText, "Less than a minute left")
         stats.record(bytes: 3 * gb, at: start.addingTimeInterval(17))        // more than the catalog size
-        XCTAssertEqual(stats.bytesText, "2.0 of 2.0 GB")
-        XCTAssertEqual(stats.secondsRemaining, 0)
+        XCTAssertTrue(stats.exceedsEstimate)
+        XCTAssertEqual(stats.bytesText, "3.0 GB so far")
+        XCTAssertNil(stats.secondsRemaining, "no time left once the estimate was too low")
+        XCTAssertNil(stats.timeLeftText)
+        XCTAssertTrue(stats.summary.hasPrefix("3.0 GB so far · "), stats.summary)
     }
 
     func testLongDownloadsReadInHours() {

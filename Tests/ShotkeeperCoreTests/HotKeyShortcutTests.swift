@@ -41,6 +41,23 @@ final class HotKeyShortcutTests: XCTestCase {
         XCTAssertNil(HotKeyRules.problem(with: key(KeyCode.f6, [.command])), "⌘F6 is not a menu shortcut")
     }
 
+    func testControlWithALetterIsLeftToTextFields() {
+        XCTAssertEqual(HotKeyRules.problem(with: key(KeyCode.a, [.control])), .textEditingKey)
+        XCTAssertEqual(HotKeyRules.problem(with: key(KeyCode.k, [.control, .shift])), .textEditingKey)
+        XCTAssertNil(HotKeyRules.problem(with: key(KeyCode.k, [.control, .option])))
+        XCTAssertNil(HotKeyRules.problem(with: key(KeyCode.one, [.control])), "⌃1 is not a text-editing key")
+        XCTAssertEqual(HotKeyProblem.textEditingKey.message(for: key(KeyCode.e, [.control])),
+                       "⌃E moves the cursor or edits text in text fields. Add ⌥ or ⌘.")
+    }
+
+    func testLayoutNamesReplaceOnlyCharacterKeys() {
+        XCTAssertEqual(key(KeyCode.z, [.option, .command]).displayString(keyName: "Y"), "⌥⌘Y", "QWERTZ")
+        XCTAssertEqual(key(KeyCode.f5, [.control, .command]).displayString(keyName: "x"), "⌃⌘F5")
+        XCTAssertEqual(key(KeyCode.space, [.control, .option]).displayString(keyName: " "), "⌃⌥Space")
+        XCTAssertEqual(HotKeyProblem.usedByApps.message(for: key(KeyCode.z, [.command]), display: "⌘Y"),
+                       "⌘Y is a menu shortcut in many apps. Add ⌥ or ⌃.")
+    }
+
     func testKnownSystemShortcutsAreRejectedWithTheirName() {
         XCTAssertEqual(HotKeyRules.problem(with: key(KeyCode.space, [.command])), .system(name: "Spotlight"))
         XCTAssertEqual(HotKeyRules.problem(with: key(KeyCode.four, [.shift, .command])), .system(name: "screenshots"))

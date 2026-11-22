@@ -117,6 +117,7 @@ struct GeneralSettingsTab: View {
                                         .frame(width: 180)
                                         .accessibilityLabel("Minimum title confidence")
                                     Text(String(format: "%.2f", draft.wrappedValue.minTitleConfidence)).monospacedDigit()
+                                        .foregroundStyle(Color.primary)  // not the Form's secondary value style
                                 }
                             }
                             .help("Below this confidence a screenshot keeps its name (it is still indexed)")

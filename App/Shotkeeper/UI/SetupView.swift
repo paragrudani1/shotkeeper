@@ -122,7 +122,7 @@ private struct WelcomeStep: View {
                 FeatureColumn(symbol: "textformat", title: "Clear names",
                               text: "Each screenshot gets a name that says what is in it.")
                 FeatureColumn(symbol: "magnifyingglass", title: "Search by memory",
-                              text: "Press \(searchShortcut.displayString) and type what you remember: words, an app, a tag.")
+                              text: "Press \(searchShortcut.display) and type what you remember: words, an app, a tag.")
                 FeatureColumn(symbol: "arrow.uturn.backward.circle", title: "Safe",
                               text: "It never deletes a file. You can undo every rename.")
             }
@@ -608,13 +608,13 @@ private struct DoneStep: View {
             VStack(spacing: 0) {
                 HStack(spacing: 14) {
                     let shortcut = model.services.searchShortcut()
-                    Text(shortcut.displayString)
+                    Text(shortcut.display)
                         .font(.system(size: 14, weight: .semibold))
                         .padding(.horizontal, 8)
                         .frame(minWidth: 56, minHeight: 30)
                         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
                         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.18), lineWidth: 0.5))
-                        .accessibilityLabel(shortcut.spokenName)
+                        .accessibilityLabel(shortcut.spokenDisplay)
                     Text("Search your screenshots from any app.").font(.system(size: 13))
                     Spacer()
                     Button("Change Shortcut…") { model.services.openShortcutSettings() }

@@ -64,6 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         searchPanel.onProcessExisting = { Task { _ = await coordinator.processExistingScreenshots() } }
         settingsOpener.prepare()
+        // Closing Settings commits tokens being typed (the field's onDisappear may not run before the window goes).
+        _ = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {
+                guard (note.object as? NSWindow)?.identifier?.rawValue == SettingsOpener.windowIdentifier else { return }
+                coordinator.commitAllSecretDrafts()
+            }
+        }
         coordinator.startServices()
         let hotKey = SearchHotKey { [weak self] in self?.searchPanel.toggle() }
         searchHotKey = hotKey
@@ -73,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // A token typed in Settings and not yet saved is written now (synchronously), before the app exits.
+        coordinator.commitAllSecretDrafts()
         coordinator.stopServices()
         ManagedProcess.terminateAllRunning()
     }

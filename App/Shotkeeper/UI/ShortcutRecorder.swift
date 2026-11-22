@@ -25,6 +25,7 @@ final class ShortcutRecorderModel {
     @ObservationIgnored private let commit: (HotKeyShortcut) -> HotKeyProblem?
     @ObservationIgnored private var monitor: Any?
     @ObservationIgnored private var resignObserver: NSObjectProtocol?
+    @ObservationIgnored private var closeObserver: NSObjectProtocol?
 
     init(commit: @escaping (HotKeyShortcut) -> HotKeyProblem?) {
         self.commit = commit
@@ -34,7 +35,8 @@ final class ShortcutRecorderModel {
         problem = nil
         heldModifiers = []
         phase = .recording
-        // The current shortcut must not open Search while the user records a new one.
+        // The current shortcut must not open Search while the user records a new one (only while Shotkeeper is
+        // active: see `GlobalHotKey.isSuspended`). Every way recording ends calls `stop()`, which lifts it.
         GlobalHotKey.isSuspended = true
         if monitor == nil {
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
@@ -47,6 +49,15 @@ final class ShortcutRecorderModel {
             resignObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
                                                                     object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.stop() }
+            }
+        }
+        if closeObserver == nil {
+            // The Settings window closing (also when the view's onDisappear does not run).
+            closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil,
+                                                                   queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    if (note.object as? NSWindow)?.identifier?.rawValue == SettingsOpener.windowIdentifier { self?.stop() }
+                }
             }
         }
         Self.announce("Recording. Press the new shortcut, or Escape to cancel.")
@@ -62,6 +73,8 @@ final class ShortcutRecorderModel {
         monitor = nil
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
         resignObserver = nil
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        closeObserver = nil
         GlobalHotKey.isSuspended = false
         heldModifiers = []
         phase = .idle
@@ -70,6 +83,8 @@ final class ShortcutRecorderModel {
     /// A key while recording. Returns true to swallow the event (no menu shortcut, no typing).
     func handle(_ event: NSEvent) -> Bool {
         guard phase == .recording else { return false }
+        // An input method is composing (Japanese, Chinese): its keys are not a shortcut.
+        if let client = NSApp.keyWindow?.firstResponder as? NSTextInputClient, client.hasMarkedText() { return false }
         let modifiers = GlobalHotKey.modifiers(from: event.modifierFlags)
         if event.type == .flagsChanged {
             heldModifiers = modifiers
@@ -86,7 +101,7 @@ final class ShortcutRecorderModel {
     /// Tries `shortcut`; on success recording ends, else the problem shows and recording goes on.
     func receive(_ shortcut: HotKeyShortcut) {
         if let refused = commit(shortcut) {
-            problem = refused.message(for: shortcut)
+            problem = refused.displayMessage(for: shortcut)
             heldModifiers = []
             Self.announce(problem ?? "")
         } else {
@@ -115,7 +130,7 @@ struct ShortcutRecorderView: View {
                         Button("Change Shortcut…") { model.start() }
                             .help("Record a new shortcut for Search")
                         if current != .defaultSearch {
-                            Button("Use \(HotKeyShortcut.defaultSearch.displayString)") { model.receive(.defaultSearch) }
+                            Button("Use \(HotKeyShortcut.defaultSearch.display)") { model.receive(.defaultSearch) }
                                 .help("Go back to the default shortcut")
                         }
                     }
@@ -134,13 +149,18 @@ struct ShortcutRecorderView: View {
                 Text("Press the new shortcut with ⌘ or ⌃. Esc cancels.")
                     .font(.callout).foregroundStyle(Brand.secondaryText)
             }
+            if model.phase == .recording {
+                // RegisterEventHotKey cannot see every conflict (see `GlobalHotKey.init`).
+                Text("Shortcuts another app uses may not register.")
+                    .font(.callout).foregroundStyle(Brand.secondaryText)
+            }
         }
     }
 
     private var keycap: some View {
         let recording = model.phase == .recording
         let text: String = {
-            guard recording else { return current.displayString }
+            guard recording else { return current.display }
             let held = model.heldModifiers.symbols
             return held.isEmpty ? "Type shortcut" : held + "…"
         }()
@@ -153,6 +173,6 @@ struct ShortcutRecorderView: View {
             .overlay(RoundedRectangle(cornerRadius: 5)
                 .strokeBorder(recording ? Color.accentColor : Color.primary.opacity(0.18), lineWidth: recording ? 2 : 0.5))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(recording ? "Recording a new shortcut" : "Search shortcut, \(current.spokenName)")
+            .accessibilityLabel(recording ? "Recording a new shortcut" : "Search shortcut, \(current.spokenDisplay)")
     }
 }

@@ -72,7 +72,8 @@ struct TestResultView: View {
             switch result {
             case .success(let text):
                 Label {
-                    Text("Connected. \(text)").fixedSize(horizontal: false, vertical: true)
+                    // Primary: a Form draws LabeledContent values in system secondary (below 4.5:1).
+                    Text("Connected. \(text)").foregroundStyle(Color.primary).fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 }
@@ -241,10 +242,11 @@ private struct CustomEndpointSettingsSection: View {
     }
 }
 
-/// A token or key field that saves to the Keychain as you type: 1 s after the last change, on Return, and when the
-/// field goes away. There is no Save button. An empty field never removes the saved value; "Remove saved token"
-/// does, after a confirmation. The typed text stays in the field (masked), so a pause while typing saves a partial
-/// value that the next keystrokes replace.
+/// A token or key field with no Save button. Typing is remembered; 1 s after the last keystroke the value is written
+/// to the Keychain so it is not lost, but not used yet (`AppCoordinator.persistSecretDraft`): a half-typed token must
+/// never reach the analyzer, the watcher or a held queue. It is used on commit: Return, focus leaving the field, the
+/// field or the Settings window going away, or quitting (`commitSecretDraft`). An empty field never removes the saved
+/// value; "Remove saved token…" does, after a confirmation. A Keychain error shows under the field.
 struct SecretField: View {
     let title: String
     let key: CredentialKey
@@ -256,19 +258,34 @@ struct SecretField: View {
 
     @State private var saveTask: Task<Void, Never>?
     @State private var confirmingRemove = false
+    /// The value last written without an error (the "Saved" mark shows while the field still holds it).
     @State private var savedText: String?
+    @State private var problem: String?
+    @FocusState private var focused: Bool
 
     var body: some View {
         let hasSaved = coordinator.hasSecret(key)
         SecureField(title, text: $text,
                     prompt: Text(hasSaved ? "Saved in Keychain (type to replace)" : "Paste it here"))
-            .onChange(of: text) { _, _ in scheduleSave() }
-            .onSubmit { saveNow() }
-            .onDisappear { saveNow() }
+            .focused($focused)
+            .onChange(of: text) { _, new in
+                coordinator.updateSecretDraft(new, for: key)
+                scheduleSave()
+            }
+            .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+            .onSubmit { commit() }
+            .onDisappear { commit() }
+        if let problem {
+            Label {
+                Text(problem).foregroundStyle(Brand.errorText).fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Brand.errorText)
+            }
+        }
         if hasSaved || savedText != nil {
             LabeledContent {
                 HStack(spacing: 10) {
-                    if savedText != nil, savedText == text.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    if problem == nil, savedText != nil, savedText == text.trimmingCharacters(in: .whitespacesAndNewlines) {
                         Label("Saved", systemImage: "checkmark.circle.fill")
                             .labelStyle(.titleAndIcon)
                             .foregroundStyle(Brand.secondaryText)
@@ -285,6 +302,7 @@ struct SecretField: View {
                     saveTask?.cancel()
                     text = ""
                     savedText = nil
+                    problem = nil
                     coordinator.setSecret("", for: key)
                 }
                 Button("Cancel", role: .cancel) {}
@@ -300,17 +318,26 @@ struct SecretField: View {
         saveTask = Task {
             try? await Task.sleep(for: Self.saveDelay)
             guard !Task.isCancelled else { return }
-            saveNow()
+            run { try coordinator.persistSecretDraft(for: key) }
         }
     }
 
-    private func saveNow() {
+    private func commit() {
         saveTask?.cancel()
         saveTask = nil
+        run { try coordinator.commitSecretDraft(for: key) }
+    }
+
+    private func run(_ write: () throws -> Void) {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, value != savedText else { return }
-        coordinator.setSecret(value, for: key)
-        savedText = value
+        do {
+            try write()
+            problem = nil
+            if !value.isEmpty { savedText = value }
+        } catch {
+            problem = StatusText.describe(error)
+            savedText = nil
+        }
     }
 }
 
@@ -363,6 +390,16 @@ struct LocalInstallState: Equatable {
     var problem: String?
     var variantName: String
     var downloadGB: Int
+    /// Bytes of this model already on disk while it is not installed (a cancelled or failed download).
+    var partialDownloadBytes: Int64 = 0
+
+    /// From the runtime's phase, not from the view: leaving the tab mid-download and coming back still shows Cancel.
+    static func isInstalling(_ phase: RuntimePhase) -> Bool {
+        switch phase {
+        case .installing, .downloading: return true
+        default: return false
+        }
+    }
 
     var isInstalled: Bool {
         switch phase {
@@ -385,9 +422,11 @@ private struct LocalModelSettingsSection: View {
 
     private var state: LocalInstallState {
         stateOverride ?? LocalInstallState(phase: coordinator.runtimePhase, stats: coordinator.downloadStats,
-                                           installing: installTask != nil, problem: coordinator.localInstallProblem,
+                                           installing: LocalInstallState.isInstalling(coordinator.runtimePhase),
+                                           problem: coordinator.localInstallProblem,
                                            variantName: variant.displayName,
-                                           downloadGB: Int(variant.approxDownloadGB.rounded()))
+                                           downloadGB: Int(variant.approxDownloadGB.rounded()),
+                                           partialDownloadBytes: coordinator.localDownloadBytesOnDisk)
     }
 
     var body: some View {
@@ -425,8 +464,11 @@ private struct LocalModelSettingsSection: View {
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This deletes the \(state.downloadGB) GB download from this Mac. Your screenshots and their "
-                         + "names stay as they are. You can download it again later.")
+                    Text(state.isInstalled
+                         ? "This deletes the \(state.downloadGB) GB download from this Mac. Your screenshots and their "
+                           + "names stay as they are. You can download it again later."
+                         : "This deletes the \(DownloadStats.gigabytes(Double(state.partialDownloadBytes))) GB "
+                           + "downloaded so far. Your screenshots stay as they are.")
                 }
             if state.isInstalled {
                 Stepper(draft.idleTimeoutMinutes == 0
@@ -479,9 +521,17 @@ struct LocalInstallView: View {
         VStack(alignment: .leading, spacing: 8) {
             if case .downloading(let fraction) = state.phase {
                 Text("Downloading \(state.variantName)")
-                ProgressView(value: fraction)
-                    .accessibilityLabel("Download progress")
-                    .accessibilityValue(state.stats?.summary ?? "\(Int((fraction * 100).rounded())) percent")
+                if state.stats?.exceedsEstimate == true {
+                    // More than the catalog size arrived: no honest fraction or time left.
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .accessibilityLabel("Download progress")
+                        .accessibilityValue(state.stats?.summary ?? "")
+                } else {
+                    ProgressView(value: fraction)
+                        .accessibilityLabel("Download progress")
+                        .accessibilityValue(state.stats?.summary ?? "\(Int((fraction * 100).rounded())) percent")
+                }
                 Text(state.stats?.summary ?? "\(Int((fraction * 100).rounded()))%")
                     .font(.callout).monospacedDigit()
                     .foregroundStyle(Brand.secondaryText)
@@ -523,6 +573,9 @@ struct LocalInstallView: View {
                         .help("Analyzes a generated test image with the local model")
                     Button("Remove Model…", role: .destructive, action: actions.remove)
                         .help("Delete the downloaded model from this Mac")
+                } else if !state.installing, state.partialDownloadBytes > 0 {
+                    Button("Remove Download…", role: .destructive, action: actions.remove)
+                        .help("Delete the \(DownloadStats.gigabytes(Double(state.partialDownloadBytes))) GB downloaded so far")
                 }
             }
             TestResultView(result: testResult, isRunning: testing)

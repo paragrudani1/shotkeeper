@@ -69,7 +69,7 @@ struct MenuViewState {
             undoTitle: MenuText.undoItem(for: coordinator.undoCandidate),
             canUndo: coordinator.undoCandidate != nil,
             isPaused: coordinator.isPaused,
-            searchShortcut: coordinator.activeSearchShortcut?.displayString,
+            searchShortcut: coordinator.activeSearchShortcut?.display,
             version: version,
             showsPauseResume: coordinator.isWatching || coordinator.isPaused,
             showsProcessExisting: coordinator.readiness == .ready)

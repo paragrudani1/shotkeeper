@@ -518,13 +518,13 @@ final class ScreenshotProcessorTests: XCTestCase {
         let expected = dir.url.appendingPathComponent("Desktop/\(day)-invoice-from-acme.png").standardizedFileURL
         XCTAssertEqual(outcome, .processed(finalURL: expected, renamed: true, moved: false))
 
-        // "Edit name": the same style; the date already in the typed name is kept, not doubled.
+        // "Edit name": the same casing; the date already in the typed name is kept, not doubled.
         settings.mutate { $0.filenameStyle = FilenameStyle(casing: .title, datePrefix: true) }
         let edited = try p.rename(expected, to: "\(day) march invoice from acme")
         XCTAssertEqual(edited.finalURL.lastPathComponent, "\(day) March Invoice from Acme.png")
-        // A typed name without a date gets the capture date from the index.
+        // The user removed the date: it stays removed (what they typed is respected).
         let again = try p.rename(edited.finalURL, to: "acme invoice")
-        XCTAssertEqual(again.finalURL.lastPathComponent, "\(day) Acme Invoice.png")
+        XCTAssertEqual(again.finalURL.lastPathComponent, "Acme Invoice.png")
         XCTAssertEqual(read(again.finalURL), "png bytes")
         XCTAssertThrowsError(try p.rename(again.finalURL, to: "Screenshot")) { error in
             XCTAssertEqual(error as? ManualRenameError, .unusableName("Screenshot"), "sanitizer rules are unchanged")

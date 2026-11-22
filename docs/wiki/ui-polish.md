@@ -500,9 +500,11 @@ separate branch (`t3/ui-pr4-icon`), merged in before the PR.
   - "Change Shortcut…" starts recording. A local key monitor swallows the keys and shows the held modifiers. Esc or
     Cancel stops. The global hotkey is suspended while recording.
   - A new shortcut is checked by `HotKeyRules`, then registered with `RegisterEventHotKey` and
-    `kEventHotKeyExclusive`. Exclusive registration makes a shortcut that another app holds fail with
-    `eventHotKeyExistsErr`, instead of being shared. The shortcut is saved only after it registered
-    (`AppCoordinator.changeSearchShortcut`).
+    `kEventHotKeyExclusive`, and saved only after it registered (`AppCoordinator.changeSearchShortcut`).
+    *Corrected 2026-11-22 (review of `9552c66`): exclusive registration fails with `eventHotKeyExistsErr` only when
+    the shortcut is already registered so that it cannot be shared. It does not catch a shortcut another app
+    registered without that option, or one an app handles as a menu key, so the recorder says "Shortcuts another
+    app uses may not register."*
   - The old hotkey stays registered until the new one registers (`SearchHotKey`). A refused shortcut keeps the
     recorder recording and shows the reason in error red.
   - "Use ⌥⌘S" appears while another shortcut is set.
@@ -563,4 +565,39 @@ separate branch (`t3/ui-pr4-icon`), merged in before the PR.
   the picker inside "Filename style" repeated the section title and is now "Letter case".
 - 2026-11-22: offscreen snapshots draw switches and the progress bar in the inactive-window grey; on a Mac they use
   the accent colour.
+
+### Review fixes (review of `9552c66`)
+- 2026-11-22 (B1): **a token being typed is saved but not used.** The 1 s pause writes the draft to the Keychain
+  (`AppCoordinator.persistSecretDraft`) without rebuilding the analyzer, recomputing readiness, starting the watcher
+  or resuming a held queue. The analyzer keeps reading the previous value of that key (`CommittedCredentialStore`)
+  until a commit: Return, focus leaving the field, the field going away, the Settings window closing, or quitting
+  (`commitSecretDraft`, `commitAllSecretDrafts`; `applicationWillTerminate` commits synchronously). Before, a pause
+  mid-typing made Clairic "ready", and the next screenshot was sent with the partial token (401 toast). Test:
+  `testAHalfTypedTokenIsSavedButNotUsedUntilCommitted`. A Keychain error shows in red under the field instead of
+  "Saved" (S4).
+- 2026-11-22 (S1, S2, N5): **filename style.**
+  - A date at the start of the title is split off before sanitizing. Room is reserved only for a date that will
+    really be there, so styling a styled name again changes nothing, also at the 80-unit cap (tested for every
+    casing, with and without the date).
+  - kebab-case backs off to the last "-" at the cap, and returns nil instead of "" when nothing is left.
+  - Month and day may have one digit ("2026-11-2 foo" gets no second date).
+  - **"Edit name" never adds a date**: the field starts with the current name, so the user's text is kept with or
+    without one, and removing the date sticks. Supersedes the 2026-11-22 entry above that took the date from the
+    index.
+  - Sentence case leaves a first word with a dot or digits ("x.com", "v1.2") alone.
+- 2026-11-22 (S3, N6): **local install.**
+  - "Installing" comes from the runtime phase (installing or downloading), not from the view's task, so Cancel
+    stays after leaving the Model tab and coming back. The variant picker is disabled meanwhile.
+  - Once more bytes arrive than the catalog size, the bar turns indeterminate and the text reads "10.6 GB so far ·
+    12.3 MB/s", without a time left.
+  - A cancelled or failed download can be deleted: "Remove Download…" shows while bytes of a model that is not
+    installed are on disk (`localDownloadBytesOnDisk`).
+- 2026-11-22 (S5): the Test Connection success text and the confidence value force primary: a grouped Form draws
+  `LabeledContent` values in system secondary.
+- 2026-11-22 (N1): key names come from the current keyboard layout (`UCKeyTranslate`, `KeyboardLayout`; "⌥⌘Y" for
+  the Z key on German), falling back to the US names. Shortcuts are still stored as key codes.
+- 2026-11-22 (N2): ⌃ (± ⇧) + a letter is refused: those are text-editing keys in every text field (⌃A, ⌃E, ⌃K).
+- 2026-11-22 (N4): the global hotkey is ignored while recording only while Shotkeeper is active, so a recorder that
+  never got the keyboard cannot disable it elsewhere. Recording also stops when the Settings window closes. The key
+  monitor lets keys through while an input method is composing (`hasMarkedText`).
 

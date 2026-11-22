@@ -49,6 +49,9 @@ final class AppCoordinator {
     private(set) var downloadStats: DownloadStats?
     /// Why the last "Install and Download" did not start or failed (Settings → Model shows it under the button).
     private(set) var localInstallProblem: String?
+    /// Bytes of the selected local model on disk while it is not installed (a cancelled or failed download that
+    /// "Remove Download…" can delete). 0 otherwise.
+    private(set) var localDownloadBytesOnDisk: Int64 = 0
     /// The search shortcut registered with the system now (nil when none could be registered). The menu and setup
     /// show this one.
     private(set) var activeSearchShortcut: HotKeyShortcut?
@@ -128,6 +131,18 @@ final class AppCoordinator {
         runtimePhase = phase
         if case .downloading = phase { return }
         downloadStats = nil
+        refreshLocalDownloadBytes()
+    }
+
+    /// Re-reads how much of the selected model is on disk (for "Remove Download…").
+    func refreshLocalDownloadBytes() {
+        let variant = localVariant
+        let runtime = localRuntime
+        Task { [weak self] in
+            let installed = await runtime.isInstalled(variant)
+            let bytes = installed ? 0 : await runtime.diskNeeds(for: variant).alreadyOnDisk
+            self?.localDownloadBytesOnDisk = bytes
+        }
     }
 
     func recordDownloadBytes(_ bytes: Int64, at time: Date = Date()) {
@@ -270,8 +285,12 @@ final class AppCoordinator {
         updateSettings(copy)
     }
 
+    /// Saves (or, when empty, removes) a secret and uses it now: setup's Continue, "Remove saved token". Drops any
+    /// draft of that key being typed in Settings.
     func setSecret(_ value: String, for key: CredentialKey) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        secretDrafts[key] = nil
+        committedSecrets[key] = nil
         do {
             if trimmed.isEmpty { try credentials.removeSecret(for: key) } else { try credentials.setSecret(trimmed, for: key) }
         } catch {
@@ -281,13 +300,66 @@ final class AppCoordinator {
         rebuildAnalyzer()
     }
 
+    // MARK: Secrets typed in Settings (saved as you type, used on commit)
+
+    /// What the user typed and has not been written yet, per key.
+    @ObservationIgnored private var secretDrafts: [CredentialKey: String] = [:]
+    /// For a key whose draft was written to the Keychain but not committed: the value the analyzer was built with
+    /// before (nil inside = none). The analyzer and readiness keep using it until the commit, so a half-typed token
+    /// that was saved during a pause in typing is never sent.
+    @ObservationIgnored private var committedSecrets: [CredentialKey: String?] = [:]
+
+    /// Keystrokes in a token field. Only remembered; nothing is written or used.
+    func updateSecretDraft(_ value: String, for key: CredentialKey) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        secretDrafts[key] = trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The pause after typing: writes the draft to the Keychain so it is not lost, without using it (no analyzer
+    /// rebuild, no readiness change, no queue resume, no watcher start). Throws the Keychain error.
+    func persistSecretDraft(for key: CredentialKey) throws {
+        guard let draft = secretDrafts[key] else { return }
+        if committedSecrets[key] == nil {
+            committedSecrets[key] = .some((try? credentials.secret(for: key)) ?? nil)
+        }
+        try credentials.setSecret(draft, for: key)
+        secretDrafts[key] = nil
+        credentialsRevision += 1
+    }
+
+    /// Return, focus leaving the field, the field or window going away, quitting: writes what is left and uses the
+    /// saved value from now on.
+    func commitSecretDraft(for key: CredentialKey) throws {
+        try persistSecretDraft(for: key)
+        guard committedSecrets.removeValue(forKey: key) != nil else { return }
+        rebuildAnalyzer()
+    }
+
+    /// Settings window closed or the app quits: commits every key being typed. Errors go to the menu message.
+    func commitAllSecretDrafts() {
+        for key in Set(secretDrafts.keys).union(committedSecrets.keys) {
+            do { try commitSecretDraft(for: key) } catch { lastMessage = StatusText.describe(error) }
+        }
+    }
+
+    /// The credentials the analyzer is built from: the Keychain, except committed values for keys being typed.
+    private var analyzerCredentials: any CredentialStore {
+        committedSecrets.isEmpty ? credentials : CommittedCredentialStore(base: credentials, committed: committedSecrets)
+    }
+
     // MARK: Analyzer and queue
 
+    /// How many times the analyzer was rebuilt (each rebuild may resume a held queue). For tests.
+    @ObservationIgnored private(set) var analyzerRebuilds = 0
+
     func rebuildAnalyzer() {
-        let analyzer = AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: localRuntime,
+        analyzerRebuilds += 1
+        let store = analyzerCredentials
+        let analyzer = AnalyzerFactory.make(settings: settings, credentials: store, localRuntime: localRuntime,
                                             physicalMemoryBytes: physicalMemoryBytes)
         analyzerBox.value = AnalyzerSnapshot(analyzer: analyzer, settings: settings)
-        readiness = BackendGate.readiness(settings: settings, hasClairicToken: hasSecret(.cloudflareAPIToken))
+        let token = ((try? store.secret(for: .cloudflareAPIToken)) ?? nil) ?? ""
+        readiness = BackendGate.readiness(settings: settings, hasClairicToken: !token.isEmpty)
         // A queue held on "not configured"/"unauthorized" retries with the new analyzer.
         if case .error = queueStatus, let queue { Task { await queue.resume() } }
         startWatchingIfReady()
@@ -534,8 +606,8 @@ final class AppCoordinator {
         guard let registerSearchShortcut else { return }
         let shortcut = settings.searchShortcut
         if let problem = registerSearchShortcut(shortcut) {
-            searchShortcutProblem = problem.message(for: shortcut)
-            lastMessage = "Search shortcut: \(problem.message(for: shortcut))"
+            searchShortcutProblem = problem.displayMessage(for: shortcut)
+            lastMessage = "Search shortcut: \(problem.displayMessage(for: shortcut))"
         } else {
             activeSearchShortcut = shortcut
             searchShortcutProblem = nil
@@ -680,4 +752,18 @@ extension AppCoordinator {
 
 struct AnalyzerFailure: Error, Equatable {
     var message: String
+}
+
+/// Reads committed values for the keys being typed and the Keychain for the rest. Read-only.
+private struct CommittedCredentialStore: CredentialStore {
+    let base: any CredentialStore
+    let committed: [CredentialKey: String?]
+
+    func secret(for key: CredentialKey) throws -> String? {
+        if let value = committed[key] { return value }
+        return try base.secret(for: key)
+    }
+
+    func setSecret(_ value: String, for key: CredentialKey) throws {}
+    func removeSecret(for key: CredentialKey) throws {}
 }

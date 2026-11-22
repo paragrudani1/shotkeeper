@@ -29,6 +29,10 @@ public struct DownloadStats: Equatable, Sendable {
 
     public var bytesDone: Int64 { min(samples.last?.bytes ?? 0, totalBytes) }
 
+    /// More bytes arrived than the catalog's size: the estimate was low, so there is no honest fraction or time left.
+    /// Show an indeterminate "Downloading…" with the bytes so far.
+    public var exceedsEstimate: Bool { (samples.last?.bytes ?? 0) > totalBytes }
+
     /// Bytes per second; nil until two samples at least 1 s apart.
     public var bytesPerSecond: Double? {
         guard let first = samples.first, let last = samples.last else { return nil }
@@ -39,12 +43,13 @@ public struct DownloadStats: Equatable, Sendable {
 
     /// Nil while the speed is unknown or zero (stalled: no honest estimate).
     public var secondsRemaining: TimeInterval? {
-        guard let speed = bytesPerSecond, speed > 0 else { return nil }
+        guard !exceedsEstimate, let speed = bytesPerSecond, speed > 0 else { return nil }
         return Double(max(0, totalBytes - bytesDone)) / speed
     }
 
     /// "4.1 of 9.1 GB" (spec); "350 MB of 9.1 GB" below 1 GB.
     public var bytesText: String {
+        if exceedsEstimate { return "\(Self.gigabytes(Double(samples.last?.bytes ?? 0))) GB so far" }
         let done = Double(bytesDone)
         let total = Self.gigabytes(Double(totalBytes))
         if done < 1_000_000_000 { return "\(Int((done / 1_000_000).rounded())) MB of \(total) GB" }
@@ -60,7 +65,7 @@ public struct DownloadStats: Equatable, Sendable {
 
     /// "About 6 min left", "About 1 h 20 min left", "Less than a minute left"; "Stalled" when nothing arrives.
     public var timeLeftText: String? {
-        guard let speed = bytesPerSecond else { return nil }
+        guard !exceedsEstimate, let speed = bytesPerSecond else { return nil }
         guard speed > 0, let seconds = secondsRemaining else { return "Stalled" }
         if seconds < 60 { return "Less than a minute left" }
         let minutes = Int((seconds / 60).rounded())
@@ -75,7 +80,7 @@ public struct DownloadStats: Equatable, Sendable {
     }
 
     /// One decimal, decimal gigabytes (10^9 bytes, like the catalog and Finder).
-    static func gigabytes(_ bytes: Double) -> String {
+    public static func gigabytes(_ bytes: Double) -> String {
         String(format: "%.1f", bytes / 1_000_000_000)
     }
 }

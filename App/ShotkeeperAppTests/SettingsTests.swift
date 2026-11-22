@@ -1,4 +1,5 @@
 import AppKit
+import Security
 import ShotkeeperCore
 import XCTest
 @testable import Shotkeeper
@@ -111,4 +112,67 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         XCTAssertEqual(ExclusionsSettingsTab.emptyText,
                        "No rules yet. Screenshots that match a rule are never sent, renamed or indexed.")
     }
+
+    /// B1 (review of `9552c66`): the pause while typing a token writes it to the Keychain but must not use it: no
+    /// analyzer rebuild, no readiness change (which would start the watcher and resume a held queue). Commit uses it.
+    func testAHalfTypedTokenIsSavedButNotUsedUntilCommitted() throws {
+        let credentials = InMemoryCredentialStore()
+        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
+                                         credentials: credentials, physicalMemoryBytes: 16 * 1_073_741_824,
+                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        coordinator.updateSettings {
+            $0.backend = .clairic
+            $0.clairicAccountID = "acct"
+            $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: Date())]
+        }
+        XCTAssertEqual(coordinator.readiness, .notConfigured("Cloudflare API token is not set"))
+        let rebuilds = coordinator.analyzerRebuilds
+
+        coordinator.updateSecretDraft("par", for: .cloudflareAPIToken)
+        try coordinator.persistSecretDraft(for: .cloudflareAPIToken)
+        XCTAssertEqual(try credentials.secret(for: .cloudflareAPIToken), "par", "saved so it is not lost")
+        XCTAssertEqual(coordinator.analyzerRebuilds, rebuilds, "no rebuild, so no queue resume")
+        XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
+        XCTAssertEqual(coordinator.readiness, .notConfigured("Cloudflare API token is not set"), "not ready: no watcher, no resume")
+
+        // Another change that rebuilds still uses the committed (empty) token, not the draft.
+        coordinator.updateSettings { $0.clairicAccountID = "acct2" }
+        XCTAssertEqual(coordinator.readiness, .notConfigured("Cloudflare API token is not set"))
+
+        coordinator.updateSecretDraft("partial-token-full", for: .cloudflareAPIToken)
+        try coordinator.commitSecretDraft(for: .cloudflareAPIToken)
+        XCTAssertEqual(try credentials.secret(for: .cloudflareAPIToken), "partial-token-full")
+        XCTAssertEqual(coordinator.readiness, .ready, "commit uses it")
+        XCTAssertTrue(coordinator.currentAnalyzer is CloudflareClairicAnalyzer)
+
+        // A draft left in the field when the app quits is written and used.
+        coordinator.updateSecretDraft("newer", for: .cloudflareAPIToken)
+        coordinator.commitAllSecretDrafts()
+        XCTAssertEqual(try credentials.secret(for: .cloudflareAPIToken), "newer")
+    }
+
+    func testAFailedKeychainWriteIsReported() {
+        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
+                                         credentials: FailingCredentialStore(), physicalMemoryBytes: 16 * 1_073_741_824,
+                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        coordinator.updateSecretDraft("token", for: .cloudflareAPIToken)
+        XCTAssertThrowsError(try coordinator.persistSecretDraft(for: .cloudflareAPIToken)) { error in
+            XCTAssertEqual(StatusText.describe(error), "The Keychain is locked. Unlock the Mac and try again.")
+        }
+    }
+
+    func testInstallingComesFromTheRuntimePhase() {
+        XCTAssertTrue(LocalInstallState.isInstalling(.downloading(0.3)))
+        XCTAssertTrue(LocalInstallState.isInstalling(.installing("step")))
+        XCTAssertFalse(LocalInstallState.isInstalling(.starting))
+        XCTAssertFalse(LocalInstallState.isInstalling(.ready))
+    }
+}
+
+private final class FailingCredentialStore: CredentialStore, @unchecked Sendable {
+    func secret(for key: CredentialKey) throws -> String? { nil }
+    func setSecret(_ value: String, for key: CredentialKey) throws {
+        throw KeychainError.status(operation: "SecItemAdd", errSecInteractionNotAllowed)
+    }
+    func removeSecret(for key: CredentialKey) throws {}
 }
