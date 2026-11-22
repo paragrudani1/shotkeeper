@@ -24,17 +24,25 @@ enum RuntimePhase: Equatable, Sendable {
 
 enum LocalRuntimeError: LocalizedError, Equatable {
     case noPython
-    case commandFailed(step: String, exit: String)
+    case commandFailed(step: String, exit: ProcessExit)
     case alreadyRunning
+    /// The disk check before the download (core `DiskSpaceCheck`) failed; `message` is its sentence.
+    case notEnoughDiskSpace(String)
+    /// "Remove model" while an install or download runs.
+    case busy
 
     var errorDescription: String? {
         switch self {
         case .noPython:
             return "Needs uv or Python 3.11+. Install uv with `brew install uv` (or from astral.sh/uv), then try again."
         case .commandFailed(let step, let exit):
-            return "\(step) failed (\(exit)). Details: ~/Library/Logs/Shotkeeper/."
+            return "\(step) failed (\(exit.readable)). Details are in the log folder (Settings → About)."
         case .alreadyRunning:
             return "An install is already running."
+        case .notEnoughDiskSpace(let message):
+            return message
+        case .busy:
+            return "Wait for the download to finish or cancel it first."
         }
     }
 }
@@ -50,6 +58,8 @@ actor LocalModelRuntime: LocalModelServing {
     private let logDirectory: URL
     private let pidFile: ServerPIDFile
     private let onPhase: @Sendable (RuntimePhase) -> Void
+    /// Bytes of the model on disk, about once a second while it downloads (Settings shows speed and time left).
+    private let onDownloadBytes: @Sendable (Int64) -> Void
     /// Paths only; the install step builds its own plan with the uv/python it finds.
     private let pathsPlan: MLXRuntimePlan
 
@@ -71,10 +81,12 @@ actor LocalModelRuntime: LocalModelServing {
     private var installTask: Task<Void, Error>?
 
     init(applicationSupport: URL = AppPaths.applicationSupport, logDirectory: URL = LogLocation.directory,
-         idleTimeoutMinutes: Int, onPhase: @escaping @Sendable (RuntimePhase) -> Void) {
+         idleTimeoutMinutes: Int, onPhase: @escaping @Sendable (RuntimePhase) -> Void,
+         onDownloadBytes: @escaping @Sendable (Int64) -> Void = { _ in }) {
         self.applicationSupport = applicationSupport
         self.logDirectory = logDirectory
         self.onPhase = onPhase
+        self.onDownloadBytes = onDownloadBytes
         self.idlePolicy = IdlePolicy(idleTimeoutMinutes: idleTimeoutMinutes)
         self.pathsPlan = MLXRuntimePlan(applicationSupport: applicationSupport, uvPath: nil)
         self.pidFile = ServerPIDFile(url: pathsPlan.runtimeDirectory.appendingPathComponent("server.pid"))
@@ -126,6 +138,35 @@ actor LocalModelRuntime: LocalModelServing {
         let hasServer = FileManager.default.isExecutableFile(atPath: pathsPlan.serverExecutable)
         let hasModel = FileManager.default.fileExists(atPath: marker.path)
         return hasServer && hasModel
+    }
+
+    /// What the disk check before a download needs: the model bytes already on disk and whether the Python
+    /// environment still has to be installed.
+    func diskNeeds(for variant: ModelVariant) -> (alreadyOnDisk: Int64, needsRuntime: Bool) {
+        let onDisk = DownloadProgress.bytesOnDisk(in: pathsPlan.localModelDirectory(for: variant))
+        let hasServer = FileManager.default.isExecutableFile(atPath: pathsPlan.serverExecutable)
+        let hasHF = FileManager.default.isExecutableFile(atPath: pathsPlan.hfExecutable)
+        return (onDisk, !(hasServer && hasHF))
+    }
+
+    /// The folder the runtime and models go to (its volume's free space is checked before a download).
+    nonisolated var runtimeDirectory: URL { pathsPlan.runtimeDirectory }
+
+    var isInstalling: Bool { installTask != nil }
+
+    /// "Remove model": stops the server, then deletes this variant's downloaded files (app data under
+    /// Application Support, never a user file). The Python environment stays (shared by every variant, small).
+    func removeModel(_ variant: ModelVariant) throws {
+        guard installTask == nil else { throw LocalRuntimeError.busy }
+        stop()
+        let directory = pathsPlan.localModelDirectory(for: variant).standardizedFileURL
+        // Defense in depth: only ever a folder inside our own models folder.
+        let models = pathsPlan.modelsDirectory.standardizedFileURL.path + "/"
+        guard directory.path.hasPrefix(models), directory.path.count > models.count else { return }
+        if FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.removeItem(at: directory)
+        }
+        setPhase(.notInstalled)
     }
 
     /// Clears a "gave up after repeated crashes" state so the next request starts the server again.
@@ -206,9 +247,11 @@ actor LocalModelRuntime: LocalModelServing {
         setPhase(.downloading(0))
         let parsed = LockedValue<Double?>(nil)
         let tail = LockedValue("")
+        let reportBytes = onDownloadBytes
         let poller = Task { [weak self] in
             while !Task.isCancelled {
                 let bytes = DownloadProgress.bytesOnDisk(in: directory)
+                reportBytes(bytes)
                 let fraction = DownloadProgress.estimate(parsed: parsed.value, bytesOnDisk: bytes,
                                                          expectedGB: variant.approxDownloadGB)
                 await self?.setPhase(.downloading(fraction))
@@ -285,7 +328,7 @@ actor LocalModelRuntime: LocalModelServing {
         }
         try Task.checkCancellation()
         guard exit == .exited(0) else {
-            throw LocalRuntimeError.commandFailed(step: step, exit: "\(exit)")
+            throw LocalRuntimeError.commandFailed(step: step, exit: exit)
         }
     }
 
@@ -313,7 +356,7 @@ actor LocalModelRuntime: LocalModelServing {
         let port: Int
         do { port = Int(try FreePort.find()) } catch {
             setPhase(.failed("No free port"))
-            throw AnalyzerError.unreachable("No free local port: \(error)")
+            throw AnalyzerError.unreachable("No free local port")
         }
         let command = pathsPlan.serverCommand(model: modelArgument(for: variant), port: port)
         let spec = ProcessSpec(executable: URL(fileURLWithPath: command.executable), arguments: command.arguments,
@@ -328,7 +371,7 @@ actor LocalModelRuntime: LocalModelServing {
             try process.start()
         } catch {
             setPhase(.failed("Could not launch the model server"))
-            throw AnalyzerError.unreachable("Could not launch mlx_lm.server: \(error)")
+            throw AnalyzerError.unreachable("Could not launch mlx_lm.server")
         }
         server = process
         serverVariant = variant
@@ -380,7 +423,8 @@ actor LocalModelRuntime: LocalModelServing {
             }
         case .giveUp:
             serverVariant = nil
-            giveUpMessage = "The local model server keeps crashing (\(status)). See ~/Library/Logs/Shotkeeper/mlx-server.log, then retry in Settings."
+            giveUpMessage = "The local model server keeps crashing (\(status.readable)). See mlx-server.log in the log folder "
+                + "(Settings → About), then retry in Settings."
             setPhase(.failed(giveUpMessage ?? ""))
         }
     }

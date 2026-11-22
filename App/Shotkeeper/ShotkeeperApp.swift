@@ -9,8 +9,12 @@ struct ShotkeeperApp: App {
 
     var body: some Scene {
         // The menu bar item is an AppKit NSStatusItem (`StatusItemController`): its menu needs a status dot,
-        // thumbnails and a progress bar, which a MenuBarExtra menu cannot show. Windows are opened by the delegate.
-        Settings { EmptyView() }
+        // thumbnails and a progress bar, which a MenuBarExtra menu cannot show. Setup and search are opened by the
+        // delegate; Settings is the standard SwiftUI scene (toolbar tabs), opened from AppKit by `SettingsOpener`.
+        Settings {
+            SettingsView(coordinator: appDelegate.coordinator, navigation: appDelegate.settingsNavigation,
+                         showSetup: { [appDelegate] in appDelegate.showSetup() })
+        }
     }
 }
 
@@ -18,11 +22,12 @@ struct ShotkeeperApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let coordinator: AppCoordinator
-    private var hotKey: GlobalHotKey?
+    private var searchHotKey: SearchHotKey?
     private var statusItem: StatusItemController?
     private var toast: ToastController?
     private let windows = WindowPresenter()
-    private let settingsNavigation = SettingsNavigation()
+    private let settingsOpener = SettingsOpener()
+    let settingsNavigation = SettingsNavigation()
     private lazy var searchPanel = SearchPanelController(model: makeSearchModel())
 
     override init() {
@@ -47,23 +52,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator.renameFromToast(toast, to: name)
         }
         let viewInSearch: ([String]) -> Void = { [weak self] paths in self?.searchPanel.showBatch(paths) }
-        let fixSettings: () -> Void = { [weak self] in self?.showSettings() }
+        // Problems with "Fix Settings…" are missing or rejected credentials or endpoints: the Model tab.
+        let fixSettings: () -> Void = { [weak self] in self?.showSettings(tab: .model) }
         let toast = ToastController(handlers: ToastController.Handlers(undo: undo, rename: rename,
                                                                        viewInSearch: viewInSearch, fixSettings: fixSettings))
         self.toast = toast
         coordinator.onToast = { content in toast.show(content, on: ToastPlacement.screenForNewScreenshot()) }
         coordinator.onRenameSound = { NSSound(named: "Pop")?.play() }
-        statusItem = StatusItemController(coordinator: coordinator,
-                                          searchShortcut: GlobalHotKey.Shortcut.defaultSearch.displayString) { [weak self] row, reveal in
+        statusItem = StatusItemController(coordinator: coordinator) { [weak self] row, reveal in
             self?.perform(row, reveal: reveal)
         }
         searchPanel.onProcessExisting = { Task { _ = await coordinator.processExistingScreenshots() } }
+        settingsOpener.prepare()
         coordinator.startServices()
-        do {
-            hotKey = try GlobalHotKey(shortcut: .defaultSearch) { [weak self] in self?.searchPanel.toggle() }
-        } catch {
-            coordinator.lastMessage = "Hotkey \(GlobalHotKey.Shortcut.defaultSearch.displayString) unavailable"
-        }
+        let hotKey = SearchHotKey { [weak self] in self?.searchPanel.toggle() }
+        searchHotKey = hotKey
+        coordinator.registerSearchShortcut = { hotKey.use($0) }
+        coordinator.startSearchShortcut()
         if !coordinator.settings.hasSeenPrivacyNotice { showSetup() }
     }
 
@@ -78,7 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func perform(_ row: MenuRowID, reveal: Bool) {
         switch row {
-        case .fixSettings, .settings: showSettings()
+        case .fixSettings: showSettings(tab: .model)
+        case .settings: showSettings()
         case .finishSetup: showSetup()
         case .recent(let id):
             guard let item = coordinator.recentItems.first(where: { $0.id == id }) else { return }
@@ -96,13 +102,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// - Parameter tab: switch to this tab, also when the window is already open (setup's "Change Shortcut…").
+    /// - Parameter tab: switch to this tab, also when the window is already open.
     func showSettings(tab: SettingsTab? = nil) {
         if let tab { settingsNavigation.tab = tab }
-        windows.show(id: "settings", title: "Shotkeeper Settings", size: NSSize(width: 640, height: 560)) {
-            SettingsView(coordinator: coordinator, navigation: settingsNavigation,
-                         showSetup: { [weak self] in self?.showSetup() })
-        }
+        settingsOpener.open()
+    }
+
+    /// Setup's "Change Shortcut…": Settings → General, scrolled to the recorder, which starts recording.
+    func showShortcutRecorder() {
+        settingsNavigation.tab = .general
+        settingsNavigation.recordShortcutRequest += 1
+        settingsOpener.open()
     }
 
     /// First launch, the menu's "Finish Setup…" and Settings' "Run setup again…": always a fresh flow at step 1.
@@ -110,8 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows.close(id: "setup")
         let services = SetupServices.live(
             coordinator: coordinator,
-            // The shortcut recorder is PR 4; until then the shortcut is shown in General, where it will live.
-            openShortcutSettings: { [weak self] in self?.showSettings(tab: .general) },
+            openShortcutSettings: { [weak self] in self?.showShortcutRecorder() },
             close: { [weak self] in self?.windows.close(id: "setup") })
         let model = SetupModel(services: services)
         windows.show(id: "setup", title: SetupView.windowTitle,

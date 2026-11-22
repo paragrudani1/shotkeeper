@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import ShotkeeperCore
 
 /// Menu-bar wording for `QueueStatus`, and user-facing text for errors. Pure, unit-tested.
@@ -40,25 +41,42 @@ enum StatusText {
         }
     }
 
-    /// Short, secret-free description for the UI. Analyzer errors never include credentials (core redacts them).
+    /// Short, secret-free, readable text for any error the UI shows. Never `String(describing:)`, a server's
+    /// response body, or an OSStatus alone: core errors go through `UserFacingError`, app errors are mapped here.
     static func describe(_ error: any Error) -> String {
-        if let error = error as? AnalyzerError {
+        switch error {
+        case let error as AnalyzerError:
+            if case .notConfigured(let reason) = error { return reason }
+            return UserFacingError.problem(for: error).sentence
+        case is UndoError:
+            return "Cannot undo: \(UserFacingError.message(for: error))."
+        case let error as LocalRuntimeError:
+            return error.errorDescription ?? "The local model could not be installed."
+        case let error as KeychainError:
+            return keychain(error)
+        case let error as ManagedProcessError:
             switch error {
-            case .unreachable(let message): return "Could not reach the model backend (\(message))."
-            case .rateLimited(let retryAfter):
-                return retryAfter.map { "Rate limited; retry in \(Int($0.rounded())) s." } ?? "Rate limited; try again shortly."
-            case .serverError(let status, let message): return "Server error \(status): \(message)"
-            case .unauthorized(let message):
-                return "Not authorized (\(message)). Check the account ID and that the token has Workers AI Read + Edit."
-            case .badRequest(let status, let message): return "Request rejected (\(status)): \(message)"
-            case .invalidResponse(let message): return "Unexpected response: \(message)"
-            case .notConfigured(let message): return message
+            case .alreadyStarted: return "The local model server is already running."
+            case .launchFailed: return "The local model runtime could not be started. Install it again in Settings → Model."
             }
+        case let error as CocoaError where error.isFileError:
+            return error.code == .fileWriteOutOfSpace ? "The disk is full." : "A file could not be read or written."
+        default:
+            return UserFacingError.problem(for: error).sentence
         }
-        if error is UndoError { return "Cannot undo: \(UserFacingError.message(for: error))." }
-        if let error = error as? LocalizedError, let description = error.errorDescription { return description }
-        // Never `String(describing:)` in the UI: core maps its own errors to short sentences.
-        return UserFacingError.problem(for: error).sentence
+    }
+
+    static let launchAtLoginFailed = "Could not change Open at Login. Move Shotkeeper to /Applications and try again."
+
+    private static func keychain(_ error: KeychainError) -> String {
+        switch error {
+        case .status(_, let status) where status == errSecUserCanceled || status == errSecAuthFailed:
+            return "The Keychain did not allow access. Try again and choose Allow."
+        case .status(_, let status) where status == errSecInteractionNotAllowed:
+            return "The Keychain is locked. Unlock the Mac and try again."
+        default:
+            return "The Keychain could not save the token."
+        }
     }
 }
 

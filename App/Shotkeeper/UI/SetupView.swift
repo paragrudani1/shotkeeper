@@ -15,7 +15,7 @@ struct SetupView: View {
         VStack(spacing: 0) {
             Group {
                 switch flow.step {
-                case .welcome: WelcomeStep()
+                case .welcome: WelcomeStep(searchShortcut: model.services.searchShortcut())
                 case .privacy: PrivacyStep(model: model)
                 case .connect: ConnectStep(model: model, flow: flow)
                 case .tryIt: TryItStep(state: flow.tryIt)
@@ -104,6 +104,8 @@ private struct StepTitle: View {
 // MARK: Step 1
 
 private struct WelcomeStep: View {
+    let searchShortcut: HotKeyShortcut
+
     var body: some View {
         VStack(spacing: 12) {
             AppIconView(size: 72)
@@ -120,7 +122,7 @@ private struct WelcomeStep: View {
                 FeatureColumn(symbol: "textformat", title: "Clear names",
                               text: "Each screenshot gets a name that says what is in it.")
                 FeatureColumn(symbol: "magnifyingglass", title: "Search by memory",
-                              text: "Press ⌥⌘S and type what you remember: words, an app, a tag.")
+                              text: "Press \(searchShortcut.displayString) and type what you remember: words, an app, a tag.")
                 FeatureColumn(symbol: "arrow.uturn.backward.circle", title: "Safe",
                               text: "It never deletes a file. You can undo every rename.")
             }
@@ -605,13 +607,14 @@ private struct DoneStep: View {
             StepTitle(title: "You are all set")
             VStack(spacing: 0) {
                 HStack(spacing: 14) {
-                    Text(GlobalHotKey.Shortcut.defaultSearch.displayString)
+                    let shortcut = model.services.searchShortcut()
+                    Text(shortcut.displayString)
                         .font(.system(size: 14, weight: .semibold))
                         .padding(.horizontal, 8)
                         .frame(minWidth: 56, minHeight: 30)
                         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
                         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.18), lineWidth: 0.5))
-                        .accessibilityLabel("Option Command S")
+                        .accessibilityLabel(shortcut.spokenName)
                     Text("Search your screenshots from any app.").font(.system(size: 13))
                     Spacer()
                     Button("Change Shortcut…") { model.services.openShortcutSettings() }

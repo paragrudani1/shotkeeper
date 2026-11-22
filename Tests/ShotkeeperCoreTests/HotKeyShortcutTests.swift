@@ -22,6 +22,7 @@ final class HotKeyShortcutTests: XCTestCase {
         XCTAssertEqual(key(KeyCode.one, [.option, .command]).displayString, "⌥⌘1")
         XCTAssertEqual(key(0x2B, [.control, .command]).displayString, "⌃⌘,")
         XCTAssertEqual(key(0x99, [.command]).displayString, "⌘Key 153")
+        XCTAssertEqual(HotKeyShortcut.Modifiers([.shift, .control]).symbols, "⌃⇧", "held modifiers while recording")
     }
 
     func testNeedsCommandOrControl() {

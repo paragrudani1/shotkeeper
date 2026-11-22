@@ -1,0 +1,114 @@
+import AppKit
+import ShotkeeperCore
+import XCTest
+@testable import Shotkeeper
+
+/// Settings (UI polish PR 4): the search shortcut, the local model's disk check and download stats, and the small
+/// rules behind the tabs.
+@MainActor
+final class SettingsBehaviourTests: TempDirectoryTestCase {
+    private func makeCoordinator() -> AppCoordinator {
+        AppCoordinator(supportDirectory: directory.appendingPathComponent("support"), credentials: InMemoryCredentialStore(),
+                       physicalMemoryBytes: 16 * 1_073_741_824,
+                       applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+    }
+
+    private let taken = HotKeyShortcut(keyCode: KeyCode.k, modifiers: [.control, .option])
+    private let free = HotKeyShortcut(keyCode: KeyCode.j, modifiers: [.control, .option])
+
+    func testChangingTheShortcutSavesOnlyWhatRegistered() {
+        let coordinator = makeCoordinator()
+        var attempts: [HotKeyShortcut] = []
+        coordinator.registerSearchShortcut = { shortcut in
+            attempts.append(shortcut)
+            return shortcut == self.taken ? .registrationFailed(inUseByAnotherApp: true) : nil
+        }
+        coordinator.startSearchShortcut()
+        XCTAssertEqual(coordinator.activeSearchShortcut, .defaultSearch)
+
+        XCTAssertEqual(coordinator.changeSearchShortcut(to: taken), .registrationFailed(inUseByAnotherApp: true))
+        XCTAssertEqual(coordinator.settings.searchShortcut, .defaultSearch, "not saved")
+        XCTAssertEqual(coordinator.activeSearchShortcut, .defaultSearch, "the old one is still the active one")
+
+        let spotlight = HotKeyShortcut(keyCode: KeyCode.space, modifiers: [.command])
+        XCTAssertEqual(coordinator.changeSearchShortcut(to: spotlight), .system(name: "Spotlight"))
+        XCTAssertFalse(attempts.contains(spotlight), "known system shortcuts are refused before registering")
+
+        XCTAssertNil(coordinator.changeSearchShortcut(to: free))
+        XCTAssertEqual(coordinator.settings.searchShortcut, free)
+        XCTAssertEqual(coordinator.activeSearchShortcut, free)
+        XCTAssertEqual(MenuViewState.make(from: coordinator).searchShortcut, "⌃⌥J", "the menu shows the new shortcut")
+        XCTAssertEqual(SettingsStore(fileURL: AppPaths.settingsFile(in: directory.appendingPathComponent("support")))
+            .current.searchShortcut, free, "saved to the settings file")
+    }
+
+    func testAShortcutRefusedAtLaunchIsReportedAndNotShown() {
+        let coordinator = makeCoordinator()
+        coordinator.registerSearchShortcut = { _ in .registrationFailed(inUseByAnotherApp: true) }
+        coordinator.startSearchShortcut()
+        XCTAssertNil(coordinator.activeSearchShortcut)
+        XCTAssertEqual(coordinator.searchShortcutProblem, "Another app already uses ⌥⌘S. Choose another shortcut.")
+        XCTAssertNil(MenuViewState.make(from: coordinator).searchShortcut, "no shortcut shown that does not work")
+        coordinator.registerSearchShortcut = { _ in nil }
+        XCTAssertNil(coordinator.changeSearchShortcut(to: free))
+        XCTAssertNil(coordinator.searchShortcutProblem)
+    }
+
+    func testRecorderKeepsRecordingAfterAProblemAndStopsOnSuccess() {
+        var answers: [HotKeyProblem?] = [.registrationFailed(inUseByAnotherApp: true), nil]
+        let model = ShortcutRecorderModel { _ in answers.removeFirst() }
+        model.start()
+        XCTAssertEqual(model.phase, .recording)
+        XCTAssertTrue(GlobalHotKey.isSuspended, "the current shortcut does not open Search while recording")
+        model.receive(taken)
+        XCTAssertEqual(model.phase, .recording)
+        XCTAssertEqual(model.problem, "Another app already uses ⌃⌥K. Choose another shortcut.")
+        model.receive(free)
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertNil(model.problem)
+        XCTAssertFalse(GlobalHotKey.isSuspended)
+    }
+
+    func testChangeShortcutRequestIsTakenOnce() {
+        let navigation = SettingsNavigation()
+        XCTAssertFalse(navigation.takeRecordShortcutRequest())
+        navigation.recordShortcutRequest += 1
+        XCTAssertTrue(navigation.takeRecordShortcutRequest())
+        XCTAssertFalse(navigation.takeRecordShortcutRequest(), "reopening General later does not record again")
+    }
+
+    func testInstallRefusesWhenTheDiskIsTooFull() async {
+        let coordinator = makeCoordinator()
+        coordinator.availableDiskBytes = { _ in 3_000_000_000 }
+        await coordinator.installLocalModel(ModelCatalog.inkling2bit)
+        let problem = try? XCTUnwrap(coordinator.localInstallProblem)
+        XCTAssertTrue(problem?.hasPrefix("Not enough disk space: the download needs about 13.4 GB free") == true, problem ?? "")
+        XCTAssertEqual(coordinator.runtimePhase, .notInstalled, "nothing was started")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("Shotkeeper/runtime/models").path))
+    }
+
+    func testDownloadStatsFollowTheDownloadPhase() {
+        let coordinator = makeCoordinator()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        coordinator.recordDownloadBytes(1, at: start)
+        XCTAssertNil(coordinator.downloadStats, "only while downloading")
+        coordinator.applyRuntimePhase(.downloading(0.1))
+        coordinator.recordDownloadBytes(1_000_000_000, at: start)
+        coordinator.recordDownloadBytes(1_100_000_000, at: start.addingTimeInterval(10))
+        XCTAssertEqual(coordinator.downloadStats?.speedText, "10.0 MB/s")
+        XCTAssertEqual(coordinator.downloadStats?.totalBytes, 10_400_000_000, "the selected 2-bit build on 16 GB")
+        coordinator.applyRuntimePhase(.ready)
+        XCTAssertNil(coordinator.downloadStats)
+    }
+
+    func testFilenameExampleAndAboutLinks() {
+        XCTAssertEqual(FilenameStyleExample.text(for: FilenameStyle()), "Tweet semiconductor flashcards.png")
+        XCTAssertEqual(FilenameStyleExample.text(for: FilenameStyle(casing: .kebab, datePrefix: true)),
+                       "2026-11-21-tweet-semiconductor-flashcards.png")
+        XCTAssertEqual(AboutLinks.readme.absoluteString, "https://github.com/paragrudani1/shotkeeper#readme")
+        XCTAssertEqual(AboutLinks.privacy.fragment, "privacy", "README's \\"## Privacy\\" heading")
+        XCTAssertEqual(BackendCopy.shortName(for: .localInkling), "Local")
+        XCTAssertEqual(ExclusionsSettingsTab.emptyText,
+                       "No rules yet. Screenshots that match a rule are never sent, renamed or indexed.")
+    }
+}

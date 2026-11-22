@@ -21,8 +21,13 @@ struct MenuViewState {
     var undoTitle: String
     var canUndo: Bool
     var isPaused: Bool
-    var searchShortcut: String
+    /// The registered search shortcut ("⌥⌘S"); nil when none is registered (the row then shows no shortcut).
+    var searchShortcut: String?
     var version: String
+    /// Pause/Resume only while watching (or paused): before setup there is nothing to pause.
+    var showsPauseResume = true
+    /// "Process Existing Screenshots…" only once a backend is usable (it refuses before setup).
+    var showsProcessExisting = true
 
     /// Selectable rows in display order (keyboard ↑/↓ walks these).
     var rows: [MenuRowID] {
@@ -31,12 +36,14 @@ struct MenuViewState {
         if showsFinishSetup { rows.append(.finishSetup) }
         rows += recents.map { .recent($0.id) }
         if canUndo { rows.append(.undo) }
-        rows += [isPaused ? .resume : .pause, .processExisting, .search, .settings, .about, .quit]
+        if showsPauseResume { rows.append(isPaused ? .resume : .pause) }
+        if showsProcessExisting { rows.append(.processExisting) }
+        rows += [.search, .settings, .about, .quit]
         return rows
     }
 
     @MainActor
-    static func make(from coordinator: AppCoordinator, now: Date = Date(), searchShortcut: String,
+    static func make(from coordinator: AppCoordinator, now: Date = Date(),
                      version: String = MenuViewState.appVersion) -> MenuViewState {
         var download: Download?
         if coordinator.settings.backend == .localInkling, case .downloading(let fraction) = coordinator.runtimePhase {
@@ -62,8 +69,10 @@ struct MenuViewState {
             undoTitle: MenuText.undoItem(for: coordinator.undoCandidate),
             canUndo: coordinator.undoCandidate != nil,
             isPaused: coordinator.isPaused,
-            searchShortcut: searchShortcut,
-            version: version)
+            searchShortcut: coordinator.activeSearchShortcut?.displayString,
+            version: version,
+            showsPauseResume: coordinator.isWatching || coordinator.isPaused,
+            showsProcessExisting: coordinator.readiness == .ready)
     }
 
     static var appVersion: String {
@@ -113,7 +122,7 @@ struct MenuContentView: View {
             statusHeader
             if let message = state.message {
                 Text(message)
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 10).padding(.bottom, 6)
             }
@@ -121,7 +130,7 @@ struct MenuContentView: View {
             if state.showsFinishSetup { row(.finishSetup, "Finish Setup…") }
             if let download = state.download {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(download.text).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(download.text).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                     ProgressView(value: download.fraction).progressViewStyle(.linear).controlSize(.small)
                         .accessibilityLabel(download.text)
                 }
@@ -130,19 +139,21 @@ struct MenuContentView: View {
             MenuDivider()
             if !state.recents.isEmpty {
                 Text("Recent")
-                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(Brand.secondaryText)
                     .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 2)
                     .accessibilityAddTraits(.isHeader)
                 ForEach(state.recents) { item in recentRow(item) }
                 MenuDivider()
             }
             row(.undo, state.undoTitle, shortcut: "⌘Z", enabled: state.canUndo)
-            if state.isPaused {
-                row(.resume, "Resume")
-            } else {
-                row(.pause, "Pause for 10 Minutes")
+            if state.showsPauseResume {
+                if state.isPaused {
+                    row(.resume, "Resume")
+                } else {
+                    row(.pause, "Pause for 10 Minutes")
+                }
             }
-            row(.processExisting, "Process Existing Screenshots…")
+            if state.showsProcessExisting { row(.processExisting, "Process Existing Screenshots…") }
             MenuDivider()
             row(.search, "Search…", shortcut: state.searchShortcut)
             row(.settings, "Settings…", shortcut: "⌘,")
@@ -165,7 +176,7 @@ struct MenuContentView: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(state.status.headline).font(.system(size: 13, weight: .semibold))
-                Text(state.status.detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(state.status.detail).font(.system(size: 12)).foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -180,7 +191,7 @@ struct MenuContentView: View {
                 Text(title).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 12)
                 if let shortcut {
-                    Text(shortcut).foregroundStyle(highlighted ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                    Text(shortcut).foregroundStyle(highlighted ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(Brand.secondaryText))
                         .accessibilityHidden(true)
                 }
             }
@@ -196,7 +207,7 @@ struct MenuContentView: View {
                 Text(item.title).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 12)
                 Text(state.time.short(item.date, now: state.now))
-                    .foregroundStyle(highlighted ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                    .foregroundStyle(highlighted ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(Brand.secondaryText))
             }
         }
         .accessibilityLabel(item.accessibilityLabel(now: state.now, time: state.time))
@@ -261,13 +272,12 @@ private struct MenuDivider: View {
 /// Live menu: rebuilds `MenuViewState` from the coordinator (observed) once a minute for the time labels.
 struct MenuRootView: View {
     let coordinator: AppCoordinator
-    let searchShortcut: String
     let actions: MenuActions
     let highlight: MenuHighlight
 
     var body: some View {
         TimelineView(.everyMinute) { context in
-            MenuContentView(state: .make(from: coordinator, now: context.date, searchShortcut: searchShortcut),
+            MenuContentView(state: .make(from: coordinator, now: context.date),
                             actions: actions, highlight: highlight)
         }
     }

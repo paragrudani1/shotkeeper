@@ -45,6 +45,18 @@ final class AppCoordinator {
     private(set) var renamePulse = 0
     /// Bumped when a secret changes so views re-read `hasSecret`.
     private(set) var credentialsRevision = 0
+    /// Bytes, speed and time left while the local model downloads (nil otherwise).
+    private(set) var downloadStats: DownloadStats?
+    /// Why the last "Install and Download" did not start or failed (Settings → Model shows it under the button).
+    private(set) var localInstallProblem: String?
+    /// The search shortcut registered with the system now (nil when none could be registered). The menu and setup
+    /// show this one.
+    private(set) var activeSearchShortcut: HotKeyShortcut?
+    /// Why the saved search shortcut could not be registered at launch (Settings shows it at the recorder).
+    private(set) var searchShortcutProblem: String?
+    /// Registers a search shortcut with the system (set by the app delegate; nil in unit tests). Returns the
+    /// problem when it was refused; the old shortcut then keeps working.
+    @ObservationIgnored var registerSearchShortcut: ((HotKeyShortcut) -> HotKeyProblem?)?
 
     @ObservationIgnored let settingsStore: SettingsStore
     @ObservationIgnored let credentials: any CredentialStore
@@ -93,11 +105,13 @@ final class AppCoordinator {
                                                         settings: store.current))
 
         let phaseSink = LockedValue<(@MainActor @Sendable (RuntimePhase) -> Void)?>(nil)
+        let bytesSink = LockedValue<(@MainActor @Sendable (Int64) -> Void)?>(nil)
         self.localRuntime = LocalModelRuntime(applicationSupport: applicationSupport, logDirectory: logDirectory,
-                                              idleTimeoutMinutes: store.current.idleTimeoutMinutes) { phase in
-            Task { @MainActor in phaseSink.value?(phase) }
-        }
-        phaseSink.value = { [weak self] phase in self?.runtimePhase = phase }
+                                              idleTimeoutMinutes: store.current.idleTimeoutMinutes,
+                                              onPhase: { phase in Task { @MainActor in phaseSink.value?(phase) } },
+                                              onDownloadBytes: { bytes in Task { @MainActor in bytesSink.value?(bytes) } })
+        phaseSink.value = { [weak self] phase in self?.applyRuntimePhase(phase) }
+        bytesSink.value = { [weak self] bytes in self?.recordDownloadBytes(bytes) }
 
         openStorage()
         rebuildAnalyzer()
@@ -105,6 +119,22 @@ final class AppCoordinator {
         buildQueue()
         refreshHistory()
         Task { await localRuntime.refresh(for: localVariant) }
+    }
+
+    // MARK: Local model download
+
+    /// Internal so tests and snapshots can show a download without running one.
+    func applyRuntimePhase(_ phase: RuntimePhase) {
+        runtimePhase = phase
+        if case .downloading = phase { return }
+        downloadStats = nil
+    }
+
+    func recordDownloadBytes(_ bytes: Int64, at time: Date = Date()) {
+        guard case .downloading = runtimePhase else { return }
+        var stats = downloadStats ?? DownloadStats(totalBytes: Int64(localVariant.approxDownloadGB * 1_000_000_000))
+        stats.record(bytes: bytes, at: time)
+        downloadStats = stats
     }
 
     // MARK: Derived state
@@ -229,7 +259,7 @@ final class AppCoordinator {
         }
         if new.launchAtLogin != old.launchAtLogin, servicesStarted {
             do { try LaunchAtLogin.setEnabled(new.launchAtLogin) } catch {
-                lastMessage = "Launch at login: \(error.localizedDescription). Move Shotkeeper to /Applications and try again."
+                lastMessage = StatusText.launchAtLoginFailed
             }
         }
     }
@@ -245,7 +275,7 @@ final class AppCoordinator {
         do {
             if trimmed.isEmpty { try credentials.removeSecret(for: key) } else { try credentials.setSecret(trimmed, for: key) }
         } catch {
-            lastMessage = "Keychain: \(StatusText.describe(error))"
+            lastMessage = StatusText.describe(error)
         }
         credentialsRevision += 1
         rebuildAnalyzer()
@@ -492,8 +522,37 @@ final class AppCoordinator {
         updateSettings { $0.launchAtLogin = enabled } // applies it when it changed (and services run)
         guard unchanged, servicesStarted else { return }
         do { try LaunchAtLogin.apply(enabled) } catch {
-            lastMessage = "Launch at login: \(error.localizedDescription). Move Shotkeeper to /Applications and try again."
+            lastMessage = StatusText.launchAtLoginFailed
         }
+    }
+
+    // MARK: Search shortcut
+
+    /// At launch: registers the saved search shortcut. If the system refuses it, Settings shows why at the recorder
+    /// and the menu shows no shortcut.
+    func startSearchShortcut() {
+        guard let registerSearchShortcut else { return }
+        let shortcut = settings.searchShortcut
+        if let problem = registerSearchShortcut(shortcut) {
+            searchShortcutProblem = problem.message(for: shortcut)
+            lastMessage = "Search shortcut: \(problem.message(for: shortcut))"
+        } else {
+            activeSearchShortcut = shortcut
+            searchShortcutProblem = nil
+        }
+    }
+
+    /// The shortcut recorder: checks the rules, registers the new shortcut, and saves it only once it registered.
+    /// On a problem nothing changes and the old shortcut keeps working.
+    func changeSearchShortcut(to shortcut: HotKeyShortcut) -> HotKeyProblem? {
+        if let problem = HotKeyRules.problem(with: shortcut) { return problem }
+        if let registerSearchShortcut {
+            if let problem = registerSearchShortcut(shortcut) { return problem }
+            activeSearchShortcut = shortcut
+        }
+        searchShortcutProblem = nil
+        updateSettings { $0.searchShortcut = shortcut }
+        return nil
     }
 
     /// Setup step 3 "Continue" with Clairic: the token goes to the Keychain now (never while typing), then the
@@ -561,13 +620,50 @@ final class AppCoordinator {
         }
     }
 
+    /// Free space on the volume of `url` (or its nearest existing parent), nil when unknown.
+    nonisolated static func freeDiskBytes(near url: URL) -> Int64? {
+        var candidate = url
+        while !FileManager.default.fileExists(atPath: candidate.path), candidate.pathComponents.count > 1 {
+            candidate = candidate.deletingLastPathComponent()
+        }
+        let values = try? candidate.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
+    /// Test seam for the disk check (real free space otherwise).
+    @ObservationIgnored var availableDiskBytes: (URL) -> Int64? = { AppCoordinator.freeDiskBytes(near: $0) }
+
+    /// "Install and Download": checks the free disk space first (core `DiskSpaceCheck`), then installs.
     func installLocalModel(_ variant: ModelVariant) async {
+        localInstallProblem = nil
+        let needs = await localRuntime.diskNeeds(for: variant)
+        let verdict = DiskSpaceCheck.evaluate(availableBytes: availableDiskBytes(localRuntime.runtimeDirectory),
+                                              downloadBytes: Int64(variant.approxDownloadGB * 1_000_000_000),
+                                              alreadyOnDisk: needs.alreadyOnDisk, needsRuntime: needs.needsRuntime)
+        if let message = verdict.message {
+            localInstallProblem = message
+            lastMessage = message
+            return
+        }
         do {
             try await localRuntime.install(variant)
             lastMessage = "\(variant.displayName) is installed."
             rebuildAnalyzer() // un-holds a queue that stopped on "not installed"
         } catch is CancellationError {
             lastMessage = "Install cancelled."
+        } catch {
+            localInstallProblem = StatusText.describe(error)
+            lastMessage = StatusText.describe(error)
+        }
+    }
+
+    /// "Remove model" (after the user confirmed): deletes the downloaded files of `variant`.
+    func removeLocalModel(_ variant: ModelVariant) async {
+        do {
+            try await localRuntime.removeModel(variant)
+            localInstallProblem = nil
+            lastMessage = "\(variant.displayName) was removed from this Mac."
+            rebuildAnalyzer()
         } catch {
             lastMessage = StatusText.describe(error)
         }

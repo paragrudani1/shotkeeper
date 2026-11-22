@@ -13,6 +13,16 @@ public struct HotKeyShortcut: Codable, Equatable, Hashable, Sendable {
         public static let option = Modifiers(rawValue: 1 << 1)
         public static let shift = Modifiers(rawValue: 1 << 2)
         public static let command = Modifiers(rawValue: 1 << 3)
+
+        /// "⌃⌥⇧⌘": the held modifiers in the macOS menu order.
+        public var symbols: String {
+            var text = ""
+            if contains(.control) { text += "⌃" }
+            if contains(.option) { text += "⌥" }
+            if contains(.shift) { text += "⇧" }
+            if contains(.command) { text += "⌘" }
+            return text
+        }
     }
 
     public var keyCode: Int
@@ -28,12 +38,7 @@ public struct HotKeyShortcut: Codable, Equatable, Hashable, Sendable {
 
     /// "⌥⌘S": modifiers in the macOS menu order ⌃⌥⇧⌘, then the key.
     public var displayString: String {
-        var text = ""
-        if modifiers.contains(.control) { text += "⌃" }
-        if modifiers.contains(.option) { text += "⌥" }
-        if modifiers.contains(.shift) { text += "⇧" }
-        if modifiers.contains(.command) { text += "⌘" }
-        return text + KeyCode.symbol(keyCode)
+        modifiers.symbols + KeyCode.symbol(keyCode)
     }
 
     /// "Option Command S" for VoiceOver.

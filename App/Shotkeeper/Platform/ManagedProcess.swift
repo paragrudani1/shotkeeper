@@ -113,6 +113,14 @@ struct ProcessSpec: Sendable, Equatable {
 enum ProcessExit: Equatable, Sendable {
     case exited(Int32)
     case signaled(Int32)
+
+    /// "exit code 1", "stopped by signal 9" (for messages; never the Swift enum description).
+    var readable: String {
+        switch self {
+        case .exited(let code): return "exit code \(code)"
+        case .signaled(let signal): return "stopped by signal \(signal)"
+        }
+    }
 }
 
 enum ManagedProcessError: Error, Equatable {

@@ -7,17 +7,36 @@ import XCTest
 
 @MainActor
 final class GlobalHotKeyTests: XCTestCase {
-    func testDefaultShortcutIsOptionCommandS() {
-        let shortcut = GlobalHotKey.Shortcut.defaultSearch
-        XCTAssertEqual(shortcut.keyCode, UInt32(kVK_ANSI_S))
-        XCTAssertEqual(shortcut.modifiers, UInt32(optionKey | cmdKey))
-        XCTAssertEqual(shortcut.displayString, "⌥⌘S")
+    func testCarbonModifiersAndKeyCodesMatchHIToolbox() {
+        XCTAssertEqual(GlobalHotKey.carbonModifiers(HotKeyShortcut.defaultSearch.modifiers), UInt32(optionKey | cmdKey))
+        XCTAssertEqual(GlobalHotKey.carbonModifiers([.control, .shift]), UInt32(controlKey | shiftKey))
+        XCTAssertEqual(HotKeyShortcut.defaultSearch.keyCode, kVK_ANSI_S)
+        XCTAssertEqual(KeyCode.k, kVK_ANSI_K)
+        XCTAssertEqual(KeyCode.space, kVK_Space)
+        XCTAssertEqual(KeyCode.escape, kVK_Escape)
+        XCTAssertEqual(KeyCode.f5, kVK_F5)
+        XCTAssertEqual(KeyCode.upArrow, kVK_UpArrow)
+        XCTAssertEqual(KeyCode.slash, kVK_ANSI_Slash)
+        XCTAssertEqual(HotKeyRules.eventHotKeyExistsErr, Int32(eventHotKeyExistsErr))
+        XCTAssertEqual(GlobalHotKey.modifiers(from: [.command, .option, .capsLock]), [.command, .option])
     }
 
-    func testDisplayStringOrdersModifiersLikeMacOS() {
-        let shortcut = GlobalHotKey.Shortcut(keyCode: UInt32(kVK_Space),
-                                             modifiers: UInt32(cmdKey | shiftKey | controlKey | optionKey))
-        XCTAssertEqual(shortcut.displayString, "⌃⌥⇧⌘Space")
+    /// A refused shortcut leaves the old one registered and working.
+    func testSearchHotKeyKeepsTheOldShortcutUntilANewOneRegisters() {
+        var registered: [HotKeyShortcut] = []
+        let taken = HotKeyShortcut(keyCode: KeyCode.k, modifiers: [.control, .option])
+        let hotKey = SearchHotKey(action: {}, register: { shortcut, _ in
+            if shortcut == taken { throw GlobalHotKeyError.registerFailed(OSStatus(eventHotKeyExistsErr)) }
+            registered.append(shortcut)
+            return nil
+        })
+        XCTAssertNil(hotKey.use(.defaultSearch))
+        XCTAssertEqual(hotKey.active, .defaultSearch)
+        XCTAssertEqual(hotKey.use(taken), .registrationFailed(inUseByAnotherApp: true))
+        XCTAssertEqual(hotKey.active, .defaultSearch, "the old shortcut still works")
+        XCTAssertEqual(hotKey.use(HotKeyShortcut(keyCode: KeyCode.c, modifiers: [.command])), .usedByApps)
+        XCTAssertNil(hotKey.use(.defaultSearch), "the same shortcut again is a no-op")
+        XCTAssertEqual(registered, [.defaultSearch])
     }
 }
 
