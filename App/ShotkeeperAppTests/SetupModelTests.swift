@@ -131,13 +131,20 @@ final class SetupModelTests: TempDirectoryTestCase {
     func testAgreeAndContinueGrantsOnlyTheModelTheSectionNamed() {
         let coordinator = makeCoordinator()
         let model = makeModel(coordinator)
+        model.pressPrimary()
+        model.flow.consentChecked = true
+        model.pressPrimary() // I Agree (Cloudflare's wording; grants nothing for OpenRouter)
         model.choose(.openRouter)
+        model.showOpenRouterSection() // the section appears
+        model.openRouterKeyDraft = "sk-or-v1-key"
         XCTAssertEqual(model.openRouterModel, OpenRouterBackend.defaultModel)
         XCTAssertTrue(BackendCopy.openRouterPrivacy(model: model.openRouterModel).contains("Prime Intellect or io.net"))
         coordinator.updateSettings { $0.openRouterModel = "vendor/other-model" } // e.g. Settings, beside setup
-        coordinator.saveOpenRouterSetup(key: "sk-or-v1-key", model: OpenRouterBackend.defaultModel) // what it named
+        XCTAssertEqual(model.openRouterModel, OpenRouterBackend.defaultModel, "the section still names what it showed")
+        model.pressPrimary() // Agree and Continue
         XCTAssertNil(coordinator.settings.grant(for: .openRouter), "nothing is granted for a model it did not name")
         XCTAssertEqual(coordinator.readiness, .needsConsent)
+        model.showOpenRouterSection() // shown again (setup re-run)
         XCTAssertEqual(model.openRouterModel, "vendor/other-model")
         let privacy = BackendCopy.openRouterPrivacy(model: model.openRouterModel)
         XCTAssertTrue(privacy.contains("the provider that serves vendor/other-model"))

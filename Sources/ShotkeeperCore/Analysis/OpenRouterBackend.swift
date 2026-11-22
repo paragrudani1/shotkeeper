@@ -130,7 +130,9 @@ public enum OpenRouterBackend {
     ///   requirements" → `accountState(noEligibleProviderText)`. `provider_overloaded` stays a retried server error.
     /// 404 and 503 hold only when they are OpenRouter's own routing answer: the HTTP status itself (not an error
     /// embedded in a 200 mid-generation, `embedded`), with an OpenRouter `error` body and no `Retry-After` (which
-    /// "may come on 429 and 503"). An HTML edge page, a 503 with `Retry-After` or an embedded 404/503 → nil (retried).
+    /// "may come on 429 and 503"). A 503 with `Retry-After` → `rateLimited` (the queue waits that long). An HTML edge
+    /// page or an embedded 404/503 → nil, the shared mapping: 503 a retried `serverError`, 404 a `badRequest` (that
+    /// one file fails, the queue goes on).
     public static func refineError(status: Int, headers: HTTPURLResponse?, body: Data,
                                    embedded: Bool = false) -> AnalyzerError? {
         let error = (try? AnalysisJSON.parse(body))?["error"]
@@ -152,6 +154,7 @@ public enum OpenRouterBackend {
         case 404:
             return isRoutingAnswer && type != "image_not_found" ? .accountState(noEndpointText) : nil
         case 503:
+            if let retryAfter, !embedded { return .rateLimited(retryAfter: retryAfter) }
             return isRoutingAnswer && type != "provider_overloaded" ? .accountState(noEligibleProviderText) : nil
         default:
             return nil

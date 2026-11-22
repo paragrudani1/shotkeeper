@@ -291,14 +291,14 @@ final class OpenRouterAnalyzerTests: XCTestCase {
         XCTAssertEqual(html?.isRetryable, true)
         // "`Retry-After` (seconds) may come on 429 and 503": a 503 that says when to retry is transient.
         let later = await error(.status(503, noProvider, headers: ["Retry-After": "20"]))
-        XCTAssertNotEqual(later, .accountState(OpenRouterBackend.noEligibleProviderText))
-        XCTAssertEqual(later?.isRetryable, true)
+        XCTAssertEqual(later, .rateLimited(retryAfter: 20), "the queue waits as long as the header says")
         // A provider failing mid-generation (an error inside a 200) is not a routing answer either.
         let embedded503 = await error(.ok(noProvider))
         XCTAssertNotEqual(embedded503, .accountState(OpenRouterBackend.noEligibleProviderText))
         XCTAssertEqual(embedded503?.isRetryable, true)
         let embedded404 = await error(.ok(#"{"error":{"code":404,"message":"No endpoints found"}}"#))
         XCTAssertNotEqual(embedded404, .accountState(OpenRouterBackend.noEndpointText))
+        XCTAssertEqual(embedded404?.isRetryable, false, "a 404 fails that one file; the queue is not held")
         let html404 = await error(.status(404, "<html>Not Found</html>"))
         XCTAssertNotEqual(html404, .accountState(OpenRouterBackend.noEndpointText))
     }

@@ -459,6 +459,7 @@ private struct OpenRouterSetup: View {
                 ConnectionTestLine(state: model.test)
             }
         }
+        .onAppear { model.showOpenRouterSection() }
     }
 }
 

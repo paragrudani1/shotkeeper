@@ -122,8 +122,15 @@ final class SetupModel {
             if openRouterKeyDraft != oldValue { resetTest() }
         }
     }
+    /// The effective model step 3's OpenRouter section showed when it appeared (`showOpenRouterSection`). Its text
+    /// names this model and "Agree and Continue" grants only it: a model changed afterwards (Settings beside setup)
+    /// is not granted, the backend then asks again.
+    private(set) var shownOpenRouterModel: String?
+    private var configuredOpenRouterModel: String { OpenRouterBackend.effectiveModel(services.settings().openRouterModel) }
+    /// The OpenRouter section appeared: from now on it names (and grants) the model configured at this moment.
+    func showOpenRouterSection() { shownOpenRouterModel = configuredOpenRouterModel }
     /// The effective OpenRouter model step 3 names (and "Agree and Continue" grants).
-    var openRouterModel: String { OpenRouterBackend.effectiveModel(services.settings().openRouterModel) }
+    var openRouterModel: String { shownOpenRouterModel ?? configuredOpenRouterModel }
     /// "OpenRouter, then to Prime Intellect or io.net" for the configured model: what "Agree and Continue" allows.
     var openRouterDestination: String { OpenRouterBackend.destinationPhrase(model: openRouterModel) }
     var accountID: String {

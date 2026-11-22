@@ -234,8 +234,9 @@ Shotkeeper's mapping (`OpenRouterBackend.refineError`, `HTTPErrorMapping`), as r
   use…" (holds). 503 without `provider_overloaded` → `accountState` "No OpenRouter provider for this model meets
   Shotkeeper's privacy settings right now…" (holds); `provider_overloaded` → `serverError` (retried). Both hold only
   for OpenRouter's own routing answer: the HTTP status itself with an OpenRouter `error` body and no `Retry-After`.
-  An HTML edge page, a 503 with `Retry-After`, or a 404/503 embedded in a 200 mid-generation is retried like any
-  other 4xx/5xx (revised 2026-11-22, re-review).
+  A 503 with `Retry-After` → `rateLimited` (waits that long). An HTML edge page or a 404/503 embedded in a 200
+  mid-generation gets the shared mapping: 503 → `serverError` (retried), 404 → `badRequest` (that file fails, the
+  queue goes on) (revised 2026-11-22, re-review).
 - 429 → `rateLimited`; 408/other 5xx → `serverError` (retried).
 
 ## Where the docs are silent (2026-11-22)
