@@ -10,9 +10,9 @@ public enum BackendReadiness: Equatable, Sendable {
     case notConfigured(String)
 }
 
-/// The consent gate (CODING_STANDARDS #2): no user screenshot goes to a cloud backend unless the user chose that
-/// backend and allowed its destination, and the screenshot was taken after that. The analyzer factory, the folder
-/// watcher and `ScreenshotProcessor` (the one choke point every file passes, whatever brought it there) ask this.
+/// What the app shows and offers around consent (CODING_STANDARDS #2): readiness, the watcher gate, the Settings
+/// confirmation and granting. It never decides whether a file is sent: that is `UploadConsent.decide`, called by
+/// `ScreenshotProcessor` right before `analyze`. Both match grants with `UploadConsent.grant(for:in:)`.
 ///
 /// Consent is per destination with a time (`AppSettings.uploadGrants`): `.cloudflare` when setup saves Clairic after
 /// step 2's "I Agree", or from the Settings confirmation; `.customEndpoint` from the Settings confirmation naming the
@@ -36,18 +36,10 @@ public enum BackendGate {
         }
     }
 
-    /// The grant that covers the selected backend now: its destination's grant, and for a custom endpoint only
-    /// when it names the configured endpoint. Nil for local (nothing to grant) and when not allowed.
+    /// The grant that covers the selected backend now (`UploadConsent.grant(for:in:)`). Nil for local (nothing to
+    /// grant) and when not allowed.
     public static func activeGrant(_ settings: AppSettings) -> AppSettings.UploadGrant? {
-        guard let destination = destination(of: settings.backend), let grant = settings.grant(for: destination) else {
-            return nil
-        }
-        if destination == .customEndpoint {
-            guard let endpoint = CustomEndpointIdentity(url: settings.customEndpointURL), grant.endpoint == endpoint else {
-                return nil
-            }
-        }
-        return grant
+        UploadConsent.grant(for: UploadTarget(settings: settings), in: settings.uploadGrants)
     }
 
     /// The user allowed sending to the selected backend's destination (always true for local).
@@ -55,35 +47,26 @@ public enum BackendGate {
         destination(of: settings.backend) == nil || activeGrant(settings) != nil
     }
 
-    /// The processor's rule for one file: local always; a cloud destination only when allowed AND the file was
-    /// taken at or after the grant. `explicitlyRequested` ("Process Existing Screenshots…", a user action on files
-    /// that already exist) skips the time rule but never the destination rule.
-    public static func mayAnalyze(fileCapturedAt capturedAt: Date, settings: AppSettings,
-                                  explicitlyRequested: Bool = false) -> Bool {
-        guard destination(of: settings.backend) != nil else { return true }
-        guard let grant = activeGrant(settings) else { return false }
-        return explicitlyRequested || capturedAt >= grant.grantedAt
-    }
-
     /// The confirmation Settings shows before allowing the selected backend's destination, and the endpoint it
     /// names. Nil when nothing needs allowing (local, already allowed) or there is no endpoint to name yet.
-    public static func consentRequest(for settings: AppSettings)
-        -> (prompt: String, destination: AppSettings.UploadDestination, endpoint: CustomEndpointIdentity?)? {
+    public static func consentRequest(for settings: AppSettings) -> ConsentRequest? {
         guard let destination = destination(of: settings.backend), !hasUploadConsent(settings) else { return nil }
         switch destination {
         case .cloudflare:
-            return ("Screenshots will be sent to your Cloudflare account", .cloudflare, nil)
+            return ConsentRequest(prompt: "Screenshots will be sent to your Cloudflare account", destination: .cloudflare,
+                                  endpoint: nil)
         case .customEndpoint:
             guard let endpoint = CustomEndpointIdentity(url: settings.customEndpointURL) else { return nil }
-            return ("Screenshots will be sent to \(endpoint.display)", .customEndpoint, endpoint)
+            return ConsentRequest(prompt: "Screenshots will be sent to \(endpoint.display)", destination: .customEndpoint,
+                                  endpoint: endpoint)
         }
     }
 
-    public static func consentPrompt(for settings: AppSettings) -> String? { consentRequest(for: settings)?.prompt }
-
-    /// `settings` with `destination` allowed from `now`. For a custom endpoint, `expectedEndpoint` is the one the
-    /// confirmation named: when the configured endpoint is no longer that one, nothing is granted. An existing
-    /// grant for the same destination and endpoint keeps its (earlier) time.
+    /// `settings` with `destination` allowed from `now`, rounded UP to the next whole second: settings store dates
+    /// without fractions, and rounding down would let a file taken in that fraction before the grant pass after a
+    /// reload. For a custom endpoint, `expectedEndpoint` is the one the confirmation named: when the configured
+    /// endpoint is no longer that one, nothing is granted. An existing grant for the same destination and endpoint
+    /// keeps its (earlier) time.
     public static func granting(_ destination: AppSettings.UploadDestination, expectedEndpoint: CustomEndpointIdentity? = nil,
                                 in settings: AppSettings, at now: Date = Date()) -> AppSettings {
         var settings = settings
@@ -99,7 +82,8 @@ public enum BackendGate {
         }
         if let existing = settings.grant(for: destination), existing.endpoint == endpoint { return settings }
         settings.uploadGrants.removeAll { $0.destination == destination }
-        settings.uploadGrants.append(AppSettings.UploadGrant(destination: destination, grantedAt: now, endpoint: endpoint))
+        settings.uploadGrants.append(AppSettings.UploadGrant(destination: destination, grantedAt: roundedUp(now),
+                                                             endpoint: endpoint))
         return settings
     }
 
@@ -144,7 +128,26 @@ public enum BackendGate {
         }
     }
 
+    /// The next whole second (unchanged when already whole). Whole seconds since 1970 and since 2001 coincide.
+    static func roundedUp(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.up))
+    }
+
     static func trimmed(_ value: String?) -> String {
         value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}
+
+/// The Settings confirmation for one destination: what it says and exactly what "Allow" grants.
+public struct ConsentRequest: Equatable, Sendable {
+    public var prompt: String
+    public var destination: AppSettings.UploadDestination
+    /// The endpoint named, for `.customEndpoint`.
+    public var endpoint: CustomEndpointIdentity?
+
+    public init(prompt: String, destination: AppSettings.UploadDestination, endpoint: CustomEndpointIdentity?) {
+        self.prompt = prompt
+        self.destination = destination
+        self.endpoint = endpoint
     }
 }

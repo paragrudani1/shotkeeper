@@ -176,28 +176,125 @@ final class ScreenshotProcessorTests: XCTestCase {
     }
 
     /// The one choke point: a file taken before its destination was allowed is skipped on every run, whatever
-    /// brought it to the queue (a resumed hold, a later file event). Only an explicit request skips the time rule.
-    func testFilesTakenBeforeTheGrantAreSkippedUnlessExplicitlyRequested() async throws {
+    /// brought it to the queue (a resumed hold, a later file event). Only a Process Existing request made for this
+    /// destination lifts the time rule.
+    func testFilesTakenBeforeTheGrantAreSkippedUnlessProcessExistingAskedForThisDestination() async throws {
         let source = try screenshot()
         let analyzer = StubAnalyzer(analysis(title: "Old receipt"))
         let later = Date().addingTimeInterval(3_600) // granted after the file was created
         settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: later)] }
         let skipped = try await processor(analyzer).process(source)
         XCTAssertEqual(skipped, .skipped(.awaitingConsent))
+
+        let onLocal = try await processor(analyzer).process(source, processExisting: .init(target: .thisMac))
+        XCTAssertEqual(onLocal, .skipped(.awaitingConsent), "a request made on another destination does not count")
         XCTAssertEqual(analyzer.calls.get.count, 0)
 
-        let requested = try await processor(analyzer).process(source, explicitlyRequested: true)
+        let requested = try await processor(analyzer).process(source, processExisting: .init(target: .cloudflare))
         guard case .processed = requested else { return XCTFail("\(requested)") }
         XCTAssertEqual(analyzer.calls.get.count, 1, "Process Existing may send an older file to an allowed destination")
     }
 
-    func testAnExplicitRequestStillNeedsTheDestination() async throws {
+    func testProcessExistingStillNeedsTheDestination() async throws {
         let source = try screenshot()
         let analyzer = StubAnalyzer(analysis(title: "Secret"))
         settings.mutate { $0.uploadGrants = [] }
-        let outcome = try await processor(analyzer).process(source, explicitlyRequested: true)
+        let outcome = try await processor(analyzer).process(source, processExisting: .init(target: .cloudflare))
         XCTAssertEqual(outcome, .skipped(.awaitingConsent))
         XCTAssertEqual(analyzer.calls.get.count, 0)
+    }
+
+    /// Review 3 S2: a screenshot copied, downloaded or AirDropped after the grant has a fresh creation date; the time
+    /// in its name (taken long before) counts.
+    func testTheNameTimeCountsWhenItIsEarlierThanTheCreationDate() async throws {
+        let source = try screenshot() // "Screenshot 2026-01-13 at 10.22.11.png", created now
+        let analyzer = StubAnalyzer(analysis(title: "Old receipt"))
+        let grant = Date().addingTimeInterval(-60) // before the file was created, after the name's time
+        settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: grant)] }
+        let outcome = try await processor(analyzer).process(source)
+        XCTAssertEqual(outcome, .skipped(.awaitingConsent))
+        XCTAssertEqual(analyzer.calls.get.count, 0)
+
+        let fresh = try dir.file("Screenshot \(Self.nameStamp(Date().addingTimeInterval(3_600))).png", contents: "new",
+                                 in: "Desktop")
+        let sent = try await processor(analyzer).process(fresh)
+        guard case .processed = sent else { return XCTFail("a new screenshot is sent: \(sent)") }
+    }
+
+    /// Review 3 S1: no creation date and no time in the name means `.distantPast`, never now().
+    func testAnUnknownCaptureTimeFailsClosed() {
+        XCTAssertEqual(UploadConsent.decide(settings: settings.get, capturedAt: UploadConsent.effectiveCaptureTime(
+            creationDate: nil, nameDate: nil)), .allow, "the fixture's Cloudflare grant is since .distantPast")
+        var granted = settings.get
+        granted.uploadGrants = [.init(destination: .cloudflare, grantedAt: now)]
+        XCTAssertEqual(UploadConsent.decide(settings: granted, capturedAt: UploadConsent.effectiveCaptureTime(
+            creationDate: nil, nameDate: nil)), .skip(.takenBeforeGrant(grantedAt: now)))
+    }
+
+    // MARK: Review 3 B2: the decision and the analyzer come from one snapshot
+
+    /// The reviewer's reproduction: Local is selected when the job starts; while the image is prepared, setup saves
+    /// Clairic and allows Cloudflare (from now on) and the analyzer is rebuilt. The cloud analyzer must not get it.
+    func testSwitchingToACloudBackendWhilePreparingDoesNotSendTheFile() async throws {
+        let source = try screenshot()
+        let local = StubAnalyzer(analysis(title: "Local name"))
+        let cloud = StubAnalyzer(analysis(title: "Cloud name"))
+        var localSettings = AppSettings()
+        localSettings.backend = .localInkling
+        let box = Locked(AnalyzerSnapshot(analyzer: local, settings: localSettings))
+        let preparer = HookedPreparer {
+            var clairic = AppSettings()
+            clairic.uploadGrants = [.init(destination: .cloudflare, grantedAt: Date().addingTimeInterval(1))]
+            box.set(AnalyzerSnapshot(analyzer: cloud, settings: clairic))
+        }
+        let processor = ScreenshotProcessor(snapshot: { box.get }, imagePreparer: preparer, index: index, undoLog: undoLog)
+        let outcome = try await processor.process(source)
+        XCTAssertEqual(outcome, .skipped(.awaitingConsent))
+        XCTAssertEqual(cloud.calls.get.count, 0, "never sent to Cloudflare")
+        XCTAssertEqual(local.calls.get.count, 0, "the job uses the pair read after preparing, not the old analyzer")
+        XCTAssertEqual(read(source), "png bytes")
+        XCTAssertEqual(try index.stats().count, 0, "nothing indexed")
+    }
+
+    func testRevokingWhilePreparingDoesNotSendTheFile() async throws {
+        let source = try screenshot()
+        let cloud = StubAnalyzer(analysis(title: "Cloud name"))
+        let allowed = settings.get
+        let box = Locked(AnalyzerSnapshot(analyzer: cloud, settings: allowed))
+        let preparer = HookedPreparer {
+            var revoked = allowed
+            revoked.uploadGrants = []
+            box.set(AnalyzerSnapshot(analyzer: cloud, settings: revoked))
+        }
+        let processor = ScreenshotProcessor(snapshot: { box.get }, imagePreparer: preparer, index: index, undoLog: undoLog)
+        let outcome = try await processor.process(source)
+        XCTAssertEqual(outcome, .skipped(.awaitingConsent))
+        XCTAssertEqual(cloud.calls.get.count, 0)
+    }
+
+    /// The other direction: Clairic allowed when the job starts, Local selected while preparing. The job goes to
+    /// the analyzer of the pair it decided on (Local), never to the one it started with.
+    func testSwitchingToLocalWhilePreparingUsesTheLocalAnalyzer() async throws {
+        let source = try screenshot()
+        let local = StubAnalyzer(analysis(title: "Local name"))
+        let cloud = StubAnalyzer(analysis(title: "Cloud name"))
+        let box = Locked(AnalyzerSnapshot(analyzer: cloud, settings: settings.get))
+        let preparer = HookedPreparer {
+            var localSettings = AppSettings()
+            localSettings.backend = .localInkling
+            box.set(AnalyzerSnapshot(analyzer: local, settings: localSettings))
+        }
+        let processor = ScreenshotProcessor(snapshot: { box.get }, imagePreparer: preparer, index: index, undoLog: undoLog)
+        let outcome = try await processor.process(source)
+        guard case .processed = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(local.calls.get.count, 1)
+        XCTAssertEqual(cloud.calls.get.count, 0)
+    }
+
+    /// "Screenshot 2026-01-13 at 10.22.11"-style stamp in the local time zone.
+    private static func nameStamp(_ date: Date) -> String {
+        let c = Calendar(identifier: .gregorian).dateComponents(in: .current, from: date)
+        return String(format: "%04d-%02d-%02d at %02d.%02d.%02d", c.year!, c.month!, c.day!, c.hour!, c.minute!, c.second!)
     }
 
     func testAlreadyIndexedIsSkipped() async throws {
@@ -417,5 +514,15 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(clock.sleeps, [1])
         XCTAssertEqual(try dir.names(in: "Desktop"), ["Same Title 2.png", "Same Title.png"])
         XCTAssertEqual(try index.stats().done, 2)
+    }
+}
+
+/// Prepares like `PassthroughImagePreparer`, running `hook` first (to change the app's state mid-job).
+struct HookedPreparer: ImagePreparer {
+    let hook: @Sendable () -> Void
+
+    func prepare(_ url: URL) throws -> ImagePayload {
+        hook()
+        return try PassthroughImagePreparer().prepare(url)
     }
 }

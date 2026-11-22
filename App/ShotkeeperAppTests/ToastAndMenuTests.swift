@@ -246,7 +246,7 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
         coordinator.acceptPrivacyStep()
         XCTAssertTrue(MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S").showsFinishSetup)
 
-        coordinator.saveClairicSetup(accountID: "acct", token: "tok")
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
         let ready = MenuViewState.make(from: coordinator, searchShortcut: "⌥⌘S", version: "0.1.0")
         XCTAssertEqual(ready.status.dot, .green)
         XCTAssertEqual(ready.status.detail, "Idle · 0 screenshots in the index")

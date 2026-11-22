@@ -57,4 +57,53 @@ final class ScreenshotDetectorTests: XCTestCase {
         XCTAssertFalse(detector.isScreenshot(filename: "Shot 2026-01-13 at 10.22.11.png"))
         XCTAssertNil(ScreenshotDetector(customPrefix: "  ").customPrefix)
     }
+
+    // MARK: Time in the name (upload consent: the earlier of this and the creation date)
+
+    func testCaptureDateFromDefaultNames() throws {
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let at102211 = Date(timeIntervalSince1970: 1_768_299_731) // 2026-01-13 10:22:11 UTC
+        let names = [
+            "Screenshot 2026-01-13 at 10.22.11.png",
+            "Screenshot 2026-01-13 at 10.22.11 (2).png",
+            "Bildschirmfoto 2026-01-13 um 10.22.11.png",
+            "Capture d’écran 2026-01-13 à 10.22.11.png",
+            "Captura de pantalla 2026-01-13 a las 10.22.11.png",
+            "スクリーンショット 2026-01-13 10.22.11.png",
+            "截屏2026-01-13 10.22.11.png",
+            "Shot 2026-01-13 at 10:22:11.png",
+        ]
+        for name in names { XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: name, timeZone: utc), at102211, name) }
+    }
+
+    func testCaptureDateWithTwelveHourMarkers() throws {
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let pm = Date(timeIntervalSince1970: 1_547_391_845) // 2019-01-13 15:04:05 UTC
+        XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: "Screen Shot 2019-01-13 at 3.04.05 PM.png", timeZone: utc), pm)
+        XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: "Screen Shot 2019-01-13 at 3.04.05 p.m..png", timeZone: utc), pm)
+        XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: "スクリーンショット 2019-01-13 午後3.04.05.png", timeZone: utc), pm)
+        XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: "스크린샷 2019-01-13 오후 3.04.05.png", timeZone: utc), pm)
+        XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: "截屏2019-01-13 下午3.04.05.png", timeZone: utc), pm)
+        let midnight = Date(timeIntervalSince1970: 1_768_262_645) // 2026-01-13 00:04:05 UTC
+        XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: "Screen Shot 2026-01-13 at 12.04.05 AM.png", timeZone: utc),
+                       midnight)
+        XCTAssertNil(ScreenshotDetector.captureDate(fromFilename: "Screen Shot 2026-01-13 at 15.04.05 PM.png", timeZone: utc),
+                     "a 12-hour marker on a 24-hour time is not a time")
+    }
+
+    func testCaptureDateUsesTheGivenTimeZone() throws {
+        let berlin = try XCTUnwrap(TimeZone(identifier: "Europe/Berlin"))
+        XCTAssertEqual(ScreenshotDetector.captureDate(fromFilename: "Screenshot 2026-01-13 at 10.22.11.png", timeZone: berlin),
+                       Date(timeIntervalSince1970: 1_768_299_731 - 3_600))
+    }
+
+    func testNamesWithoutACompleteDateAndTime() throws {
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        for name in ["holiday.png", "Screenshot 2026-01-13.png", "Screenshot 2026-02-30 at 10.22.11.png",
+                     "Screenshot 2026-13-01 at 10.22.11.png", "Screenshot 2026-01-13 at 25.22.11.png",
+                     "Screenshot 2026-01-13 at 10.61.11.png", "Screenshot 12026-01-13 at 10.22.11.png",
+                     "Screenshot 2026-01-13 at 10.22.png", "Invoice From Acme.png"] {
+            XCTAssertNil(ScreenshotDetector.captureDate(fromFilename: name, timeZone: utc), name)
+        }
+    }
 }

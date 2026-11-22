@@ -371,7 +371,7 @@ enum Fixtures {
             physicalMemoryBytes: memoryGB * 1_073_741_824,
             settings: { settings }, hasSavedToken: { false }, credentialsRevision: { 0 }, loginItemEnabled: { nil },
             runtimePhase: { phase }, readiness: { .ready },
-            isPaused: { false }, acceptConsent: {}, saveClairic: { _, _ in }, chooseLocal: { _ in },
+            isPaused: { false }, acceptConsent: {}, saveClairic: { _, _, _ in }, chooseLocal: { _ in },
             refreshLocal: { _ in }, installLocal: { _ in }, cancelInstall: {},
             testClairic: { _, _ in .success("") }, addEventObserver: { _ in nil }, removeEventObserver: { _ in },
             indexEntry: { _ in nil }, openShortcutSettings: {}, finish: { _ in })

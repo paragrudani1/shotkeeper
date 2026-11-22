@@ -207,39 +207,44 @@ private struct BackendSettingsTab: View {
 }
 
 /// While the selected backend's destination is not allowed: says so, and asks with a confirmation that names the
-/// destination ("Screenshots will be sent to llm.lan"). Nothing is sent before "Allow" (the processor skips files).
-/// It asks by itself when the backend is switched; a URL being typed only shows the row (no dialog per keystroke).
+/// destination ("Screenshots will be sent to http://gpu-box.lan:8080"). Nothing is sent before "Allow" (the processor
+/// skips files). It asks by itself when the backend is switched; a URL being typed only shows the row (no dialog per
+/// keystroke). The dialog shows the request captured when it opened (`presenting`), so its text and its "Allow" stay
+/// the same while it is open; "Allow" grants exactly that endpoint, nothing if the settings no longer match.
 private struct UploadConsentRow: View {
     let coordinator: AppCoordinator
-    @State private var asking = false
+    @State private var asking: ConsentRequest?
 
     var body: some View {
         let settings = coordinator.settings
         // A VStack, not a Group: a Group passes `onChange` to its children, and there are none while allowed.
         VStack(alignment: .leading, spacing: 0) {
             if let request = BackendGate.consentRequest(for: settings) {
-                let prompt = request.prompt
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "hand.raised.fill").foregroundStyle(.orange).accessibilityHidden(true)
-                    Text("\(prompt). Nothing is sent until you allow it.")
+                    Text("\(request.prompt). Nothing is sent until you allow it.")
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    Button("Allow…") { asking = true }
+                    Button("Allow…") { asking = request }
                 }
                 .font(.callout)
-                .confirmationDialog("\(prompt).", isPresented: $asking, titleVisibility: .visible) {
-                    // Grants exactly the endpoint this dialog names; nothing if it was edited meanwhile.
-                    Button("Allow") { coordinator.allowUploads(to: request.destination, endpoint: request.endpoint) }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Shotkeeper sends each new screenshot there to name it. Screenshots taken before you allow it "
-                         + "are left alone, unless you choose Process Existing Screenshots.")
-                }
             }
         }
-        .onChange(of: settings.backend) { _, _ in
-            if BackendGate.consentPrompt(for: coordinator.settings) != nil { asking = true }
+        .confirmationDialog(asking.map { "\($0.prompt)." } ?? "", isPresented: isAsking, titleVisibility: .visible,
+                            presenting: asking) { request in
+            Button("Allow") { coordinator.allowUploads(to: request.destination, endpoint: request.endpoint) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Shotkeeper sends each new screenshot there to name it. Screenshots taken before you allow it "
+                 + "are left alone, unless you choose Process Existing Screenshots.")
         }
+        .onChange(of: settings.backend) { _, _ in
+            if let request = BackendGate.consentRequest(for: coordinator.settings) { asking = request }
+        }
+    }
+
+    private var isAsking: Binding<Bool> {
+        Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })
     }
 }
 

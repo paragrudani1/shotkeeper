@@ -9,9 +9,10 @@ public enum SkipReason: Equatable, Sendable {
     case alreadyIndexed
     /// The user restored this file's original name with Undo; Shotkeeper leaves it alone from then on.
     case restoredByUndo
-    /// The selected backend sends screenshots off this Mac, and the user has not allowed that destination, or the
-    /// file was taken before they did (`BackendGate.mayAnalyze`). Skipped like Pause, not held, and checked on every
-    /// run, so neither a resumed queue nor a later file event uploads a screenshot taken before the consent.
+    /// `UploadConsent.decide` refused: the job's backend sends screenshots off this Mac and its destination is not
+    /// allowed, or the file was taken before it was (and no Process Existing request for that destination covers
+    /// it). Skipped like Pause, not held, and decided on every run, so neither a resumed queue nor a later file event
+    /// uploads a screenshot taken before the consent.
     case awaitingConsent
 }
 
@@ -60,8 +61,13 @@ public struct UndoBatchResult: Equatable, Sendable {
 }
 
 /// One screenshot through the whole pipeline:
-/// skip if missing/excluded/paused/already indexed → prepare image → analyze → rename/move when allowed →
-/// undo record → Finder tags/comment → index row.
+/// skip if missing/excluded/paused/already indexed → prepare image → consent decision → analyze → rename/move when
+/// allowed → undo record → Finder tags/comment → index row.
+///
+/// Consent (CODING_STANDARDS #2) is decided here and only here, by `UploadConsent.decide`, on the `AnalyzerSnapshot`
+/// whose analyzer then gets the image: the snapshot is read once, after the image is prepared, and nothing the app
+/// changes afterwards affects this job. An early check on the snapshot at the start only avoids reading and indexing
+/// a file that cannot go anywhere.
 ///
 /// The file is never lost: nothing touches it before the analysis succeeds, and renames/moves go through
 /// `FileOrganizer` (no-replace). On an analyzer/preparer error the row is saved as `failed` with `lastError`, and the
@@ -69,74 +75,87 @@ public struct UndoBatchResult: Equatable, Sendable {
 /// The undo record is appended right after a successful move (before index/Finder writes) so a later failure can
 /// never leave a move that cannot be undone.
 public final class ScreenshotProcessor: Sendable {
-    private let analyzer: @Sendable () -> any ScreenshotAnalyzer
+    private let snapshot: @Sendable () -> AnalyzerSnapshot
     private let imagePreparer: any ImagePreparer
     private let metadataWriter: any FileMetadataWriter
     private let index: ScreenshotIndex
     private let organizer: FileOrganizer
     private let undoLog: UndoLog
-    private let settings: @Sendable () -> AppSettings
     private let now: @Sendable () -> Date
+    private let timeZone: TimeZone
 
     /// - Parameters:
-    ///   - analyzer: called per screenshot, so a backend switch in settings takes effect without rebuilding.
-    ///   - settings: read once per screenshot.
-    public init(analyzer: @escaping @Sendable () -> any ScreenshotAnalyzer,
+    ///   - snapshot: the analyzer and the settings it was built from, read together (the app keeps them in one
+    ///     locked value). Read at the start of a job for its early checks, and once more right before `analyze`:
+    ///     that second pair is what the job uses (consent decision, analyzer, rename/move/Finder settings).
+    ///   - timeZone: for the time in screenshot names (`ScreenshotDetector.captureDate`).
+    public init(snapshot: @escaping @Sendable () -> AnalyzerSnapshot,
                 imagePreparer: any ImagePreparer,
                 metadataWriter: any FileMetadataWriter = NoopFileMetadataWriter(),
                 index: ScreenshotIndex,
                 organizer: FileOrganizer = FileOrganizer(),
                 undoLog: UndoLog,
-                settings: @escaping @Sendable () -> AppSettings,
-                now: @escaping @Sendable () -> Date = { Date() }) {
-        self.analyzer = analyzer
+                now: @escaping @Sendable () -> Date = { Date() },
+                timeZone: TimeZone = .current) {
+        self.snapshot = snapshot
         self.imagePreparer = imagePreparer
         self.metadataWriter = metadataWriter
         self.index = index
         self.organizer = organizer
         self.undoLog = undoLog
-        self.settings = settings
         self.now = now
+        self.timeZone = timeZone
     }
 
+    /// A fixed analyzer with changing settings (tests, the CLI): the analyzer does not depend on the settings.
     public convenience init(analyzer: any ScreenshotAnalyzer, imagePreparer: any ImagePreparer,
                             metadataWriter: any FileMetadataWriter = NoopFileMetadataWriter(), index: ScreenshotIndex,
                             organizer: FileOrganizer = FileOrganizer(), undoLog: UndoLog,
-                            settings: @escaping @Sendable () -> AppSettings, now: @escaping @Sendable () -> Date = { Date() }) {
-        self.init(analyzer: { analyzer }, imagePreparer: imagePreparer, metadataWriter: metadataWriter, index: index,
-                  organizer: organizer, undoLog: undoLog, settings: settings, now: now)
+                            settings: @escaping @Sendable () -> AppSettings, now: @escaping @Sendable () -> Date = { Date() },
+                            timeZone: TimeZone = .current) {
+        self.init(snapshot: { AnalyzerSnapshot(analyzer: analyzer, settings: settings()) }, imagePreparer: imagePreparer,
+                  metadataWriter: metadataWriter, index: index, organizer: organizer, undoLog: undoLog, now: now,
+                  timeZone: timeZone)
     }
 
     /// Suitable as a `ProcessingQueue` handler: `{ _ = try await processor.process($0) }`.
-    public func process(_ url: URL, explicitlyRequested: Bool = false) async throws -> ProcessingOutcome {
-        try await processWithReport(url, explicitlyRequested: explicitlyRequested).outcome
+    public func process(_ url: URL, processExisting: ProcessExistingAuthorization? = nil) async throws -> ProcessingOutcome {
+        try await processWithReport(url, processExisting: processExisting).outcome
     }
 
     /// `process(_:)` plus the original path and the undo record id (for the rename toast).
-    /// - Parameter explicitlyRequested: the user asked for this existing file ("Process Existing Screenshots…"), so
-    ///   a file taken before the destination was allowed may be sent. The destination must still be allowed.
-    public func processWithReport(_ url: URL, explicitlyRequested: Bool = false) async throws -> ProcessingReport {
+    /// - Parameter processExisting: the user's "Process Existing Screenshots…" request for this file, with the
+    ///   destination selected when they asked. It lets a file taken before that destination was allowed be sent,
+    ///   only while that destination is still the job's and still allowed (`UploadConsent.decide`).
+    public func processWithReport(_ url: URL, processExisting: ProcessExistingAuthorization? = nil) async throws -> ProcessingReport {
         let original = url.standardizedFileURL
         var undoRecordID: UUID?
-        let outcome = try await process(original, explicitlyRequested: explicitlyRequested, undoRecordID: &undoRecordID)
+        let outcome = try await process(original, processExisting: processExisting, undoRecordID: &undoRecordID)
         return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: undoRecordID)
     }
 
-    private func process(_ url: URL, explicitlyRequested: Bool, undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
+    private func process(_ url: URL, processExisting: ProcessExistingAuthorization?,
+                         undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
         let url = url.standardizedFileURL
-        let settings = self.settings()
+        let early = self.snapshot().settings
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else { return .skipped(.missing) }
 
         let attributes = try? fm.attributesOfItem(atPath: url.path)
+        // For the index, the toast and Pause: a best guess, now() when nothing can be read.
         let capturedAt = (attributes?[.creationDate] as? Date) ?? (attributes?[.modificationDate] as? Date) ?? now()
-        switch settings.excludeRules.exclusion(for: url, capturedAt: capturedAt, now: now()) {
+        // For consent: the earliest the file can claim, `.distantPast` when unknown (fails closed).
+        let consentCapturedAt = UploadConsent.effectiveCaptureTime(
+            creationDate: attributes?[.creationDate] as? Date,
+            nameDate: ScreenshotDetector.captureDate(fromFilename: url.lastPathComponent, timeZone: timeZone))
+        switch early.excludeRules.exclusion(for: url, capturedAt: capturedAt, now: now()) {
         case .paused(let until)?: return .skipped(.paused(until: until))
         case .rule(let rule)?: return .skipped(.excluded(rule))
         case nil: break
         }
-        guard BackendGate.mayAnalyze(fileCapturedAt: capturedAt, settings: settings,
-                                     explicitlyRequested: explicitlyRequested) else { return .skipped(.awaitingConsent) }
+        // Early out only (no file read, no index row); the decision that counts is the one right before `analyze`.
+        guard UploadConsent.decide(settings: early, capturedAt: consentCapturedAt, processExisting: processExisting) == .allow
+        else { return .skipped(.awaitingConsent) }
 
         let rowAtPath = try index.lookup(byPath: url.path)
         if rowAtPath?.restoredByUndo == true { return .skipped(.restoredByUndo) }
@@ -153,18 +172,32 @@ public final class ScreenshotProcessor: Sendable {
         var entry = IndexedScreenshot(id: rowAtPath?.id ?? 0, path: url.path,
                                       originalFilename: rowAtPath?.originalFilename ?? url.lastPathComponent,
                                       contentHash: hash, capturedAt: capturedAt, status: .pending)
-        try index.save(entry)
-
-        let analysis: ScreenshotAnalysis
-        do {
-            let payload = try imagePreparer.prepare(url)
-            let context = AnalysisContext(originalFilename: entry.originalFilename, capturedAt: capturedAt)
-            analysis = try await analyzer().analyze(payload, context: context)
-        } catch {
+        func recordFailure(_ error: Error) {
             entry.status = .failed
             entry.lastError = String(describing: error)
             entry.processedAt = now()
             _ = try? index.save(entry)
+        }
+
+        let payload: ImagePayload
+        do { payload = try imagePreparer.prepare(url) } catch {
+            recordFailure(error)
+            throw error
+        }
+
+        // THE consent decision (CODING_STANDARDS #2): on the pair this job uses, read once, right before `analyze`.
+        let job = self.snapshot()
+        let settings = job.settings
+        guard UploadConsent.decide(settings: settings, capturedAt: consentCapturedAt,
+                                   processExisting: processExisting) == .allow else { return .skipped(.awaitingConsent) }
+
+        try index.save(entry)
+        let analysis: ScreenshotAnalysis
+        do {
+            let context = AnalysisContext(originalFilename: entry.originalFilename, capturedAt: capturedAt)
+            analysis = try await job.analyzer.analyze(payload, context: context)
+        } catch {
+            recordFailure(error)
             throw error
         }
 

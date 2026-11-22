@@ -202,7 +202,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         let observer = coordinator.addEventObserver { events.append($0) }
         defer { coordinator.removeEventObserver(observer) }
         // 4. Clairic + Continue: the rebuild resumes the queue.
-        coordinator.saveClairicSetup(accountID: "acct", token: "tok")
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
         XCTAssertEqual(coordinator.readiness, .ready)
         try await waitForEvents({ events })
         await queue.waitUntilIdle()
@@ -221,7 +221,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         try Data("png".utf8).write(to: shot)
         try await Task.sleep(for: .milliseconds(20))
         coordinator.acceptPrivacyStep()
-        coordinator.saveClairicSetup(accountID: "acct", token: "tok") // Cloudflare allowed now, after the file
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true) // Cloudflare allowed now, after the file
         coordinator.startServices()
         defer { coordinator.stopServices() }
         try Data("edited in Preview".utf8).write(to: shot) // same file, same creation date
@@ -233,6 +233,113 @@ final class SetupModelTests: TempDirectoryTestCase {
         try await waitForEvents({ events })
         guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
         XCTAssertEqual(report.outcome, .skipped(.awaitingConsent))
+    }
+
+    /// Waits until `condition` holds, up to 5 s.
+    private func wait(until condition: () -> Bool) async throws {
+        for _ in 0..<500 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    /// Consent review 3, B1 path 1: Process Existing on Local (not installed, so every job is held), then setup:
+    /// I Agree, Clairic, Continue. The rebuild resumes the queue; the request was for Local, so the old screenshot
+    /// is not sent to Cloudflare.
+    func testProcessExistingOnLocalIsNotCarriedToClairic() async throws {
+        let coordinator = makeCoordinator()
+        let shot = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
+            .appendingPathComponent("Screenshot 2026-11-21 at 13.00.00.png")
+        // A real PNG: the image must reach the analyzer for the local backend to hold it as "not installed".
+        try ConnectionTestImage.payload().data.write(to: shot)
+        coordinator.startServices()
+        defer { coordinator.stopServices() }
+        coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
+        XCTAssertEqual(coordinator.readiness, .ready, "Local is ready even when not installed")
+        let queued = await coordinator.processExistingScreenshots()
+        XCTAssertEqual(queued, 1)
+        try await wait {
+            if case .error = coordinator.queueStatus { return true }
+            return false
+        }
+        guard case .error = coordinator.queueStatus else { return XCTFail("held as not installed: \(coordinator.queueStatus)") }
+        XCTAssertEqual(coordinator.processExistingRequests.count, 0, "the held run used up its request")
+
+        var events: [ScreenshotEvent] = []
+        let observer = coordinator.addEventObserver { events.append($0) }
+        defer { coordinator.removeEventObserver(observer) }
+        coordinator.acceptPrivacyStep()
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
+        XCTAssertEqual(coordinator.readiness, .ready)
+        try await waitForEvents({ events })
+        let queue = try XCTUnwrap(coordinator.queue)
+        await queue.waitUntilIdle()
+        guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
+        XCTAssertEqual(report.outcome, .skipped(.awaitingConsent), "taken before Cloudflare was allowed; asked for on Local")
+        XCTAssertNotEqual(coordinator.indexEntry(atPath: shot.standardizedFileURL.path)?.status, .done)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shot.path), "keeps its name")
+    }
+
+    /// Consent review 3, B1 path 2: Process Existing on Clairic, still queued (paused) when the user switches to a
+    /// custom endpoint and allows it. The requests are cleared with the switch, and the backlog is not sent there.
+    func testACloudflareBacklogIsNotSentToACustomEndpointAllowedLater() async throws {
+        let coordinator = makeCoordinator()
+        let shot = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
+            .appendingPathComponent("Screenshot 2026-11-21 at 14.00.00.png")
+        try ConnectionTestImage.payload().data.write(to: shot)
+        coordinator.acceptPrivacyStep()
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
+        coordinator.startServices()
+        defer { coordinator.stopServices() }
+        coordinator.pauseIndefinitely()
+        try await wait { coordinator.isPaused }
+        let queued = await coordinator.processExistingScreenshots()
+        XCTAssertEqual(queued, 1)
+        XCTAssertEqual(coordinator.processExistingRequests.count, 1, "held by the pause, not run yet")
+
+        let endpoint = try XCTUnwrap(URL(string: "http://127.0.0.1:1"))
+        coordinator.updateSettings {
+            $0.backend = .customEndpoint
+            $0.customEndpointURL = endpoint
+            $0.customModelName = "m"
+        }
+        XCTAssertEqual(coordinator.processExistingRequests.count, 0, "a request is never carried to another destination")
+        coordinator.allowUploads(to: .customEndpoint, endpoint: CustomEndpointIdentity(url: endpoint))
+        XCTAssertEqual(coordinator.readiness, .ready)
+
+        var events: [ScreenshotEvent] = []
+        let observer = coordinator.addEventObserver { events.append($0) }
+        defer { coordinator.removeEventObserver(observer) }
+        coordinator.resume()
+        try await waitForEvents({ events })
+        guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
+        XCTAssertEqual(report.outcome, .skipped(.awaitingConsent), "taken before the endpoint was allowed")
+    }
+
+    /// Process Existing requests are cleared on any destination change, also a grant change (here: Cloudflare
+    /// allowed while a Local request waits).
+    func testProcessExistingRequestsAreClearedWhenTheDestinationChanges() async throws {
+        let coordinator = makeCoordinator()
+        let watched = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
+        try ConnectionTestImage.payload().data.write(to: watched.appendingPathComponent("Screenshot 2026-11-21 at 15.00.00.png"))
+        coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
+        coordinator.pauseIndefinitely()
+        try await wait { coordinator.isPaused }
+        _ = await coordinator.processExistingScreenshots()
+        XCTAssertEqual(coordinator.processExistingRequests.count, 1)
+        coordinator.updateSettings { $0.renameEnabled = false }
+        XCTAssertEqual(coordinator.processExistingRequests.count, 1, "an unrelated setting keeps it")
+        coordinator.allowUploads(to: .cloudflare, endpoint: nil)
+        XCTAssertEqual(coordinator.processExistingRequests.count, 0, "a grant change clears it")
+    }
+
+    /// Review N3: only this run's "I Agree" allows Cloudflare, not a flag saved by an earlier run.
+    func testSaveClairicSetupGrantsOnlyWithThisRunsAgreement() {
+        let coordinator = makeCoordinator()
+        coordinator.acceptPrivacyStep() // an earlier run
+        coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: false)
+        XCTAssertNil(coordinator.settings.grant(for: .cloudflare))
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        coordinator.saveClairicSetup(accountID: "acct", token: "", agreedThisRun: true)
+        XCTAssertNotNil(coordinator.settings.grant(for: .cloudflare))
+        XCTAssertEqual(coordinator.readiness, .ready)
     }
 
     func testLocalNeedsNoUploadConsent() {

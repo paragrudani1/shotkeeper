@@ -88,35 +88,40 @@ final class BackendGateTests: XCTestCase {
         XCTAssertEqual(BackendGate.granting(.customEndpoint, expectedEndpoint: shown, in: noURL), noURL)
     }
 
-    func testGrantTimeRule() {
+    func testGrantTimesAndRegranting() {
         let grantedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        var settings = AppSettings()
-        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt, settings: settings))
-        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt, settings: settings, explicitlyRequested: true),
-                       "an explicit request still needs the destination")
-        settings = BackendGate.granting(.cloudflare, in: settings, at: grantedAt)
-        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt.addingTimeInterval(-1), settings: settings))
-        XCTAssertTrue(BackendGate.mayAnalyze(fileCapturedAt: grantedAt, settings: settings))
-        XCTAssertTrue(BackendGate.mayAnalyze(fileCapturedAt: grantedAt.addingTimeInterval(-86_400), settings: settings,
-                                             explicitlyRequested: true))
+        var settings = BackendGate.granting(.cloudflare, in: AppSettings(), at: grantedAt)
+        XCTAssertEqual(settings.grant(for: .cloudflare)?.grantedAt, grantedAt, "a whole second stays as it is")
         // Granting again keeps the first time.
         let again = BackendGate.granting(.cloudflare, in: settings, at: grantedAt.addingTimeInterval(500))
         XCTAssertEqual(again.grant(for: .cloudflare)?.grantedAt, grantedAt)
-        // A new endpoint gets a new time: files taken before it are not sent there.
-        var custom = settings
-        custom.backend = .customEndpoint
-        custom.customEndpointURL = URL(string: "http://a.lan:8080")
-        custom = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: custom.customEndpointURL),
-                                      in: custom, at: grantedAt)
-        custom.customEndpointURL = URL(string: "http://b.lan:8080")
-        custom = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: custom.customEndpointURL),
-                                      in: custom, at: grantedAt.addingTimeInterval(600))
-        XCTAssertFalse(BackendGate.mayAnalyze(fileCapturedAt: grantedAt.addingTimeInterval(300), settings: custom),
-                       "taken while A was allowed, but B was allowed later")
-        // Local has no destination and no time rule.
-        settings.backend = .localInkling
-        settings.uploadGrants = []
-        XCTAssertTrue(BackendGate.mayAnalyze(fileCapturedAt: .distantPast, settings: settings))
+        // A new endpoint replaces the old grant with a new time.
+        settings.backend = .customEndpoint
+        settings.customEndpointURL = URL(string: "http://a.lan:8080")
+        settings = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: settings.customEndpointURL),
+                                        in: settings, at: grantedAt)
+        settings.customEndpointURL = URL(string: "http://b.lan:8080")
+        settings = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: settings.customEndpointURL),
+                                        in: settings, at: grantedAt.addingTimeInterval(600))
+        XCTAssertEqual(settings.grant(for: .customEndpoint),
+                       AppSettings.UploadGrant(destination: .customEndpoint, grantedAt: grantedAt.addingTimeInterval(600),
+                                               endpoint: CustomEndpointIdentity(scheme: "http", host: "b.lan", port: 8080)))
+        XCTAssertEqual(settings.uploadGrants.count, 2, "one grant per destination")
+    }
+
+    /// Review N1: settings store whole seconds, so a grant at .25 is saved as the NEXT second. Rounding down would
+    /// let a file taken between the whole second and the click through after a reload.
+    func testGrantTimeIsRoundedUpToTheNextWholeSecond() throws {
+        let click = Date(timeIntervalSince1970: 1_800_000_000.25)
+        let settings = BackendGate.granting(.cloudflare, in: AppSettings(), at: click)
+        XCTAssertEqual(settings.grant(for: .cloudflare)?.grantedAt, Date(timeIntervalSince1970: 1_800_000_001))
+        let reloaded = AppSettings.decode(try settings.encoded())
+        XCTAssertEqual(reloaded.uploadGrants, settings.uploadGrants, "survives a save and reload unchanged")
+        let takenBeforeTheClick = Date(timeIntervalSince1970: 1_800_000_000.1)
+        XCTAssertEqual(UploadConsent.decide(settings: reloaded, capturedAt: takenBeforeTheClick),
+                       .skip(.takenBeforeGrant(grantedAt: Date(timeIntervalSince1970: 1_800_000_001))))
+        XCTAssertEqual(BackendGate.granting(.cloudflare, in: AppSettings(), at: .distantPast).grant(for: .cloudflare)?.grantedAt,
+                       .distantPast)
     }
 
     func testEndpointDisplay() {
@@ -129,20 +134,20 @@ final class BackendGateTests: XCTestCase {
 
     func testConsentPromptNamesTheDestination() {
         var settings = AppSettings()
-        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to your Cloudflare account")
+        XCTAssertEqual(BackendGate.consentRequest(for: settings)?.prompt, "Screenshots will be sent to your Cloudflare account")
         settings = BackendGate.granting(.cloudflare, in: settings)
-        XCTAssertNil(BackendGate.consentPrompt(for: settings))
+        XCTAssertNil(BackendGate.consentRequest(for: settings)?.prompt)
         settings.backend = .customEndpoint
-        XCTAssertNil(BackendGate.consentPrompt(for: settings), "no endpoint to name yet")
+        XCTAssertNil(BackendGate.consentRequest(for: settings)?.prompt, "no endpoint to name yet")
         settings.customEndpointURL = URL(string: "https://GPU-box.lan:8443/v1")
-        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to gpu-box.lan:8443")
+        XCTAssertEqual(BackendGate.consentRequest(for: settings)?.prompt, "Screenshots will be sent to gpu-box.lan:8443")
         XCTAssertEqual(BackendGate.consentRequest(for: settings)?.endpoint,
                        CustomEndpointIdentity(scheme: "https", host: "gpu-box.lan", port: 8443))
         settings.customEndpointURL = URL(string: "http://gpu-box.lan:8080")
-        XCTAssertEqual(BackendGate.consentPrompt(for: settings), "Screenshots will be sent to http://gpu-box.lan:8080",
+        XCTAssertEqual(BackendGate.consentRequest(for: settings)?.prompt, "Screenshots will be sent to http://gpu-box.lan:8080",
                        "an unencrypted endpoint says so")
         settings.backend = .localInkling
-        XCTAssertNil(BackendGate.consentPrompt(for: settings))
+        XCTAssertNil(BackendGate.consentRequest(for: settings)?.prompt)
     }
 
     func testDestinations() {

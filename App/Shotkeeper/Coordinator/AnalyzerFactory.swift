@@ -70,7 +70,9 @@ enum AnalyzerFactory {
     static func make(settings: AppSettings, credentials: any CredentialStore,
                      localRuntime: (any LocalModelServing)?,
                      physicalMemoryBytes: UInt64 = SystemInfo.physicalMemoryBytes) -> any ScreenshotAnalyzer {
-        // Account/token/URL/model checks and the consent gate are core `BackendGate` (CODING_STANDARDS #2).
+        // Account/token/URL/model checks are core `BackendGate`. Its consent check here only gives the "Needs
+        // attention" hold and costs nothing; whether a file is sent is decided by `UploadConsent.decide` in the
+        // processor (CODING_STANDARDS #2).
         switch settings.backend {
         case .clairic:
             let token: String

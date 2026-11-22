@@ -17,8 +17,9 @@ struct SetupServices {
     var isPaused: @MainActor () -> Bool
     /// Step 2 "I Agree": the privacy step is done (grants nothing; Clairic's Continue allows Cloudflare).
     var acceptConsent: @MainActor () -> Void
-    /// Step 3 "Continue" with Clairic: the token goes to the Keychain here (empty = keep the saved one).
-    var saveClairic: @MainActor (_ accountID: String, _ token: String) -> Void
+    /// Step 3 "Continue" with Clairic: the token goes to the Keychain here (empty = keep the saved one). Cloudflare
+    /// is allowed only when `agreedThisRun` (step 2's "I Agree" was pressed in this window).
+    var saveClairic: @MainActor (_ accountID: String, _ token: String, _ agreedThisRun: Bool) -> Void
     /// Step 3 "Continue" with the local model.
     var chooseLocal: @MainActor (ModelVariant) -> Void
     var refreshLocal: @MainActor (ModelVariant) async -> Void
@@ -49,7 +50,9 @@ struct SetupServices {
             readiness: { coordinator.readiness },
             isPaused: { coordinator.isPaused },
             acceptConsent: { coordinator.acceptPrivacyStep() },
-            saveClairic: { account, token in coordinator.saveClairicSetup(accountID: account, token: token) },
+            saveClairic: { account, token, agreed in
+                coordinator.saveClairicSetup(accountID: account, token: token, agreedThisRun: agreed)
+            },
             chooseLocal: { coordinator.chooseLocalBackend($0) },
             refreshLocal: { await coordinator.localRuntime.refresh(for: $0) },
             installLocal: { await coordinator.installLocalModel($0) },
@@ -101,6 +104,8 @@ final class SetupModel {
         }
     }
     var test: ConnectionTestState = .idle
+    /// Step 2's "I Agree" was pressed in this window (not a flag saved by an earlier run).
+    private(set) var agreedThisRun = false
     @ObservationIgnored let services: SetupServices
     /// Identifies the running Test Connection; editing the inputs drops it, so a late "Connected" for old input
     /// never shows.
@@ -184,8 +189,9 @@ final class SetupModel {
             break
         case .acceptConsent:
             services.acceptConsent()
+            agreedThisRun = true
         case .saveConnection(.clairic):
-            services.saveClairic(flow.inputs.accountID, tokenDraft)
+            services.saveClairic(flow.inputs.accountID, tokenDraft, agreedThisRun)
             tokenDraft = ""
         case .saveConnection(.localInkling):
             if let model = cards.local.model { services.chooseLocal(model) }
