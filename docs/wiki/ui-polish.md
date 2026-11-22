@@ -566,7 +566,9 @@ separate branch (`t3/ui-pr4-icon`), merged in before the PR.
 - 2026-11-22: offscreen snapshots draw switches and the progress bar in the inactive-window grey; on a Mac they use
   the accent colour.
 
-### Review fixes (review of `9552c66`)
+### Review fixes (review of `9552c66`; commit `d8f9e3f`, Swift 6 fix `f47d639`, green run 44988345419)
+
+Snapshots checked in that run: the new partial-download, beyond-estimate and recorder-hint states.
 - 2026-11-22 (B1): **a token being typed is saved but not used.** The 1 s pause writes the draft to the Keychain
   (`AppCoordinator.persistSecretDraft`) without rebuilding the analyzer, recomputing readiness, starting the watcher
   or resuming a held queue. The analyzer keeps reading the previous value of that key (`CommittedCredentialStore`)
