@@ -183,7 +183,8 @@ final class SetupModelTests: TempDirectoryTestCase {
         let coordinator = makeCoordinator()
         let shot = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
             .appendingPathComponent("Screenshot 2026-11-21 at 11.00.00.png")
-        try Data("png".utf8).write(to: shot)
+        // A real PNG: the image must reach the analyzer for the local backend to hold it as "not installed".
+        try ConnectionTestImage.payload().data.write(to: shot)
         coordinator.startServices()
         defer { coordinator.stopServices() }
         // 1. Setup closed without agreeing. 2. Local in Settings, not installed: the job is held.
@@ -383,7 +384,10 @@ final class SetupModelTests: TempDirectoryTestCase {
         coordinator.updateSettings { $0.clairicAccountID = "acct" }
         let model = makeModel(coordinator)
         XCTAssertEqual(model.flow.choice, .customEndpoint)
-        model.pressPrimary(); model.pressPrimary()
+        XCTAssertFalse(model.flow.consentChecked, "ticked only when Cloudflare was allowed before")
+        model.pressPrimary()
+        model.flow.consentChecked = true
+        model.pressPrimary()
         XCTAssertEqual(model.current.primary.title, "Continue")
         model.pressPrimary() // Return on step 3
         XCTAssertEqual(coordinator.settings.backend, .customEndpoint, "not silently switched to Clairic")
