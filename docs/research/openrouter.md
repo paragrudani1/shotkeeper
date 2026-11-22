@@ -160,7 +160,8 @@ https://openrouter.ai/docs/cookbook/administration/usage-accounting.md:
 `only: ["primeintellect", "io-net"]` for the default model (section above).
 `require_parameters` is not a privacy option: it keeps a provider that would ignore `reasoning`, `response_format` or
 `logprobs` from serving the request; both providers support every parameter Shotkeeper sends (table above).
-Not sent: `order`/`only` (pinning a provider would lose the fallback), `allow_fallbacks` (default true).
+Not sent: `order`, `allow_fallbacks` (default true; with `only` the fallback stays between the two named providers).
+`only` is sent for the default model only (next section).
 
 Within OpenRouter itself: "OpenRouter does not store your prompts or responses, *unless* you opt in" to private
 logging or to "OpenRouter Use of Inputs/Outputs" (both off by default), or content is flagged as potential CSAM. It
@@ -222,14 +223,19 @@ https://openrouter.ai/docs/api_reference/limits.md:
   **Unverified: the exact 404 message** (often quoted as "No endpoints found …"); Shotkeeper does not match on it.
 
 Shotkeeper's mapping (`OpenRouterBackend.refineError`, `HTTPErrorMapping`), as revised 2026-11-22 (review S4):
-- 402 with a `Retry-After` header (or `limit_source == openrouter_in_flight_budget`) → `rateLimited` (retried); any
-  other 402 → `accountState` "OpenRouter is out of credits. Add credits, then choose Resume" (holds the queue).
+- 402 with a `Retry-After` header → `rateLimited` (retried). A 402 without it holds the queue ("not a wait-and-retry
+  case", also for `openrouter_in_flight_budget`; revised 2026-11-22, re-review): `limit_source == openrouter_key_limit`
+  → `accountState` "Your OpenRouter key reached its spending limit…"; any other → `accountState` "OpenRouter is out
+  of credits. Add credits, then choose Resume".
 - 403 with `metadata.limit_source` (a budget) → `accountState` "Your OpenRouter key reached its spending limit…"
   (holds); 403 with `error_type` `content_policy_violation` or `refusal` → `badRequest(403)` (that one file fails);
   other 401/403 → `unauthorized` (holds).
 - 404 (except `image_not_found`) → `accountState` "OpenRouter has no provider for this model that Shotkeeper may
   use…" (holds). 503 without `provider_overloaded` → `accountState` "No OpenRouter provider for this model meets
-  Shotkeeper's privacy settings right now…" (holds); `provider_overloaded` → `serverError` (retried).
+  Shotkeeper's privacy settings right now…" (holds); `provider_overloaded` → `serverError` (retried). Both hold only
+  for OpenRouter's own routing answer: the HTTP status itself with an OpenRouter `error` body and no `Retry-After`.
+  An HTML edge page, a 503 with `Retry-After`, or a 404/503 embedded in a 200 mid-generation is retried like any
+  other 4xx/5xx (revised 2026-11-22, re-review).
 - 429 → `rateLimited`; 408/other 5xx → `serverError` (retried).
 
 ## Where the docs are silent (2026-11-22)

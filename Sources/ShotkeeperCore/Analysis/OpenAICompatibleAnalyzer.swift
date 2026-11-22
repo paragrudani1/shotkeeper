@@ -192,10 +192,11 @@ public final class OpenAICompatibleAnalyzer: ScreenshotAnalyzer {
     }
 
     static func refineError(status: Int, headers: HTTPURLResponse?, body: Data,
-                            dialect: OpenAICompatibleProfile.ErrorDialect) -> AnalyzerError? {
+                            dialect: OpenAICompatibleProfile.ErrorDialect, embedded: Bool = false) -> AnalyzerError? {
         switch dialect {
         case .generic: return nil
-        case .openRouter: return OpenRouterBackend.refineError(status: status, headers: headers, body: body)
+        case .openRouter:
+            return OpenRouterBackend.refineError(status: status, headers: headers, body: body, embedded: embedded)
         }
     }
 
@@ -346,7 +347,8 @@ public final class OpenAICompatibleAnalyzer: ScreenshotAnalyzer {
             return .invalidResponse("\(profile.serviceName) reported an error: \(message)")
         }
         let wrapped = (try? AnalysisJSON.object(["error": error]).encoded()) ?? body
-        if let refined = refineError(status: code, headers: response, body: wrapped, dialect: profile.errorDialect) {
+        if let refined = refineError(status: code, headers: response, body: wrapped, dialect: profile.errorDialect,
+                                      embedded: true) {
             return refined
         }
         return HTTPErrorMapping.map(status: code, headers: response, body: body, describeBody: { _ in message })

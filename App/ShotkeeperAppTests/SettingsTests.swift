@@ -112,6 +112,11 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         XCTAssertEqual(AppSettings.Backend.allCases.map(BackendCopy.shortName(for:)), ["Clairic", "OpenRouter", "Local", "Custom"])
         XCTAssertTrue(BackendCopy.privacy(for: .openRouter).contains("Prime Intellect or io.net"))
         XCTAssertTrue(BackendCopy.privacy(for: .openRouter).contains("zero data retention"))
+        let other = BackendCopy.privacy(for: .openRouter, openRouterModel: " vendor/other ")
+        XCTAssertTrue(other.contains("the provider that serves vendor/other"))
+        XCTAssertFalse(other.contains("Prime Intellect"))
+        XCTAssertTrue(BackendCopy.openRouterRoutingNote(model: OpenRouterBackend.defaultModel).contains("Both providers"))
+        XCTAssertTrue(BackendCopy.openRouterRoutingNote(model: "vendor/other").contains("If no provider of vendor/other qualifies"))
         XCTAssertEqual(ExclusionsSettingsTab.emptyText,
                        "No rules yet. Screenshots that match a rule are never sent, renamed or indexed.")
     }
@@ -216,6 +221,12 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         XCTAssertNil(coordinator.settings.customModelName)
         coordinator.commitModelNameDraft(for: .custom)
         XCTAssertEqual(coordinator.settings.customModelName, "inkling")
+
+        // A field that only loaded its text is not an edit: the setting changing elsewhere is not overwritten.
+        coordinator.updateModelNameDraft("", for: .openRouter) // the field appears with the saved (empty) name
+        coordinator.updateSettings { $0.openRouterModel = "vendor/elsewhere" }
+        coordinator.commitAllSecretDrafts() // Settings closes
+        XCTAssertEqual(coordinator.settings.openRouterModel, "vendor/elsewhere", "no stale value written back")
     }
 
     func testAFailedKeychainWriteIsReported() {

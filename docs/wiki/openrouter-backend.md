@@ -151,6 +151,18 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
   texts say "Local server …"; a 2xx body carrying an `error` object (top level without `choices`, or
   `choices[0].error`) is now mapped by its `code` like an HTTP status instead of "no choices[0].message"; request,
   parse, repair and the 400 fallback are unchanged (all `OpenAICompatibleAnalyzerTests` pass unchanged).
+- 2026-11-22: **re-review fixes** (review of `36b6667`, no blockers):
+  - 404/503 hold the queue only for OpenRouter's own routing answer: the HTTP status itself, an OpenRouter `error`
+    body, no `Retry-After`. An HTML edge page, a 503 with `Retry-After` and a 404/503 embedded in a 200 (a provider
+    failing mid-generation) are retried again, as before S4 (`refineError(embedded:)`).
+  - A 402 without `Retry-After` always holds, including `openrouter_in_flight_budget` (the docs: "not a wait-and-retry
+    case"); `openrouter_key_limit` shows the spending-limit text instead of "out of credits".
+  - The privacy text in setup and Settings names the providers of the configured model (`destinationPhrase`): Prime
+    Intellect or io.net only for the default model, "the provider that serves <model>" otherwise.
+  - Setup's "Agree and Continue" grants the model step 3 named (`saveOpenRouterSetup(key:model:)`); if the
+    configured model changed in between, nothing is granted and Settings asks.
+  - A model name field that only loaded its text is not a draft, so closing Settings never writes an old name back.
+    Test Connection tests the model name on screen (draft or setting); it still saves and grants nothing.
 
 ## Live test
 - 2026-11-22: **skipped**: `OPENROUTER_API_KEY` is not in `.env.local` (names checked only) nor in the environment.

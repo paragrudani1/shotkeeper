@@ -9,10 +9,20 @@ enum BackendCopy {
     static let localPrivacy = "100% on-device, nothing leaves your Mac."
     static let customPrivacy = "Screenshots are sent to the endpoint you enter. If it is not on this Mac, they leave this Mac."
     /// docs/research/openrouter.md, "Privacy routing": requests carry `zdr: true` and `data_collection: "deny"`.
-    static let openRouterPrivacy = "Screenshots are sent to OpenRouter, which passes them to a third-party provider "
-        + "(\(OpenRouterBackend.providerNames.joined(separator: " or "))) under their data policies. Shotkeeper asks "
-        + "OpenRouter to use only providers that keep no copy (zero data retention) and do not collect or train on "
-        + "the data. Shotkeeper has no server of its own."
+    /// `model` is an effective model ID: the providers named are the ones that serve it (`destinationPhrase`).
+    static func openRouterPrivacy(model: String) -> String {
+        "Screenshots are sent to \(OpenRouterBackend.destinationPhrase(model: model)), under the provider's data "
+            + "policy. Shotkeeper asks OpenRouter to use only providers that keep no copy (zero data retention) and do "
+            + "not collect or train on the data. Shotkeeper has no server of its own."
+    }
+    /// Settings → Model → Privacy, for an effective model ID.
+    static func openRouterRoutingNote(model: String) -> String {
+        let who = model == OpenRouterBackend.defaultModel
+            ? "Both providers of Inkling 2 Mini qualify today; if none does,"
+            : "If no provider of \(model) qualifies,"
+        return "Requests ask for zero data retention and no data collection. \(who) OpenRouter refuses the request "
+            + "instead of sending it elsewhere."
+    }
     /// Setup step 3, above the footer: what the default button "Agree and Continue" allows.
     static func openRouterAgreement(destination: String) -> String {
         "\u{201C}\(SetupFlow.openRouterAgreeTitle)\u{201D} allows Shotkeeper to send each new screenshot to \(destination)."
@@ -20,10 +30,11 @@ enum BackendCopy {
     static let tokenHelpURL = URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!
     static let tokenHelpText = "Create a token with Workers AI Read + Edit permissions (Cloudflare docs)"
 
-    static func privacy(for backend: AppSettings.Backend) -> String {
+    /// `openRouterModel`: the setting (nil or blank = the default model).
+    static func privacy(for backend: AppSettings.Backend, openRouterModel: String? = nil) -> String {
         switch backend {
         case .clairic: return clairicPrivacy
-        case .openRouter: return openRouterPrivacy
+        case .openRouter: return openRouterPrivacy(model: OpenRouterBackend.effectiveModel(openRouterModel))
         case .localInkling: return localPrivacy
         case .customEndpoint: return customPrivacy
         }
@@ -123,7 +134,7 @@ struct ModelSettingsTab: View {
                     }
                     .pickerStyle(.segmented)
                     .help("Which model names your screenshots")
-                    Text(BackendCopy.privacy(for: draft.wrappedValue.backend))
+                    Text(BackendCopy.privacy(for: draft.wrappedValue.backend, openRouterModel: draft.wrappedValue.openRouterModel))
                         .foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     if let request = BackendGate.consentRequest(for: coordinator.settings) {
@@ -278,6 +289,8 @@ private struct OpenRouterSettingsSection: View {
             TestConnectionRow(coordinator: coordinator) {
                 var candidate = draft
                 candidate.backend = .openRouter
+                candidate.openRouterModel = coordinator.displayedModelName(for: .openRouter)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 return (candidate, [.openRouterAPIKey: keyDraft])
             }
         }
@@ -289,8 +302,7 @@ private struct OpenRouterSettingsSection: View {
                     Link("Zero data retention", destination: OpenRouterBackend.zeroDataRetentionURL)
                 }
             } label: {
-                Text("Requests ask for zero data retention and no data collection. Both providers of Inkling 2 Mini "
-                     + "qualify today; if none does, OpenRouter refuses the request instead of sending it elsewhere.")
+                Text(BackendCopy.openRouterRoutingNote(model: OpenRouterBackend.effectiveModel(draft.openRouterModel)))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -316,6 +328,7 @@ private struct CustomEndpointSettingsSection: View {
             TestConnectionRow(coordinator: coordinator) {
                 var candidate = draft
                 candidate.backend = .customEndpoint
+                candidate.customModelName = coordinator.displayedModelName(for: .custom)
                 return (candidate, [.customEndpointAPIKey: keyDraft])
             }
         }

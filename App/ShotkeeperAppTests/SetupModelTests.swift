@@ -114,7 +114,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         let coordinator = makeCoordinator()
         XCTAssertFalse(coordinator.settings.hasSeenPrivacyNotice)
         coordinator.updateSettings { $0.openRouterModel = "vendor/other-model" }
-        coordinator.saveOpenRouterSetup(key: "sk-or-v1-key")
+        coordinator.saveOpenRouterSetup(key: "sk-or-v1-key", model: "vendor/other-model")
         XCTAssertEqual(coordinator.settings.grant(for: .openRouter)?.openRouterModel, "vendor/other-model")
         XCTAssertNil(coordinator.settings.grant(for: .cloudflare))
         XCTAssertEqual(coordinator.readiness, .ready)
@@ -125,6 +125,24 @@ final class SetupModelTests: TempDirectoryTestCase {
         XCTAssertEqual(request?.prompt, "Screenshots will be sent to OpenRouter, then to Prime Intellect or io.net")
         coordinator.allowUploads(to: .openRouter, endpoint: nil, openRouterModel: request?.openRouterModel)
         XCTAssertEqual(coordinator.readiness, .ready, "an empty key keeps the saved one")
+    }
+
+    /// The grant covers the model step 3 named, not one configured after the window drew it.
+    func testAgreeAndContinueGrantsOnlyTheModelTheSectionNamed() {
+        let coordinator = makeCoordinator()
+        let model = makeModel(coordinator)
+        model.choose(.openRouter)
+        XCTAssertEqual(model.openRouterModel, OpenRouterBackend.defaultModel)
+        XCTAssertTrue(BackendCopy.openRouterPrivacy(model: model.openRouterModel).contains("Prime Intellect or io.net"))
+        coordinator.updateSettings { $0.openRouterModel = "vendor/other-model" } // e.g. Settings, beside setup
+        coordinator.saveOpenRouterSetup(key: "sk-or-v1-key", model: OpenRouterBackend.defaultModel) // what it named
+        XCTAssertNil(coordinator.settings.grant(for: .openRouter), "nothing is granted for a model it did not name")
+        XCTAssertEqual(coordinator.readiness, .needsConsent)
+        XCTAssertEqual(model.openRouterModel, "vendor/other-model")
+        let privacy = BackendCopy.openRouterPrivacy(model: model.openRouterModel)
+        XCTAssertTrue(privacy.contains("the provider that serves vendor/other-model"))
+        XCTAssertFalse(privacy.contains("Prime Intellect"), "another model's providers are not named as these two")
+        model.stop()
     }
 
     func testOpenRouterTestConnectionWithoutAKeySendsNothing() async throws {

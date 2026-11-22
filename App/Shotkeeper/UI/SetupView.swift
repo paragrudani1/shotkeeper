@@ -439,7 +439,7 @@ private struct OpenRouterSetup: View {
             }
             .font(.system(size: 13))
             .frame(maxWidth: 520)
-            Text(BackendCopy.openRouterPrivacy)
+            Text(BackendCopy.openRouterPrivacy(model: model.openRouterModel))
                 .font(.system(size: 12))
                 .foregroundStyle(Brand.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)

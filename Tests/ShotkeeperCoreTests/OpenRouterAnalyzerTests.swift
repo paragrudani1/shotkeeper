@@ -263,10 +263,44 @@ final class OpenRouterAnalyzerTests: XCTestCase {
         await assertAnalyzerError(.rateLimited(retryAfter: nil)) {
             _ = try await self.analyzer(second).analyze(samplePNG(), context: sampleContext)
         }
+        // openrouter.md, "Errors": "A `402` without the header is not a wait-and-retry case", in a 200 too.
         let inFlight = #"{"error":{"code":402,"message":"in flight","metadata":{"limit_source":"openrouter_in_flight_budget"}}}"#
-        await assertAnalyzerError(.rateLimited(retryAfter: nil)) {
+        await assertAnalyzerError(.accountState(OpenRouterBackend.outOfCreditsText)) {
             _ = try await self.analyzer(ScriptedTransport([.ok(inFlight)])).analyze(samplePNG(), context: sampleContext)
         }
+    }
+
+    func testAKeyCreditLimit402NamesTheSpendingLimit() async {
+        // openrouter.md, "Limits": 402 `limit_source: openrouter_key_limit` = the key's credit limit.
+        let body = #"{"error":{"code":402,"message":"Key limit","metadata":{"limit_source":"openrouter_key_limit"}}}"#
+        await assertAnalyzerError(.accountState(OpenRouterBackend.spendingLimitText)) {
+            _ = try await self.analyzer(ScriptedTransport([.status(402, body)])).analyze(samplePNG(), context: sampleContext)
+        }
+    }
+
+    func testOnlyOpenRoutersOwnRoutingAnswerHoldsOn404And503() async {
+        func error(_ step: ScriptedTransport.Step) async -> AnalyzerError? {
+            do { _ = try await analyzer(ScriptedTransport([step])).analyze(samplePNG(), context: sampleContext); return nil } catch {
+                return error as? AnalyzerError
+            }
+        }
+        let noProvider = #"{"error":{"code":503,"message":"No available model provider that meets your routing requirements"}}"#
+        // An edge outage page is not OpenRouter's routing answer: retried.
+        let html = await error(.status(503, "<html><body>Service Unavailable</body></html>"))
+        guard case .serverError(503, _) = html else { return XCTFail("an HTML 503 is a retried server error, got \(String(describing: html))") }
+        XCTAssertEqual(html?.isRetryable, true)
+        // "`Retry-After` (seconds) may come on 429 and 503": a 503 that says when to retry is transient.
+        let later = await error(.status(503, noProvider, headers: ["Retry-After": "20"]))
+        XCTAssertNotEqual(later, .accountState(OpenRouterBackend.noEligibleProviderText))
+        XCTAssertEqual(later?.isRetryable, true)
+        // A provider failing mid-generation (an error inside a 200) is not a routing answer either.
+        let embedded503 = await error(.ok(noProvider))
+        XCTAssertNotEqual(embedded503, .accountState(OpenRouterBackend.noEligibleProviderText))
+        XCTAssertEqual(embedded503?.isRetryable, true)
+        let embedded404 = await error(.ok(#"{"error":{"code":404,"message":"No endpoints found"}}"#))
+        XCTAssertNotEqual(embedded404, .accountState(OpenRouterBackend.noEndpointText))
+        let html404 = await error(.status(404, "<html>Not Found</html>"))
+        XCTAssertNotEqual(html404, .accountState(OpenRouterBackend.noEndpointText))
     }
 
     func testErrorMessageIsTheErrorMessageOrElseTheBodyPrefix() {

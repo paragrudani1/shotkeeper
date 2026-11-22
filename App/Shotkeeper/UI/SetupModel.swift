@@ -42,7 +42,8 @@ struct SetupServices {
     var hasSavedOpenRouterKey: @MainActor () -> Bool = { false }
     /// Step 3 "Agree and Continue" with OpenRouter: the key goes to the Keychain here (empty = keep the saved one)
     /// and OpenRouter is allowed for the configured model. This button alone is the consent.
-    var saveOpenRouter: @MainActor (_ key: String) -> Void = { _ in }
+    /// `model`: the effective model step 3 named; the grant covers only that model.
+    var saveOpenRouter: @MainActor (_ key: String, _ model: String) -> Void = { _, _ in }
     /// Test Connection with the typed (unsaved) OpenRouter key; sends only the generated test image.
     var testOpenRouter: @MainActor (_ key: String) async -> Result<String, AnalyzerFailure> = { _ in
         .failure(AnalyzerFailure(message: "Not available"))
@@ -85,7 +86,7 @@ struct SetupServices {
             window: { NSApp.windows.first { $0.title == SetupView.windowTitle && $0.isVisible } },
             searchShortcut: { coordinator.activeSearchShortcut ?? coordinator.settings.searchShortcut },
             hasSavedOpenRouterKey: { coordinator.hasSecret(.openRouterAPIKey) },
-            saveOpenRouter: { coordinator.saveOpenRouterSetup(key: $0) },
+            saveOpenRouter: { coordinator.saveOpenRouterSetup(key: $0, model: $1) },
             testOpenRouter: { key in
                 var candidate = coordinator.settings
                 candidate.backend = .openRouter
@@ -121,10 +122,10 @@ final class SetupModel {
             if openRouterKeyDraft != oldValue { resetTest() }
         }
     }
+    /// The effective OpenRouter model step 3 names (and "Agree and Continue" grants).
+    var openRouterModel: String { OpenRouterBackend.effectiveModel(services.settings().openRouterModel) }
     /// "OpenRouter, then to Prime Intellect or io.net" for the configured model: what "Agree and Continue" allows.
-    var openRouterDestination: String {
-        OpenRouterBackend.destinationPhrase(model: OpenRouterBackend.effectiveModel(services.settings().openRouterModel))
-    }
+    var openRouterDestination: String { OpenRouterBackend.destinationPhrase(model: openRouterModel) }
     var accountID: String {
         get { flow.inputs.accountID }
         set {
@@ -234,7 +235,7 @@ final class SetupModel {
             services.saveClairic(flow.inputs.accountID, tokenDraft, agreedThisRun)
             tokenDraft = ""
         case .saveConnection(.openRouter):
-            services.saveOpenRouter(openRouterKeyDraft)
+            services.saveOpenRouter(openRouterKeyDraft, openRouterModel)
             openRouterKeyDraft = ""
         case .saveConnection(.localInkling):
             if let model = cards.local.model { services.chooseLocal(model) }

@@ -362,9 +362,21 @@ final class AppCoordinator {
         }
     }
 
-    /// Keystrokes in a model name field. Only remembered.
+    /// What the field shows: the uncommitted draft, else the setting. Test Connection tests this (a generated image
+    /// on a throwaway copy of the settings), so it checks the name on screen; nothing is saved or granted.
+    func displayedModelName(for field: ModelNameField) -> String? {
+        let value = modelNameDrafts[field] ?? modelName(for: field)
+        return value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true ? nil : value
+    }
+
+    /// Keystrokes in a model name field. Only remembered, and only while it differs from the setting: the field
+    /// loading its text is not an edit, so a field left untouched never writes an old value back on commit.
     func updateModelNameDraft(_ value: String, for field: ModelNameField) {
-        modelNameDrafts[field] = value
+        if value == (modelName(for: field) ?? "") {
+            modelNameDrafts.removeValue(forKey: field)
+        } else {
+            modelNameDrafts[field] = value
+        }
     }
 
     /// Return, focus leaving the field, the field or window going away, quitting: saves the typed name (empty =
@@ -687,13 +699,13 @@ final class AppCoordinator {
     /// Setup step 3 "Agree and Continue" with OpenRouter: the key goes to the Keychain now (never while typing),
     /// the backend is saved, and OpenRouter is allowed from now on for the configured model. This action alone is
     /// the consent: its section names OpenRouter and the providers (step 2's "I Agree" names Cloudflare only and
-    /// grants nothing here). An empty key keeps the saved one.
-    func saveOpenRouterSetup(key: String) {
+    /// grants nothing here). `model` is the effective model the section named: if the configured model changed since
+    /// (Settings open beside setup), nothing is granted and the backend asks again. An empty key keeps the saved one.
+    func saveOpenRouterSetup(key: String, model: String) {
         if !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { setSecret(key, for: .openRouterAPIKey) }
         updateSettings {
             $0.backend = .openRouter
-            $0 = BackendGate.granting(.openRouter, expectedOpenRouterModel: OpenRouterBackend.effectiveModel($0.openRouterModel),
-                                      in: $0)
+            $0 = BackendGate.granting(.openRouter, expectedOpenRouterModel: model, in: $0)
         }
     }
 

@@ -118,8 +118,9 @@ public enum OpenRouterBackend {
     /// Statuses whose meaning the docs refine; nil = the shared mapping (401/403 unauthorized, 429 rate limited,
     /// 408/5xx server error, other 4xx bad request).
     /// - 402 with a `Retry-After` header (the docs: the in-flight budget, "wait for [Retry-After] and retry") →
-    ///   `rateLimited`. Any other 402 ("insufficient credits"; "A `402` without the header is not a wait-and-retry
-    ///   case") → `accountState(outOfCreditsText)`: holds the queue until Resume.
+    ///   `rateLimited`. Any other 402 ("A `402` without the header is not a wait-and-retry case") holds the queue until
+    ///   Resume: `limit_source: openrouter_key_limit` (the key's credit limit) → `accountState(spendingLimitText)`,
+    ///   else (credits, an in-flight budget without the header) → `accountState(outOfCreditsText)`.
     /// - 403 with `metadata.limit_source` (guardrail, workspace or key budget, "rejected with a `403` before it
     ///   reaches a provider") → `accountState(spendingLimitText)`. 403 with `error_type` `content_policy_violation`
     ///   or `refusal`: this image was declined, the key is fine → `badRequest(403)`, the queue is not held.
@@ -127,15 +128,20 @@ public enum OpenRouterBackend {
     ///   request fails with a 404", provider-selection page) → `accountState(noEndpointText)`.
     /// - 503 without `error_type: provider_overloaded`: "no available model provider that meets your routing
     ///   requirements" → `accountState(noEligibleProviderText)`. `provider_overloaded` stays a retried server error.
-    public static func refineError(status: Int, headers: HTTPURLResponse?, body: Data) -> AnalyzerError? {
+    /// 404 and 503 hold only when they are OpenRouter's own routing answer: the HTTP status itself (not an error
+    /// embedded in a 200 mid-generation, `embedded`), with an OpenRouter `error` body and no `Retry-After` (which
+    /// "may come on 429 and 503"). An HTML edge page, a 503 with `Retry-After` or an embedded 404/503 → nil (retried).
+    public static func refineError(status: Int, headers: HTTPURLResponse?, body: Data,
+                                   embedded: Bool = false) -> AnalyzerError? {
         let error = (try? AnalysisJSON.parse(body))?["error"]
         let metadata = error?["metadata"]
         let type = metadata?["error_type"]?.stringValue
+        let retryAfter = HTTPErrorMapping.retryAfter(HTTPErrorMapping.headerValue(headers, "Retry-After"))
+        let isRoutingAnswer = !embedded && error?.objectValue != nil && retryAfter == nil
         switch status {
         case 402:
-            let retryAfter = HTTPErrorMapping.retryAfter(HTTPErrorMapping.headerValue(headers, "Retry-After"))
             if let retryAfter { return .rateLimited(retryAfter: retryAfter) }
-            if metadata?["limit_source"]?.stringValue == "openrouter_in_flight_budget" { return .rateLimited(retryAfter: nil) }
+            if metadata?["limit_source"]?.stringValue == "openrouter_key_limit" { return .accountState(spendingLimitText) }
             return .accountState(outOfCreditsText)
         case 403:
             if metadata?["limit_source"]?.stringValue != nil { return .accountState(spendingLimitText) }
@@ -144,9 +150,9 @@ public enum OpenRouterBackend {
             }
             return nil
         case 404:
-            return type == "image_not_found" ? nil : .accountState(noEndpointText)
+            return isRoutingAnswer && type != "image_not_found" ? .accountState(noEndpointText) : nil
         case 503:
-            return type == "provider_overloaded" ? nil : .accountState(noEligibleProviderText)
+            return isRoutingAnswer && type != "provider_overloaded" ? .accountState(noEligibleProviderText) : nil
         default:
             return nil
         }
