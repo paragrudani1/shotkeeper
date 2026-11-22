@@ -30,6 +30,9 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
 - 2026-11-22 (UI polish PR 4, `0145a1e`): the step "Check the app icon in the bundle" (after "Collect UI snapshots")
   fails if the Release app lacks `AppIcon.icns`/`Assets.car`, and adds the icns PNGs to the snapshot artifact as
   `bundle-icon_*.png`. Snapshot `app-icon-asset` is the hosting app's own icon.
+- 2026-11-22 (`0bcdb15`): the step "Compile the Icon Composer icon (actool)" runs `xcrun actool` on
+  `AppIcon.icon` + `Assets.xcassets` (the target's inputs) and fails on any warning/error; it also logs two
+  informational variants and `assetutil --info`, and adds `actool-<variant>-icon_*.png` to the snapshot artifact.
 
 ## Lessons
 - 2026-11-21: `swift test` fails with "no tests found" while `Tests/ShotkeeperCoreTests` holds no Swift files (true on
