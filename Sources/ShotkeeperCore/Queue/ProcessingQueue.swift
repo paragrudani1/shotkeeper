@@ -11,6 +11,8 @@ import Foundation
 /// - `AnalyzerError.unauthorized` / `.notConfigured`: the queue holds in `.error(message)` until `resume()`;
 ///   the job is kept, not failed, so nothing is lost while the user fixes credentials.
 /// - Any other error fails the job at once.
+/// - A job may carry a `ProcessExistingRequest` (`enqueue(_:processExisting:)`): every attempt of that job gets it,
+///   retries and holds included, and it is dropped when the job ends.
 public actor ProcessingQueue {
     public struct Configuration: Sendable, Equatable {
         public var concurrency: Int = 1
@@ -29,14 +31,18 @@ public actor ProcessingQueue {
     }
 
     public typealias Handler = @Sendable (URL) async throws -> Void
+    /// A handler that also gets the job's Process Existing request (nil for watcher jobs).
+    public typealias JobHandler = @Sendable (URL, ProcessExistingRequest?) async throws -> Void
 
     public private(set) var configuration: Configuration
     private let clock: QueueClock
     private let random: @Sendable () -> Double
     private let probe: (@Sendable () async -> Bool)?
-    private let handler: Handler
+    private let handler: JobHandler
 
     private var pending: [URL] = []
+    /// The Process Existing request each pending or running job carries, for the whole job.
+    private var carried: [URL: ProcessExistingRequest] = [:]
     private var inFlight: [URL] = []
     private var activeWorkers = 0
     private var bucket: TokenBucket
@@ -63,23 +69,38 @@ public actor ProcessingQueue {
     public init(configuration: Configuration = Configuration(), clock: QueueClock = SystemQueueClock(),
                 random: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) },
                 probe: (@Sendable () async -> Bool)? = nil, handler: @escaping Handler) {
+        self.init(configuration: configuration, clock: clock, random: random, probe: probe,
+                  jobHandler: { url, _ in try await handler(url) })
+    }
+
+    public init(configuration: Configuration = Configuration(), clock: QueueClock = SystemQueueClock(),
+                random: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) },
+                probe: (@Sendable () async -> Bool)? = nil, jobHandler: @escaping JobHandler) {
         self.configuration = configuration
         self.clock = clock
         self.random = random
         self.probe = probe
-        self.handler = handler
+        self.handler = jobHandler
         self.bucket = TokenBucket(requestsPerMinute: configuration.requestsPerMinute, burst: configuration.burst)
     }
 
     // MARK: - Public API
 
-    public func enqueue(_ url: URL) {
+    /// Adds a job unless the URL is already queued or running.
+    /// - Parameter processExisting: the user's Process Existing request for this file. A job still waiting takes it
+    ///   on; a running job does not (its attempts already started without it), and nothing is kept for later.
+    public func enqueue(_ url: URL, processExisting: ProcessExistingRequest? = nil) {
         let url = url.standardizedFileURL
-        guard !pending.contains(url), !inFlight.contains(url) else { return }
+        guard !inFlight.contains(url) else { return }
+        if let processExisting { carried[url] = processExisting }
+        guard !pending.contains(url) else { return }
         pending.append(url)
         spawnWorkers()
         publish()
     }
+
+    /// Process Existing requests carried by queued or running jobs (tests).
+    public var carriedRequestCount: Int { carried.count }
 
     public var queuedCount: Int { pending.count + inFlight.count }
 
@@ -151,6 +172,7 @@ public actor ProcessingQueue {
             inFlight.append(url)
             publish()
             await run(url)
+            carried[url] = nil // the job ended (done, failed or given up): its request goes with it
             inFlight.removeAll { $0 == url }
             publish()
         }
@@ -170,7 +192,7 @@ public actor ProcessingQueue {
             let wait = bucket.reserve(at: clock.now())
             if wait > 0 { try? await clock.sleep(seconds: wait) }
             do {
-                try await handler(url)
+                try await handler(url, carried[url])
                 offlineStreak = 0
                 succeededCount += 1
                 return

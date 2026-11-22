@@ -389,6 +389,16 @@ Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they dif
   its text and "Allow" do not follow later edits. `saveClairicSetup(accountID:token:agreedThisRun:)` grants Cloudflare
   only for this setup run's "I Agree" (`SetupModel.agreedThisRun`), not the saved `hasSeenPrivacyNotice`.
 
+- 2026-11-22 (review 4 of `a86feb3`, approved; commit below): **a Process Existing request lasts the whole job.**
+  Supersedes "taken when a run starts" above: `ProcessingQueue.enqueue(_:processExisting:)` carries the
+  generation-stamped `ProcessExistingRequest` with the job and hands it to every attempt (a 429 retry or a hold no
+  longer loses it); it is dropped when the job ends, and a running job does not take on a second request, so nothing
+  is left for a later run (S1, S2). `ProcessExistingRequests.invalidateAll()` on a backend/endpoint/grant change makes
+  every earlier request count as none at the next attempt. A change during the folder scan queues nothing: "The
+  destination changed. Run Process Existing again." Capture time for consent now also includes the modification date
+  (archives, `rsync -t`), the processor reads the dates again after preparing and uses the earlier read, and the name's
+  time uses `TimeZone.autoupdatingCurrent`. `BackendGate.hasUploadConsent` derives from `UploadTarget`.
+
 ### What CI cannot check (Parag, on a real Mac)
 - First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar
   app (no Dock icon) while it is open.

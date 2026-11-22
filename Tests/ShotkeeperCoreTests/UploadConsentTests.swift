@@ -101,7 +101,7 @@ final class UploadConsentTests: XCTestCase {
     func testEffectiveCaptureTimeOfAFileReadsItsName() throws {
         let dir = try TempDir()
         let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
-        let copied = try dir.file("Screenshot 2020-05-06 at 07.08.09.png") // created now
+        let copied = try dir.file("Screenshot 2020-05-06 at 07.08.09.png") // created and modified now
         XCTAssertEqual(UploadConsent.effectiveCaptureTime(of: copied, timeZone: utc),
                        Date(timeIntervalSince1970: 1_588_748_889))
         let gone = dir.url.appendingPathComponent("holiday.png")
@@ -167,21 +167,25 @@ final class UploadConsentTests: XCTestCase {
                                             processExisting: forA), .allow)
     }
 
-    func testRequestsAreTakenOnceAndClearedWithAGenerationGuard() {
+    func testRequestsAreInvalidatedTogether() {
         let requests = ProcessExistingRequests()
-        let a = URL(fileURLWithPath: "/d/Screenshot 2026-01-13 at 10.22.11.png")
-        let b = URL(fileURLWithPath: "/d/./Screenshot 2026-01-14 at 10.22.11.png")
-        let generation = requests.generation
-        XCTAssertTrue(requests.add([a, b], for: .cloudflare, generation: generation))
-        XCTAssertEqual(requests.count, 2)
-        XCTAssertEqual(requests.take(a), ProcessExistingAuthorization(target: .cloudflare))
-        XCTAssertNil(requests.take(a), "one run uses it")
-        XCTAssertEqual(requests.take(URL(fileURLWithPath: "/d/Screenshot 2026-01-14 at 10.22.11.png"))?.target, .cloudflare,
-                       "matched by standardized path")
-        // The destination changed while the folder was scanned: nothing is attached afterwards.
         let clicked = requests.generation
-        requests.removeAll()
-        XCTAssertFalse(requests.add([a], for: .cloudflare, generation: clicked))
-        XCTAssertEqual(requests.count, 0)
+        let request = try! XCTUnwrap(requests.request(for: .cloudflare, madeIn: clicked))
+        XCTAssertEqual(requests.authorization(for: request), ProcessExistingAuthorization(target: .cloudflare))
+        XCTAssertNil(requests.authorization(for: nil))
+        requests.invalidateAll()
+        XCTAssertNil(requests.authorization(for: request), "a destination change: every earlier request counts as none")
+        XCTAssertNil(requests.request(for: .cloudflare, madeIn: clicked), "changed during the scan: no request")
+        let again = try! XCTUnwrap(requests.request(for: .cloudflare, madeIn: requests.generation))
+        XCTAssertNotNil(requests.authorization(for: again))
+    }
+
+    /// Review 4 nit: an extracted archive or `rsync -t` copy keeps the modification date.
+    func testTheModificationDateCountsWhenItIsTheEarliest() {
+        let old = grantedAt.addingTimeInterval(-86_400)
+        XCTAssertEqual(UploadConsent.effectiveCaptureTime(creationDate: after, modificationDate: old, nameDate: nil), old)
+        XCTAssertEqual(UploadConsent.effectiveCaptureTime(creationDate: old, modificationDate: after, nameDate: nil), old,
+                       "an edit (fresh modification date) does not make a file new")
+        XCTAssertEqual(UploadConsent.effectiveCaptureTime(creationDate: nil, modificationDate: nil, nameDate: nil), .distantPast)
     }
 }

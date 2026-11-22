@@ -44,7 +44,7 @@ public enum BackendGate {
 
     /// The user allowed sending to the selected backend's destination (always true for local).
     public static func hasUploadConsent(_ settings: AppSettings) -> Bool {
-        destination(of: settings.backend) == nil || activeGrant(settings) != nil
+        UploadTarget(settings: settings) == .thisMac || activeGrant(settings) != nil
     }
 
     /// The confirmation Settings shows before allowing the selected backend's destination, and the endpoint it

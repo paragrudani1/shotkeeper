@@ -28,7 +28,9 @@ let processor = ScreenshotProcessor(
 let queue = ProcessingQueue(
     configuration: .init(concurrency: 1, requestsPerMinute: settings.requestsPerMinute),
     probe: { await localServerHealthy() },         // optional; e.g. GET MLXRuntimePlan.healthURL(port:)
-    handler: { url in _ = try await processor.process(url, processExisting: requests.take(url)) })
+    jobHandler: { url, request in                  // request: carried by the job, every attempt
+        _ = try await processor.process(url, processExisting: requests.authorization(for: request)) })
+// Process Existing: queue.enqueue(url, processExisting: requests.request(for: target, madeIn: generationAtClick))
 for await status in await queue.statusUpdates() { menuBar.show(status) }
 ```
 For the toast, the handler calls `processor.processWithReport(url)` and feeds a `ScreenshotEvent` to a `ToastBatcher`
@@ -98,11 +100,13 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `.customEndpoint(identity)` only when a grant covers the target AND (`capturedAt >= grantedAt` OR a
     `ProcessExistingAuthorization` made for the same target); else `.skip(.destinationNotAllowed)` /
     `.skip(.takenBeforeGrant)`. `decide(settings:capturedAt:processExisting:)` for the selected backend.
-    `effectiveCaptureTime(creationDate:nameDate:)` = the earlier of the two, `.distantPast` when neither (fails
-    closed); the name time is `ScreenshotDetector.captureDate(fromFilename:timeZone:)`. `ScreenshotProcessor` is its
+    `effectiveCaptureTime(creationDate:modificationDate:nameDate:)` = the earliest, `.distantPast` when none (fails
+    closed); the name time is `ScreenshotDetector.captureDate(fromFilename:timeZone:)`; the processor reads a file's
+    dates (`effectiveCaptureTime(of:timeZone:)`) before and after preparing it and uses the earlier. `ScreenshotProcessor` is its
     only file-level caller: on the `AnalyzerSnapshot` read once after preparing the image, right before `analyze`.
-    `ProcessExistingRequests` (path → target; `take` per run, `removeAll` on a backend/endpoint/grant change,
-    `generation` guards a change during the folder scan). `UploadConsent.grant(for:in:)` is the shared matching rule.
+    `ProcessExistingRequests` issues generation-stamped `ProcessExistingRequest`s and `invalidateAll()`s them on a
+    backend/endpoint/grant change; `ProcessingQueue.enqueue(_:processExisting:)` carries one with its job for every
+    attempt (retries, holds) and drops it when the job ends; a running job does not take on a later request. `UploadConsent.grant(for:in:)` is the shared matching rule.
   - `BackendGate.readiness(settings:hasClairicToken:) -> BackendReadiness` (`.ready`, `.needsConsent`,
     `.notConfigured(reason)`): what the UI shows and offers (the analyzer factory's hold, `mayWatch` for the folder
     watcher, Process Existing refused unless ready). `consentRequest(for:) -> ConsentRequest?` +

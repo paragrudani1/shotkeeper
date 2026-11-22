@@ -260,19 +260,25 @@ final class SetupModelTests: TempDirectoryTestCase {
             return false
         }
         guard case .error = coordinator.queueStatus else { return XCTFail("held as not installed: \(coordinator.queueStatus)") }
-        XCTAssertEqual(coordinator.processExistingRequests.count, 0, "the held run used up its request")
+        let heldQueue = try XCTUnwrap(coordinator.queue)
+        let carriedWhileHeld = await heldQueue.carriedRequestCount
+        XCTAssertEqual(carriedWhileHeld, 1, "the held job keeps its request (one job, many attempts)")
+        let clicked = coordinator.processExistingRequests.generation
 
         var events: [ScreenshotEvent] = []
         let observer = coordinator.addEventObserver { events.append($0) }
         defer { coordinator.removeEventObserver(observer) }
         coordinator.acceptPrivacyStep()
         coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
+        XCTAssertNotEqual(coordinator.processExistingRequests.generation, clicked, "the switch invalidates the request")
         XCTAssertEqual(coordinator.readiness, .ready)
         try await waitForEvents({ events })
         let queue = try XCTUnwrap(coordinator.queue)
         await queue.waitUntilIdle()
         guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
         XCTAssertEqual(report.outcome, .skipped(.awaitingConsent), "taken before Cloudflare was allowed; asked for on Local")
+        let carriedAfter = await queue.carriedRequestCount
+        XCTAssertEqual(carriedAfter, 0, "dropped when the job ended")
         XCTAssertNotEqual(coordinator.indexEntry(atPath: shot.standardizedFileURL.path)?.status, .done)
         XCTAssertTrue(FileManager.default.fileExists(atPath: shot.path), "keeps its name")
     }
@@ -292,7 +298,10 @@ final class SetupModelTests: TempDirectoryTestCase {
         try await wait { coordinator.isPaused }
         let queued = await coordinator.processExistingScreenshots()
         XCTAssertEqual(queued, 1)
-        XCTAssertEqual(coordinator.processExistingRequests.count, 1, "held by the pause, not run yet")
+        let queue = try XCTUnwrap(coordinator.queue)
+        let carried = await queue.carriedRequestCount
+        XCTAssertEqual(carried, 1, "held by the pause, not run yet")
+        let clicked = coordinator.processExistingRequests.generation
 
         let endpoint = try XCTUnwrap(URL(string: "http://127.0.0.1:1"))
         coordinator.updateSettings {
@@ -300,7 +309,8 @@ final class SetupModelTests: TempDirectoryTestCase {
             $0.customEndpointURL = endpoint
             $0.customModelName = "m"
         }
-        XCTAssertEqual(coordinator.processExistingRequests.count, 0, "a request is never carried to another destination")
+        XCTAssertNotEqual(coordinator.processExistingRequests.generation, clicked,
+                          "a request is never carried to another destination")
         coordinator.allowUploads(to: .customEndpoint, endpoint: CustomEndpointIdentity(url: endpoint))
         XCTAssertEqual(coordinator.readiness, .ready)
 
@@ -313,21 +323,42 @@ final class SetupModelTests: TempDirectoryTestCase {
         XCTAssertEqual(report.outcome, .skipped(.awaitingConsent), "taken before the endpoint was allowed")
     }
 
-    /// Process Existing requests are cleared on any destination change, also a grant change (here: Cloudflare
-    /// allowed while a Local request waits).
-    func testProcessExistingRequestsAreClearedWhenTheDestinationChanges() async throws {
+    /// Process Existing requests are invalidated on any destination change, also a grant change (here: Cloudflare
+    /// allowed while a Local request waits), and not by unrelated settings.
+    func testProcessExistingRequestsAreInvalidatedWhenTheDestinationChanges() async throws {
         let coordinator = makeCoordinator()
         let watched = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
         try ConnectionTestImage.payload().data.write(to: watched.appendingPathComponent("Screenshot 2026-11-21 at 15.00.00.png"))
         coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
         coordinator.pauseIndefinitely()
         try await wait { coordinator.isPaused }
+        let clicked = coordinator.processExistingRequests.generation
         _ = await coordinator.processExistingScreenshots()
-        XCTAssertEqual(coordinator.processExistingRequests.count, 1)
+        let queue = try XCTUnwrap(coordinator.queue)
+        let carried = await queue.carriedRequestCount
+        XCTAssertEqual(carried, 1)
+        let request = try XCTUnwrap(coordinator.processExistingRequests.request(for: .thisMac, madeIn: clicked))
         coordinator.updateSettings { $0.renameEnabled = false }
-        XCTAssertEqual(coordinator.processExistingRequests.count, 1, "an unrelated setting keeps it")
+        XCTAssertNotNil(coordinator.processExistingRequests.authorization(for: request), "an unrelated setting keeps it")
         coordinator.allowUploads(to: .cloudflare, endpoint: nil)
-        XCTAssertEqual(coordinator.processExistingRequests.count, 0, "a grant change clears it")
+        XCTAssertNil(coordinator.processExistingRequests.authorization(for: request), "a grant change invalidates it")
+    }
+
+    /// Review 4 nit: a destination change during the folder scan queues nothing and says so.
+    func testProcessExistingSaysSoWhenTheDestinationChangedDuringTheScan() async throws {
+        let coordinator = makeCoordinator()
+        let watched = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
+        try ConnectionTestImage.payload().data.write(to: watched.appendingPathComponent("Screenshot 2026-11-21 at 16.00.00.png"))
+        coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
+        coordinator.pauseIndefinitely()
+        try await wait { coordinator.isPaused }
+        coordinator.afterProcessExistingScan = { coordinator.updateSettings { $0.backend = .clairic } }
+        let queued = await coordinator.processExistingScreenshots()
+        XCTAssertEqual(queued, 0)
+        XCTAssertEqual(coordinator.lastMessage, "The destination changed. Run Process Existing again.")
+        let queue = try XCTUnwrap(coordinator.queue)
+        let count = await queue.queuedCount
+        XCTAssertEqual(count, 0, "nothing queued")
     }
 
     /// Review N3: only this run's "I Agree" allows Cloudflare, not a flag saved by an earlier run.

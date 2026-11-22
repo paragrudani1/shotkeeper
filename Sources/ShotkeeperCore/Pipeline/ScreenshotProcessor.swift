@@ -96,7 +96,7 @@ public final class ScreenshotProcessor: Sendable {
                 organizer: FileOrganizer = FileOrganizer(),
                 undoLog: UndoLog,
                 now: @escaping @Sendable () -> Date = { Date() },
-                timeZone: TimeZone = .current) {
+                timeZone: TimeZone = .autoupdatingCurrent) {
         self.snapshot = snapshot
         self.imagePreparer = imagePreparer
         self.metadataWriter = metadataWriter
@@ -112,7 +112,7 @@ public final class ScreenshotProcessor: Sendable {
                             metadataWriter: any FileMetadataWriter = NoopFileMetadataWriter(), index: ScreenshotIndex,
                             organizer: FileOrganizer = FileOrganizer(), undoLog: UndoLog,
                             settings: @escaping @Sendable () -> AppSettings, now: @escaping @Sendable () -> Date = { Date() },
-                            timeZone: TimeZone = .current) {
+                            timeZone: TimeZone = .autoupdatingCurrent) {
         self.init(snapshot: { AnalyzerSnapshot(analyzer: analyzer, settings: settings()) }, imagePreparer: imagePreparer,
                   metadataWriter: metadataWriter, index: index, organizer: organizer, undoLog: undoLog, now: now,
                   timeZone: timeZone)
@@ -145,9 +145,7 @@ public final class ScreenshotProcessor: Sendable {
         // For the index, the toast and Pause: a best guess, now() when nothing can be read.
         let capturedAt = (attributes?[.creationDate] as? Date) ?? (attributes?[.modificationDate] as? Date) ?? now()
         // For consent: the earliest the file can claim, `.distantPast` when unknown (fails closed).
-        let consentCapturedAt = UploadConsent.effectiveCaptureTime(
-            creationDate: attributes?[.creationDate] as? Date,
-            nameDate: ScreenshotDetector.captureDate(fromFilename: url.lastPathComponent, timeZone: timeZone))
+        var consentCapturedAt = UploadConsent.effectiveCaptureTime(of: url, timeZone: timeZone)
         switch early.excludeRules.exclusion(for: url, capturedAt: capturedAt, now: now()) {
         case .paused(let until)?: return .skipped(.paused(until: until))
         case .rule(let rule)?: return .skipped(.excluded(rule))
@@ -185,6 +183,8 @@ public final class ScreenshotProcessor: Sendable {
             throw error
         }
 
+        // The file may have been replaced while it was prepared: judge it by the earlier of both reads of its dates.
+        consentCapturedAt = min(consentCapturedAt, UploadConsent.effectiveCaptureTime(of: url, timeZone: timeZone))
         // THE consent decision (CODING_STANDARDS #2): on the pair this job uses, read once, right before `analyze`.
         let job = self.snapshot()
         let settings = job.settings

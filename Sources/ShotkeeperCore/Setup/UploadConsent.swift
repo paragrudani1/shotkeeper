@@ -91,17 +91,20 @@ public enum UploadConsent {
                processExisting: processExisting)
     }
 
-    /// The earliest moment the file can claim: the earlier of its creation date and the time in its screenshot name
-    /// (a copy, download or AirDrop gets a fresh creation date but keeps the name). Neither readable:
-    /// `.distantPast`, so the time rule fails closed.
-    public static func effectiveCaptureTime(creationDate: Date?, nameDate: Date?) -> Date {
-        [creationDate, nameDate].compactMap { $0 }.min() ?? .distantPast
+    /// The earliest moment the file can claim: the earliest of its creation date, its modification date and the time
+    /// in its screenshot name. A copy, download or AirDrop gets a fresh creation date but keeps the name; an extracted
+    /// archive or an `rsync -t` copy keeps the modification date. None readable: `.distantPast`, so the time rule
+    /// fails closed. (An edit gives a fresh modification date, but the earliest date wins.)
+    public static func effectiveCaptureTime(creationDate: Date?, modificationDate: Date? = nil, nameDate: Date?) -> Date {
+        [creationDate, modificationDate, nameDate].compactMap { $0 }.min() ?? .distantPast
     }
 
-    /// `effectiveCaptureTime` for a file on disk (its creation date, and `ScreenshotDetector.captureDate`).
-    public static func effectiveCaptureTime(of url: URL, timeZone: TimeZone = .current) -> Date {
+    /// `effectiveCaptureTime` for a file on disk: its creation and modification dates, and
+    /// `ScreenshotDetector.captureDate` in `timeZone`. A file that cannot be read gives `.distantPast`.
+    public static func effectiveCaptureTime(of url: URL, timeZone: TimeZone = .autoupdatingCurrent) -> Date {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         return effectiveCaptureTime(creationDate: attributes?[.creationDate] as? Date,
+                                    modificationDate: attributes?[.modificationDate] as? Date,
                                     nameDate: ScreenshotDetector.captureDate(fromFilename: url.lastPathComponent,
                                                                              timeZone: timeZone))
     }
@@ -120,44 +123,42 @@ public struct AnalyzerSnapshot: Sendable {
     }
 }
 
-/// The open "Process Existing Screenshots…" requests, by path, each with the target that was selected when the user
-/// asked. A job takes its path's request when it starts, so one run uses it whatever the outcome (processed,
-/// skipped, failed or held): a held job retried later gets the normal time rule. The app clears all requests when
-/// the backend, endpoint or grants change.
+/// One "Process Existing Screenshots…" click: the target selected then, stamped with the
+/// `ProcessExistingRequests.generation` it was made in. `ProcessingQueue` carries it with each job it was enqueued
+/// for, for the whole job (every retry and hold), and drops it when the job ends.
+public struct ProcessExistingRequest: Equatable, Sendable {
+    public let authorization: ProcessExistingAuthorization
+    public let generation: Int
+}
+
+/// Issues Process Existing requests and invalidates them all at once. The app calls `invalidateAll()` whenever the
+/// backend, endpoint or grants change; from then on every earlier request, wherever it is (a queued job, a job being
+/// retried), counts as none (`authorization(for:)`). Synchronous, so a change applies before the next attempt starts.
 public final class ProcessExistingRequests: @unchecked Sendable {
     private let lock = NSLock()
-    private var requests: [String: ProcessExistingAuthorization] = [:]
-    private var clearedCount = 0
+    private var current = 0
 
     public init() {}
 
-    /// Changes on every `removeAll`. Read it when the user clicks and pass it to `add`, so a destination change
-    /// while the folder is scanned drops the request instead of attaching it after the clear.
-    public var generation: Int { lock.withLock { clearedCount } }
+    /// Read it when the user clicks; pass it to `request(for:madeIn:)` after the folder scan.
+    public var generation: Int { lock.withLock { current } }
 
-    /// Records the requests unless `removeAll` ran since `generation` was read. Returns whether they were added.
-    @discardableResult
-    public func add(_ urls: [URL], for target: UploadTarget, generation: Int) -> Bool {
+    /// A request for `target`, or nil when `invalidateAll()` ran since `generation` was read (the destination
+    /// changed during the scan).
+    public func request(for target: UploadTarget, madeIn generation: Int) -> ProcessExistingRequest? {
         lock.withLock {
-            guard generation == clearedCount else { return false }
-            for url in urls { requests[Self.key(url)] = ProcessExistingAuthorization(target: target) }
-            return true
+            generation == current ? ProcessExistingRequest(authorization: ProcessExistingAuthorization(target: target),
+                                                           generation: generation) : nil
         }
     }
 
-    /// Removes and returns the request for `url`.
-    public func take(_ url: URL) -> ProcessExistingAuthorization? {
-        lock.withLock { requests.removeValue(forKey: Self.key(url)) }
+    /// What a job attempt may pass to the processor: the request's authorization while it is still valid.
+    public func authorization(for request: ProcessExistingRequest?) -> ProcessExistingAuthorization? {
+        guard let request else { return nil }
+        return lock.withLock { request.generation == current ? request.authorization : nil }
     }
 
-    public func removeAll() {
-        lock.withLock {
-            requests.removeAll()
-            clearedCount += 1
-        }
+    public func invalidateAll() {
+        lock.withLock { current += 1 }
     }
-
-    public var count: Int { lock.withLock { requests.count } }
-
-    private static func key(_ url: URL) -> String { url.standardizedFileURL.path }
 }

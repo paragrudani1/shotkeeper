@@ -66,10 +66,11 @@ final class AppCoordinator {
     @ObservationIgnored private var toastBatcher = ToastBatcher()
     @ObservationIgnored private var lastSoundAt: Date?
     @ObservationIgnored private let eventSink = LockedValue<(@MainActor @Sendable (ScreenshotEvent) -> Void)?>(nil)
-    /// "Process Existing Screenshots…" requests, each with the destination selected when the user asked. A job takes
-    /// its path's request when it starts (so it is gone after that run, whatever the outcome), and all are cleared
-    /// when the backend, endpoint or grants change.
+    /// Issues "Process Existing Screenshots…" requests (the destination selected at the click). The queue carries each
+    /// with its job for the whole job; all are invalidated when the backend, endpoint or grants change.
     @ObservationIgnored let processExistingRequests = ProcessExistingRequests()
+    /// Called on the main actor after Process Existing's folder scan (tests change the destination here).
+    @ObservationIgnored var afterProcessExistingScan: (() -> Void)?
     /// Extra listeners for pipeline events (setup's "Try it now" step), keyed by the id `addEventObserver` returned.
     @ObservationIgnored private var eventObservers: [UUID: @MainActor (ScreenshotEvent) -> Void] = [:]
     /// Shows a toast (set by the app delegate; nil in unit tests unless a test sets it).
@@ -206,7 +207,7 @@ final class AppCoordinator {
         let destinationChanged = new.backend != old.backend || new.customEndpointURL != old.customEndpointURL
             || new.uploadGrants != old.uploadGrants
         // A Process Existing request was for the destination selected then: never carried to another one.
-        if destinationChanged { processExistingRequests.removeAll() }
+        if destinationChanged { processExistingRequests.invalidateAll() }
         if destinationChanged || new.clairicAccountID != old.clairicAccountID || new.customModelName != old.customModelName
             || new.localModelVariantID != old.localModelVariantID { // consent un-holds cloud backends
             rebuildAnalyzer()
@@ -270,9 +271,9 @@ final class AppCoordinator {
                                                           requestsPerMinute: max(1, settings.requestsPerMinute))
         let sink = eventSink
         let requests = processExistingRequests
-        let queue = ProcessingQueue(configuration: configuration, handler: { url in
-            // Taken, not read: this run uses it whatever happens (processed, skipped, failed, held for a retry).
-            let processExisting = requests.take(url)
+        let queue = ProcessingQueue(configuration: configuration, jobHandler: { url, request in
+            // Checked on every attempt: a destination change since the click makes it count as none.
+            let processExisting = requests.authorization(for: request)
             do {
                 let report = try await processor.processWithReport(url, processExisting: processExisting)
                 await MainActor.run { sink.value?(.processed(report)) }
@@ -429,11 +430,15 @@ final class AppCoordinator {
             ExistingScreenshotScanner.candidates(in: folder, detector: detector,
                                                  isIndexed: ExistingScreenshotScanner.indexedCheck(index))
         }.value
+        afterProcessExistingScan?()
+        // The processor honours it only while that destination is selected and allowed. A backend, endpoint or grant
+        // change during the scan: nothing is queued, the user asks again for the destination now selected.
+        guard let request = processExistingRequests.request(for: target, madeIn: generation) else {
+            lastMessage = "The destination changed. Run Process Existing again."
+            return 0
+        }
         toastBatcher.beginRun(candidates)
-        // The processor honours it only while that destination is selected and allowed; a backend, endpoint or grant
-        // change during the scan drops it (the files then get the normal time rule).
-        processExistingRequests.add(candidates, for: target, generation: generation)
-        for url in candidates { await queue.enqueue(url) }
+        for url in candidates { await queue.enqueue(url, processExisting: request) }
         lastMessage = candidates.isEmpty ? "No unprocessed screenshots in \(folder.lastPathComponent)"
             : "Queued \(candidates.count) screenshot\(candidates.count == 1 ? "" : "s")"
         return candidates.count

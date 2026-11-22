@@ -291,7 +291,51 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(cloud.calls.get.count, 0)
     }
 
-    /// "Screenshot 2026-01-13 at 10.22.11"-style stamp in the local time zone.
+    /// Review 4 nit: the dates are read again after preparing, so a file replaced mid-job is judged by its own
+    /// (earlier) dates.
+    func testAFileReplacedWhilePreparingIsJudgedByItsOwnDates() async throws {
+        let source = try dir.file("notes.png", contents: "png bytes", in: "Desktop") // no time in the name
+        let analyzer = StubAnalyzer(analysis(title: "Notes"))
+        settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: Date().addingTimeInterval(-60))] }
+        let old = Date(timeIntervalSince1970: 1_600_000_000)
+        let settings = self.settings!
+        let processor = ScreenshotProcessor(
+            snapshot: { AnalyzerSnapshot(analyzer: analyzer, settings: settings.get) },
+            imagePreparer: HookedPreparer {
+                // Replaced by an older file (e.g. extracted from an archive), keeping the modification date.
+                try? Data("older".utf8).write(to: source)
+                try? FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: source.path)
+            },
+            index: index, undoLog: undoLog)
+        let outcome = try await processor.process(source)
+        XCTAssertEqual(outcome, .skipped(.awaitingConsent))
+        XCTAssertEqual(analyzer.calls.get.count, 0)
+    }
+
+    /// Review 4 S1: one job, many attempts. A Process Existing file that gets a 429 and then succeeds is analyzed
+    /// and renamed on the retry, with the real queue and processor.
+    func testAProcessExistingRequestLastsTheWholeJobAcrossRetries() async throws {
+        let source = try screenshot() // named 2026-01-13: before the grant
+        settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: Date())] }
+        let analyzer = StubAnalyzer([.failure(.rateLimited(retryAfter: 1)), .success(analysis(title: "Invoice From Acme"))])
+        let processor = self.processor(analyzer)
+        let requests = ProcessExistingRequests()
+        let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
+                                    jobHandler: { url, request in
+            _ = try await processor.process(url, processExisting: requests.authorization(for: request))
+        })
+        let request = try XCTUnwrap(requests.request(for: .cloudflare, madeIn: requests.generation))
+        await queue.enqueue(source, processExisting: request)
+        await queue.waitUntilIdle()
+        XCTAssertEqual(analyzer.calls.get.count, 2, "retried after the 429")
+        let renamed = dir.url.appendingPathComponent("Desktop/Invoice From Acme.png")
+        XCTAssertEqual(read(renamed), "png bytes")
+        XCTAssertEqual(try index.lookup(byPath: renamed.standardizedFileURL.path)?.status, .done)
+        let carried = await queue.carriedRequestCount
+        XCTAssertEqual(carried, 0, "dropped when the job ended")
+    }
+
+
     private static func nameStamp(_ date: Date) -> String {
         let c = Calendar(identifier: .gregorian).dateComponents(in: .current, from: date)
         return String(format: "%04d-%02d-%02d at %02d.%02d.%02d", c.year!, c.month!, c.day!, c.hour!, c.minute!, c.second!)
