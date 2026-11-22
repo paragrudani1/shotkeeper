@@ -124,7 +124,7 @@ struct GeneralSettingsTab: View {
                     }
                     if draft.wrappedValue.renameEnabled {
                         Section("Filename style") {
-                            Picker("Filename style", selection: draft.filenameCasing) {
+                            Picker("Letter case", selection: draft.filenameCasing) {
                                 Text("Sentence case").tag(FilenameStyle.Casing.sentence)
                                 Text("Title Case").tag(FilenameStyle.Casing.title)
                                 Text("kebab-case").tag(FilenameStyle.Casing.kebab)
@@ -224,8 +224,11 @@ private struct FolderRow: View {
                         Image(nsImage: NSWorkspace.shared.icon(forFile: shown.path))
                             .resizable().frame(width: 16, height: 16)
                             .accessibilityHidden(true)
+                        // Form styles LabeledContent's value as system secondary (below 4.5:1): the folder name is
+                        // the value the user chose, so primary.
                         Text(FileManager.default.displayName(atPath: shown.path))
                             .lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(Color.primary)
                     }
                     .help(url == nil ? "\(shown.path) (\(fallbackNote))" : shown.path)
                     .accessibilityElement(children: .combine)

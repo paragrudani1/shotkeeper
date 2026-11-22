@@ -553,3 +553,14 @@ separate branch (`t3/ui-pr4-icon`), merged in before the PR.
 
   The local server's messages no longer embed `\(error)`. A failed launch-at-login change shows one fixed sentence
   instead of the system's error description.
+
+### Snapshot review (run 44984710067, head `534c1e9`: green)
+- 2026-11-22: all 17 new images × light/dark checked against the spec: every tab under the drawn toolbar stand-in, the
+  recorder (idle, custom, recording with held ⌃⌥, conflict, system shortcut), Model in each local install state
+  (not installed, downloading with "4.7 of 10.4 GB · 12.3 MB/s · About 8 min left", no disk space, running), the
+  Exclusions empty state, and step 5 with a custom shortcut. Two fixes in the follow-up commit: a grouped Form draws
+  `LabeledContent` values in system secondary, so the folder names ("Desktop") were below 4.5:1 and are now primary;
+  the picker inside "Filename style" repeated the section title and is now "Letter case".
+- 2026-11-22: offscreen snapshots draw switches and the progress bar in the inactive-window grey; on a Mac they use
+  the accent colour.
+
