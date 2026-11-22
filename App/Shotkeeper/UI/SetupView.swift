@@ -34,6 +34,11 @@ struct SetupView: View {
         .onDisappear { model.stop() }
     }
 
+    private func primaryHint(_ flow: SetupFlow) -> String? {
+        guard flow.primary.action == .saveConnection(.openRouter) else { return nil }
+        return BackendCopy.openRouterAgreement(destination: model.openRouterDestination)
+    }
+
     private func footer(_ flow: SetupFlow) -> some View {
         HStack(spacing: 12) {
             StepDots(step: flow.step)
@@ -52,6 +57,9 @@ struct SetupView: View {
                     .buttonStyle(BrandPrimaryButtonStyle(large: true))
                     .keyboardShortcut(.defaultAction)
                     .disabled(!flow.primary.isEnabled)
+                    // "Agree and Continue" is OpenRouter's consent: VoiceOver and the tooltip say what it allows.
+                    .help(primaryHint(flow) ?? "")
+                    .accessibilityHint(primaryHint(flow) ?? "")
             } else {
                 // Step 3's "Skip": not the default, so Return in a half-filled field does not skip the step.
                 Button(flow.primary.title) { model.pressPrimary() }
@@ -239,13 +247,20 @@ private struct ConnectStep: View {
             // Up to three cards in one row; four (a re-run with a custom endpoint) in two rows of two. Each row is an
             // HStack sized to its tallest card, so the cards in a row have the same height.
             VStack(spacing: 12) {
-                ForEach(Self.rows(flow.cards.all), id: \.first?.id) { row in
+                ForEach(Self.rows(flow.cards), id: \.first?.id) { row in
                     HStack(spacing: 12) {
                         ForEach(row) { card in
                             ModelCardButton(card: card, isSelected: flow.choice == card.backend) { model.choose(card.backend) }
                                 .focused($focusedCard, equals: card.backend)
-                                .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { _ in
-                                    model.chooseNext()
+                                .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                                    let key: SetupFlow.ArrowKey
+                                    switch press.key {
+                                    case .leftArrow: key = .left
+                                    case .rightArrow: key = .right
+                                    case .upArrow: key = .up
+                                    default: key = .down
+                                    }
+                                    model.move(key)
                                     focusedCard = model.flow.choice
                                     return .handled
                                 }
@@ -272,9 +287,11 @@ private struct ConnectStep: View {
         }
     }
 
-    static func rows(_ cards: [SetupModelCard]) -> [[SetupModelCard]] {
-        guard cards.count > 3 else { return [cards] }
-        return stride(from: 0, to: cards.count, by: 2).map { Array(cards[$0..<min($0 + 2, cards.count)]) }
+    /// Rows of `SetupCards.columns` cards (core decides the layout, so the arrow keys follow the same grid).
+    static func rows(_ cards: SetupCards) -> [[SetupModelCard]] {
+        let all = cards.all
+        let columns = max(1, cards.columns)
+        return stride(from: 0, to: all.count, by: columns).map { Array(all[$0..<min($0 + columns, all.count)]) }
     }
 }
 
@@ -402,8 +419,9 @@ private struct ClairicSetup: View {
     }
 }
 
-/// OpenRouter: the API key (to the Keychain on Continue), where screenshots go with links to the policies, the
-/// checkbox that allows it (step 2 names Cloudflare only), and Test Connection.
+/// OpenRouter: the API key (to the Keychain on "Agree and Continue"), where screenshots go with links to the
+/// policies, what "Agree and Continue" allows (step 2 names Cloudflare only, so the footer's default button is the
+/// consent; Return presses it), and Test Connection.
 private struct OpenRouterSetup: View {
     @Bindable var model: SetupModel
     let hasSavedKey: Bool
@@ -432,10 +450,9 @@ private struct OpenRouterSetup: View {
                 Link("Provider data policies", destination: OpenRouterBackend.providerDataPolicyURL)
             }
             .font(.system(size: 12))
-            Toggle(isOn: $model.openRouterAcknowledged) {
-                Text(BackendCopy.openRouterAcknowledgement).font(.system(size: 13))
-            }
-            .toggleStyle(.checkbox)
+            Text(BackendCopy.openRouterAgreement(destination: model.openRouterDestination))
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 14) {
                 Button("Test Connection") { model.runTest() }
                     .disabled(model.test == .running)

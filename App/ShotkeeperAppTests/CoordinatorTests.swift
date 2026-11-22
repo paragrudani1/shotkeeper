@@ -183,11 +183,11 @@ final class AnalyzerFactoryTests: XCTestCase {
         try credentials.setSecret("sk-or-v1-key", for: .openRouterAPIKey)
         try await expectNotConfigured(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil),
                                       contains: "Finish setup")  // Cloudflare's grant does not cover OpenRouter
-        settings = BackendGate.granting(.openRouter, in: settings)
+        settings = BackendGate.granting(.openRouter, expectedOpenRouterModel: OpenRouterBackend.defaultModel, in: settings)
         let analyzer = try XCTUnwrap(AnalyzerFactory.make(settings: settings, credentials: credentials, localRuntime: nil)
             as? OpenAICompatibleAnalyzer)
         XCTAssertEqual(analyzer.backendID, "openrouter")
-        XCTAssertEqual(analyzer.configuration.profile, OpenRouterBackend.profile)
+        XCTAssertEqual(analyzer.configuration.profile, OpenRouterBackend.profile(model: OpenRouterBackend.defaultModel))
         XCTAssertEqual(analyzer.configuration.model, OpenRouterBackend.defaultModel)
         XCTAssertEqual(analyzer.configuration.apiKey, "sk-or-v1-key")
         settings.openRouterModel = "thinkingmachines/inkling-2-mini-20261120"

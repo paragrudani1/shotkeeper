@@ -162,7 +162,7 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
                                          applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
         coordinator.updateSettings {
             $0.backend = .openRouter
-            $0.uploadGrants = [.init(destination: .openRouter, grantedAt: Date())]
+            $0.uploadGrants = [.init(destination: .openRouter, grantedAt: Date(), openRouterModel: OpenRouterBackend.defaultModel)]
         }
         XCTAssertEqual(coordinator.readiness, .notConfigured("OpenRouter API key is not set"))
         let rebuilds = coordinator.analyzerRebuilds
@@ -172,7 +172,7 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         XCTAssertEqual(try credentials.secret(for: .openRouterAPIKey), "sk-or", "saved so it is not lost")
         XCTAssertEqual(coordinator.analyzerRebuilds, rebuilds)
         XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
-        coordinator.updateSettings { $0.openRouterModel = "thinkingmachines/inkling-2-mini-20261120" }
+        coordinator.updateSettings { $0.requestsPerMinute = 12; $0.clairicAccountID = "acct" } // forces a rebuild
         XCTAssertEqual(coordinator.readiness, .notConfigured("OpenRouter API key is not set"), "a rebuild keeps the committed (no) key")
 
         coordinator.updateSecretDraft("sk-or-v1-full", for: .openRouterAPIKey)
@@ -180,7 +180,42 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
         XCTAssertEqual(coordinator.readiness, .ready)
         let analyzer = try XCTUnwrap(coordinator.currentAnalyzer as? OpenAICompatibleAnalyzer)
         XCTAssertEqual(analyzer.configuration.apiKey, "sk-or-v1-full")
-        XCTAssertEqual(analyzer.configuration.model, "thinkingmachines/inkling-2-mini-20261120")
+    }
+
+    /// A model ID typed one key at a time is used only on commit: no rebuild per keystroke, and no half-typed model
+    /// (each one another destination) ever reaches the settings or the consent check.
+    func testAModelNameIsUsedOnlyOnCommit() throws {
+        let credentials = InMemoryCredentialStore([.openRouterAPIKey: "sk-or-v1-key"])
+        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
+                                         credentials: credentials, physicalMemoryBytes: 16 * 1_073_741_824,
+                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        coordinator.updateSettings { $0.backend = .openRouter }
+        coordinator.allowUploads(to: .openRouter, endpoint: nil, openRouterModel: OpenRouterBackend.defaultModel)
+        XCTAssertEqual(coordinator.readiness, .ready)
+        let rebuilds = coordinator.analyzerRebuilds
+        let firstGrant = coordinator.settings.grant(for: .openRouter)
+
+        for prefix in ["v", "ve", "vendor/", "vendor/other"] { coordinator.updateModelNameDraft(prefix, for: .openRouter) }
+        XCTAssertNil(coordinator.settings.openRouterModel, "typing changes no setting")
+        XCTAssertEqual(coordinator.analyzerRebuilds, rebuilds, "no rebuild per keystroke")
+        XCTAssertEqual(coordinator.readiness, .ready)
+
+        coordinator.commitModelNameDraft(for: .openRouter)
+        XCTAssertEqual(coordinator.settings.openRouterModel, "vendor/other")
+        XCTAssertEqual(coordinator.analyzerRebuilds, rebuilds + 1, "one rebuild on commit")
+        XCTAssertEqual(coordinator.readiness, .needsConsent, "another model does not inherit the grant")
+
+        coordinator.updateModelNameDraft("  ", for: .openRouter)
+        coordinator.commitAllSecretDrafts() // closing Settings or quitting commits it too
+        XCTAssertNil(coordinator.settings.openRouterModel, "empty = the default model")
+        XCTAssertEqual(coordinator.readiness, .ready)
+        XCTAssertEqual(coordinator.settings.grant(for: .openRouter), firstGrant, "the default model's original grant")
+
+        coordinator.updateSettings { $0.backend = .customEndpoint }
+        coordinator.updateModelNameDraft("inkling", for: .custom)
+        XCTAssertNil(coordinator.settings.customModelName)
+        coordinator.commitModelNameDraft(for: .custom)
+        XCTAssertEqual(coordinator.settings.customModelName, "inkling")
     }
 
     func testAFailedKeychainWriteIsReported() {

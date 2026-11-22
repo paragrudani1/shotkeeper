@@ -31,6 +31,10 @@ enum UISnapshotCatalog {
                 Fixtures.toast(.error(ErrorToast(.rename, UserFacingProblem(message: "Cloudflare API token is not set",
                                                                              needsSettings: true))))
             },
+            UISnapshot("toast-error-openrouter-out-of-credits") {
+                Fixtures.toast(.error(ErrorToast(.rename, UserFacingError.problem(
+                    for: AnalyzerError.accountState(OpenRouterBackend.outOfCreditsText)))))
+            },
             UISnapshot("toast-error-no-fix") {
                 Fixtures.toast(.error(ErrorToast(.undo, UserFacingProblem(message: "another file now has the original name"))))
             },
@@ -44,6 +48,7 @@ enum UISnapshotCatalog {
             UISnapshot("menu-needs-attention") {
                 Fixtures.menu(.error("Cloudflare API token is not set"), message: "Queued 3 screenshots")
             },
+            UISnapshot("menu-openrouter-out-of-credits") { Fixtures.menu(.error(OpenRouterBackend.outOfCreditsText)) },
             UISnapshot("menu-error") { Fixtures.menu(.idle, failure: "Could not open the index: disk I/O error.") },
             UISnapshot("menu-downloading") { Fixtures.menu(.idle, recents: false, download: 0.45) },
             UISnapshot("menu-setup-unfinished") { Fixtures.menu(.idle, recents: false, setup: true) },
@@ -82,12 +87,13 @@ enum UISnapshotCatalog {
             // OpenRouter (Inkling 2 Mini through OpenRouter): empty, and ready to continue after a test.
             UISnapshot("setup-3-openrouter") { Fixtures.setup(.connect, choice: .openRouter) },
             UISnapshot("setup-3-openrouter-ready") {
-                Fixtures.setup(.connect, choice: .openRouter, test: .succeeded, openRouterKey: "fake", acknowledged: true)
+                Fixtures.setup(.connect, choice: .openRouter, test: .succeeded, openRouterKey: "fake")
             },
             UISnapshot("setup-3-openrouter-out-of-credits") {
                 Fixtures.setup(.connect, choice: .openRouter, test: .failed(
-                    ConnectionTestText.failure(AnalyzerError.badRequest(status: 402, message: "x"), backend: .openRouter)),
-                               openRouterKey: "fake", acknowledged: true)
+                    ConnectionTestText.failure(AnalyzerError.accountState(OpenRouterBackend.outOfCreditsText),
+                                               backend: .openRouter)),
+                               openRouterKey: "fake")
             },
             UISnapshot("setup-3-openrouter-8gb") { Fixtures.setup(.connect, choice: .openRouter, memoryGB: 8) },
             UISnapshot("setup-4-waiting") { Fixtures.setup(.tryIt) },
@@ -109,6 +115,10 @@ enum UISnapshotCatalog {
             UISnapshot("settings-model-clairic") { Fixtures.settings(.model) },
             UISnapshot("settings-model-custom-consent") { Fixtures.settings(.model, backend: .customEndpoint) },
             UISnapshot("settings-model-openrouter-consent") { Fixtures.settings(.model, backend: .openRouter) },
+            UISnapshot("settings-model-openrouter-other-model-consent") {
+                Fixtures.settings(.model, backend: .openRouter, openRouterAllowed: true, openRouterAdvanced: true,
+                                  openRouterModel: "vendor/other-model")
+            },
             UISnapshot("settings-model-openrouter") {
                 Fixtures.settings(.model, backend: .openRouter, openRouterAllowed: true, openRouterAdvanced: true)
             },
@@ -434,7 +444,7 @@ enum Fixtures {
                       account: String = "", token: String = "", test: ConnectionTestState = .idle,
                       tryIt: TryItState? = nil, phase: RuntimePhase = .notInstalled, memoryGB: UInt64 = 16,
                       backend: AppSettings.Backend = .clairic, shortcut: HotKeyShortcut = .defaultSearch,
-                      openRouterKey: String = "", acknowledged: Bool = false) -> some View {
+                      openRouterKey: String = "") -> some View {
         var services = setupServices(memoryGB: memoryGB, phase: phase, backend: backend)
         services.searchShortcut = { shortcut }
         let model = SetupModel(services: services)
@@ -447,7 +457,6 @@ enum Fixtures {
         model.accountID = account
         model.tokenDraft = token
         model.openRouterKeyDraft = openRouterKey
-        model.openRouterAcknowledged = acknowledged
         model.test = test
         return SetupView(model: model)
     }
@@ -492,7 +501,7 @@ enum Fixtures {
 
     static func settings(_ tab: SettingsTab, backend: AppSettings.Backend = .clairic, install: LocalInstallState? = nil,
                          rules: Bool = false, kebabWithDate: Bool = false, openRouterAllowed: Bool = false,
-                         openRouterAdvanced: Bool = false) -> some View {
+                         openRouterAdvanced: Bool = false, openRouterModel: String? = nil) -> some View {
         let coordinator = settingsCoordinator({ settings in
             settings.backend = backend
             settings.clairicAccountID = account
@@ -503,7 +512,11 @@ enum Fixtures {
                 settings.customModelName = "inkling-2-mini"
             }
             if backend == .clairic { settings.uploadGrants = [.init(destination: .cloudflare, grantedAt: now)] }
-            if openRouterAllowed { settings.uploadGrants = [.init(destination: .openRouter, grantedAt: now)] }
+            settings.openRouterModel = openRouterModel
+            if openRouterAllowed {
+                settings.uploadGrants = [.init(destination: .openRouter, grantedAt: now,
+                                               openRouterModel: OpenRouterBackend.defaultModel)]
+            }
             if rules {
                 settings.excludeRules.rules = [.init(.filenameContains, "bank"), .init(.folder, "~/Desktop/Private"),
                                                .init(.filenameGlob, "*invoice*")]

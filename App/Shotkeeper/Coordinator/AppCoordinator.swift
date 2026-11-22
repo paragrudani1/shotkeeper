@@ -249,8 +249,10 @@ final class AppCoordinator {
         settings = new
         do { try settingsStore.save(new) } catch { lastMessage = "Could not save settings: \(StatusText.describe(error))" }
 
+        // The OpenRouter model is part of where screenshots go (its grant names the model).
         let destinationChanged = new.backend != old.backend || new.customEndpointURL != old.customEndpointURL
             || new.uploadGrants != old.uploadGrants
+            || OpenRouterBackend.effectiveModel(new.openRouterModel) != OpenRouterBackend.effectiveModel(old.openRouterModel)
         // A Process Existing request was for the destination selected then: never carried to another one.
         if destinationChanged { processExistingRequests.invalidateAll() }
         if destinationChanged || new.clairicAccountID != old.clairicAccountID || new.customModelName != old.customModelName
@@ -336,10 +338,45 @@ final class AppCoordinator {
         rebuildAnalyzer()
     }
 
-    /// Settings window closed or the app quits: commits every key being typed. Errors go to the menu message.
+    /// Settings window closed or the app quits: commits every key being typed, and every model name being typed
+    /// (`commitModelNameDraft`). Errors go to the menu message.
     func commitAllSecretDrafts() {
         for key in Set(secretDrafts.keys).union(committedSecrets.keys) {
             do { try commitSecretDraft(for: key) } catch { lastMessage = StatusText.describe(error) }
+        }
+        for field in Array(modelNameDrafts.keys) { commitModelNameDraft(for: field) }
+    }
+
+    // MARK: Model names typed in Settings (used on commit, like secrets)
+
+    enum ModelNameField: Hashable { case openRouter, custom }
+
+    /// What the user typed in a model name field and has not committed. A half-typed model ID never reaches the
+    /// settings, the analyzer or the consent check (each prefix would be another model, another destination).
+    @ObservationIgnored private var modelNameDrafts: [ModelNameField: String] = [:]
+
+    func modelName(for field: ModelNameField) -> String? {
+        switch field {
+        case .openRouter: return settings.openRouterModel
+        case .custom: return settings.customModelName
+        }
+    }
+
+    /// Keystrokes in a model name field. Only remembered.
+    func updateModelNameDraft(_ value: String, for field: ModelNameField) {
+        modelNameDrafts[field] = value
+    }
+
+    /// Return, focus leaving the field, the field or window going away, quitting: saves the typed name (empty =
+    /// none: the default model for OpenRouter), which rebuilds the analyzer once.
+    func commitModelNameDraft(for field: ModelNameField) {
+        guard let draft = modelNameDrafts.removeValue(forKey: field) else { return }
+        let value = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : draft
+        updateSettings {
+            switch field {
+            case .openRouter: $0.openRouterModel = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            case .custom: $0.customModelName = value
+            }
         }
     }
 
@@ -587,8 +624,11 @@ final class AppCoordinator {
     /// Settings → Model's confirmation (`BackendGate.consentRequest`) for the selected backend's destination, from
     /// now on. `endpoint` is the one the dialog named: if the configured endpoint changed meanwhile, nothing is
     /// granted.
-    func allowUploads(to destination: AppSettings.UploadDestination, endpoint: CustomEndpointIdentity?) {
-        updateSettings { $0 = BackendGate.granting(destination, expectedEndpoint: endpoint, in: $0) }
+    func allowUploads(to destination: AppSettings.UploadDestination, endpoint: CustomEndpointIdentity?,
+                      openRouterModel: String? = nil) {
+        updateSettings {
+            $0 = BackendGate.granting(destination, expectedEndpoint: endpoint, expectedOpenRouterModel: openRouterModel, in: $0)
+        }
     }
 
     /// Setup step 5 "Finish": saves the choice and applies it to the login item every time, so a login item that
@@ -644,14 +684,16 @@ final class AppCoordinator {
         }
     }
 
-    /// Setup step 3 "Continue" with OpenRouter: the key goes to the Keychain now (never while typing), then the
-    /// backend is saved, and OpenRouter is allowed from now on when `agreedThisRun` (step 2's "I Agree" in this setup
-    /// run; step 3's OpenRouter checkbox is required to get here). An empty key keeps the saved one.
-    func saveOpenRouterSetup(key: String, agreedThisRun: Bool) {
+    /// Setup step 3 "Agree and Continue" with OpenRouter: the key goes to the Keychain now (never while typing),
+    /// the backend is saved, and OpenRouter is allowed from now on for the configured model. This action alone is
+    /// the consent: its section names OpenRouter and the providers (step 2's "I Agree" names Cloudflare only and
+    /// grants nothing here). An empty key keeps the saved one.
+    func saveOpenRouterSetup(key: String) {
         if !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { setSecret(key, for: .openRouterAPIKey) }
         updateSettings {
             $0.backend = .openRouter
-            if agreedThisRun { $0 = BackendGate.granting(.openRouter, in: $0) }
+            $0 = BackendGate.granting(.openRouter, expectedOpenRouterModel: OpenRouterBackend.effectiveModel($0.openRouterModel),
+                                      in: $0)
         }
     }
 
@@ -694,7 +736,9 @@ final class AppCoordinator {
         // live on this copy only; nothing is saved.
         var candidate = candidate
         candidate = BackendGate.granting(.cloudflare, in: candidate, at: .distantPast)
-        candidate = BackendGate.granting(.openRouter, in: candidate, at: .distantPast)
+        candidate = BackendGate.granting(.openRouter,
+                                         expectedOpenRouterModel: OpenRouterBackend.effectiveModel(candidate.openRouterModel),
+                                         in: candidate, at: .distantPast)
         candidate = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: candidate.customEndpointURL),
                                          in: candidate, at: .distantPast)
         let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,

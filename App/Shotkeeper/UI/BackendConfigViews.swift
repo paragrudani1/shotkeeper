@@ -13,8 +13,10 @@ enum BackendCopy {
         + "(\(OpenRouterBackend.providerNames.joined(separator: " or "))) under their data policies. Shotkeeper asks "
         + "OpenRouter to use only providers that keep no copy (zero data retention) and do not collect or train on "
         + "the data. Shotkeeper has no server of its own."
-    static let openRouterAcknowledgement = "I understand that my screenshots are sent to OpenRouter and then to "
-        + OpenRouterBackend.providerNames.joined(separator: " or ") + "."
+    /// Setup step 3, above the footer: what the default button "Agree and Continue" allows.
+    static func openRouterAgreement(destination: String) -> String {
+        "\u{201C}\(SetupFlow.openRouterAgreeTitle)\u{201D} allows Shotkeeper to send each new screenshot to \(destination)."
+    }
     static let tokenHelpURL = URL(string: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/")!
     static let tokenHelpText = "Create a token with Workers AI Read + Edit permissions (Cloudflare docs)"
 
@@ -183,7 +185,10 @@ struct UploadConsentPrompt: ViewModifier {
         content
             .confirmationDialog(asking.map { "\($0.prompt)." } ?? "", isPresented: isAsking, titleVisibility: .visible,
                                 presenting: asking) { request in
-                Button("Allow") { coordinator.allowUploads(to: request.destination, endpoint: request.endpoint) }
+                Button("Allow") {
+                    coordinator.allowUploads(to: request.destination, endpoint: request.endpoint,
+                                             openRouterModel: request.openRouterModel)
+                }
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
                 Text("Shotkeeper sends each new screenshot there to name it. Screenshots taken before you allow it "
@@ -262,12 +267,10 @@ private struct OpenRouterSettingsSection: View {
                 LabeledContent("Cost") { Text(price).foregroundStyle(Color.primary) }
             }
             DisclosureGroup("Advanced", isExpanded: $showsAdvanced) {
-                TextField("Model", text: Binding(
-                    get: { draft.openRouterModel ?? "" },
-                    set: { draft.openRouterModel = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }),
-                    prompt: Text(OpenRouterBackend.defaultModel))
-                Text("Leave empty for \(OpenRouterBackend.defaultModel). Requests turn reasoning off and ask for "
-                     + "zero data retention.")
+                ModelNameField(title: "Model", field: .openRouter, coordinator: coordinator,
+                               prompt: OpenRouterBackend.defaultModel)
+                Text("Leave empty for \(OpenRouterBackend.defaultModel). Another model needs its own \u{201C}Allow\u{2026}\u{201D}: "
+                     + "it is served by other providers. Requests turn reasoning off and ask for zero data retention.")
                     .font(.callout)
                     .foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -306,9 +309,7 @@ private struct CustomEndpointSettingsSection: View {
                 get: { draft.customEndpointURL?.absoluteString ?? "" },
                 set: { draft.customEndpointURL = URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }),
                 prompt: Text("http://127.0.0.1:8080"))
-            TextField("Model name", text: Binding(
-                get: { draft.customModelName ?? "" },
-                set: { draft.customModelName = $0.isEmpty ? nil : $0 }))
+            ModelNameField(title: "Model name", field: .custom, coordinator: coordinator, prompt: nil)
             SecretField(title: "API key (optional)", key: .customEndpointAPIKey, coordinator: coordinator, text: $keyDraft,
                         removeTitle: "Remove saved API key",
                         removeMessage: "Requests to the endpoint are sent without a key from now on.")
@@ -318,6 +319,29 @@ private struct CustomEndpointSettingsSection: View {
                 return (candidate, [.customEndpointAPIKey: keyDraft])
             }
         }
+    }
+}
+
+/// A model name field whose text is used only on commit (Return, focus leaving, the field or window going away,
+/// quitting), like `SecretField`: a model ID typed one key at a time must not rebuild the analyzer, or meet the
+/// consent check, once per keystroke (`AppCoordinator.commitModelNameDraft`).
+struct ModelNameField: View {
+    let title: String
+    let field: AppCoordinator.ModelNameField
+    let coordinator: AppCoordinator
+    let prompt: String?
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(title, text: $text, prompt: prompt.map { Text($0) })
+            .focused($focused)
+            .onAppear { text = coordinator.modelName(for: field) ?? "" }
+            // Committing an unchanged name changes nothing (`updateSettings` ignores equal settings).
+            .onChange(of: text) { _, new in coordinator.updateModelNameDraft(new, for: field) }
+            .onChange(of: focused) { _, isFocused in if !isFocused { coordinator.commitModelNameDraft(for: field) } }
+            .onSubmit { coordinator.commitModelNameDraft(for: field) }
+            .onDisappear { coordinator.commitModelNameDraft(for: field) }
     }
 }
 
