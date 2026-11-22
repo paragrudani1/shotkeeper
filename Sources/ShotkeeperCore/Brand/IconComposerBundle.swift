@@ -1,12 +1,12 @@
 import Foundation
 
 /// The macOS 26 layered app icon (`App/Shotkeeper/AppIcon.icon`, an Icon Composer package) generated from
-/// `IconGeometry`: the indigo document fill as the background, then the viewfinder corners and the sparkle as two
-/// groups, so the system can light them separately and derive the dark, clear and tinted looks.
+/// `IconGeometry`: the indigo document fill as the background, then the viewfinder corners and the sparkle (front) as
+/// two groups, so the system can light them separately and derive the dark, clear and tinted looks.
 ///
 /// Format facts and sources: `docs/research/icon-composer.md`. In short: a folder with `icon.json` and an `Assets/`
 /// folder of layer images (SVG preferred, Apple docs); up to four groups, drawn back to front in array order; the
-/// background is the document-level `fill`. Apple does not document the `icon.json` schema, so every key used here is
+/// background is the document-level `fill`; the first group is the front-most. Apple does not document the `icon.json` schema, so every key used here is
 /// one that Icon Composer itself wrote in Apple's "Landmarks: Building an app with Liquid Glass" sample
 /// (`Landmarks App Icon.icon/icon.json`). Settings we do not choose are left out, so Icon Composer's defaults apply.
 public enum IconComposerBundle {
@@ -39,10 +39,11 @@ public enum IconComposerBundle {
         }
         let document = JSON.object([
             ("fill", .object([("solid", .string(srgb(IconGeometry.backgroundRGB)))])),
-            // Back to front: the corners, then the sparkle on top.
+            // Front first (the sidebar's top-to-bottom order; research note "Group order"): the sparkle in front,
+            // the corners behind. Names number back to front, as Apple's docs suggest.
             ("groups", .array([
-                layerGroup(name: "1-corners", image: cornersImage),
                 layerGroup(name: "2-sparkle", image: sparkleImage),
+                layerGroup(name: "1-corners", image: cornersImage),
             ])),
             // "squares" : "shared" = one design for iOS and macOS (as in the Landmarks sample); no watchOS circle.
             ("supported-platforms", .object([("squares", .string("shared"))])),

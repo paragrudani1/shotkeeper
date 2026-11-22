@@ -119,14 +119,14 @@ final class IconSVGTests: XCTestCase {
 }
 
 final class IconComposerBundleTests: XCTestCase {
-    func testIconJSONHasTheBackgroundFillAndTwoGroupsBackToFront() throws {
+    func testIconJSONHasTheBackgroundFillAndTwoGroupsFrontFirst() throws {
         let json = IconComposerBundle.iconJSON()
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let fill = try XCTUnwrap(object["fill"] as? [String: Any])
         XCTAssertEqual(fill["solid"] as? String, "srgb:0.34510,0.33725,0.83922,1.00000", "#5856D6")
         let groups = try XCTUnwrap(object["groups"] as? [[String: Any]])
         let images = groups.map { (($0["layers"] as? [[String: Any]])?.map { $0["image-name"] as? String }) ?? [] }
-        XCTAssertEqual(images, [["1-corners.svg"], ["2-sparkle.svg"]], "corners behind, sparkle in front")
+        XCTAssertEqual(images, [["2-sparkle.svg"], ["1-corners.svg"]], "front first: sparkle, then corners")
         XCTAssertEqual((object["supported-platforms"] as? [String: String])?["squares"], "shared")
         XCTAssertTrue(json.contains(#""fill" : {"#), "Icon Composer's `\"key\" : value` formatting")
     }

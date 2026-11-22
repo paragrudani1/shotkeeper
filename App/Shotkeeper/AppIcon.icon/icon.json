@@ -6,16 +6,16 @@
     {
       "layers" : [
         {
-          "image-name" : "1-corners.svg",
-          "name" : "1-corners"
+          "image-name" : "2-sparkle.svg",
+          "name" : "2-sparkle"
         }
       ]
     },
     {
       "layers" : [
         {
-          "image-name" : "2-sparkle.svg",
-          "name" : "2-sparkle"
+          "image-name" : "1-corners.svg",
+          "name" : "1-corners"
         }
       ]
     }
