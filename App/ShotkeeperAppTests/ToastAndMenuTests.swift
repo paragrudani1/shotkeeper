@@ -261,3 +261,19 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
         XCTAssertTrue(ready.showsProcessExisting)
     }
 }
+
+/// PR 4: the AppIcon asset catalog reaches the built bundle (tests run hosted in Shotkeeper.app).
+final class AppIconBundleTests: XCTestCase {
+    func testBundleCarriesTheGeneratedAppIcon() throws {
+        let bundle = Bundle.main
+        XCTAssertEqual(bundle.bundleURL.pathExtension, "app", "tests run hosted in the app")
+        XCTAssertEqual(bundle.object(forInfoDictionaryKey: "CFBundleIconName") as? String, "AppIcon")
+        XCTAssertNotNil(bundle.url(forResource: "Assets", withExtension: "car"))
+        let icns = try XCTUnwrap(bundle.url(forResource: "AppIcon", withExtension: "icns"))
+        let icon = try XCTUnwrap(NSImage(contentsOf: icns))
+        // Xcode 26 actool writes a small legacy icns (16, 32, 128, 256 px; run 44982021205) and keeps every size of
+        // the appiconset in Assets.car, which the Dock and Finder read.
+        let widths = Set(icon.representations.map(\.pixelsWide))
+        XCTAssertTrue(Set([16, 32, 128, 256]).isSubset(of: widths), "icns sizes: \(widths.sorted())")
+    }
+}

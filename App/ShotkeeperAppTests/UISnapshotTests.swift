@@ -60,6 +60,8 @@ enum UISnapshotCatalog {
             UISnapshot("search-index-error") { Fixtures.searchIndexError() },
             // First-run setup (PR 3) and the app icon it shows
             UISnapshot("app-icon") { Fixtures.appIcons() },
+            // PR 4: the compiled AppIcon asset (the bundle's icon, as the Dock and Finder get it) at 16…256 pt.
+            UISnapshot("app-icon-asset") { Fixtures.bundleIcons() },
             UISnapshot("setup-1-welcome") { Fixtures.setup(.welcome) },
             UISnapshot("setup-2-privacy") { Fixtures.setup(.privacy) },
             UISnapshot("setup-2-privacy-agreed") { Fixtures.setup(.privacy, consent: true) },
@@ -540,6 +542,23 @@ enum Fixtures {
             VStack(spacing: 10) {
                 MenuBarGlyphView(size: 18)
                 MenuBarGlyphView(size: 72)
+            }
+        }
+        .padding(20)
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// The hosting app's own icon (`NSApp.applicationIconImage`, from `AppIcon.icns`/`Assets.car`): a generic app
+    /// icon here means the asset catalog did not make it into the bundle.
+    static func bundleIcons() -> some View {
+        HStack(alignment: .bottom, spacing: 16) {
+            ForEach([16, 32, 64, 128, 256], id: \.self) { side in
+                VStack(spacing: 6) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: CGFloat(side), height: CGFloat(side))
+                    Text("\(side) pt").font(.caption2).foregroundStyle(.secondary)
+                }
             }
         }
         .padding(20)
