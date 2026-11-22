@@ -66,8 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsOpener.prepare()
         // Closing Settings commits tokens being typed (the field's onDisappear may not run before the window goes).
         _ = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+            // Delivered on the main queue; the window is only read there.
+            nonisolated(unsafe) let window = note.object as? NSWindow
             MainActor.assumeIsolated {
-                guard (note.object as? NSWindow)?.identifier?.rawValue == SettingsOpener.windowIdentifier else { return }
+                guard window?.identifier?.rawValue == SettingsOpener.windowIdentifier else { return }
                 coordinator.commitAllSecretDrafts()
             }
         }

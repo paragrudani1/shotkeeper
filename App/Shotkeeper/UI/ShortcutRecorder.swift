@@ -55,8 +55,9 @@ final class ShortcutRecorderModel {
             // The Settings window closing (also when the view's onDisappear does not run).
             closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil,
                                                                    queue: .main) { [weak self] note in
+                nonisolated(unsafe) let window = note.object as? NSWindow  // main queue; only read there
                 MainActor.assumeIsolated {
-                    if (note.object as? NSWindow)?.identifier?.rawValue == SettingsOpener.windowIdentifier { self?.stop() }
+                    if window?.identifier?.rawValue == SettingsOpener.windowIdentifier { self?.stop() }
                 }
             }
         }
