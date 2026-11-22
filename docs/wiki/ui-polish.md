@@ -389,7 +389,7 @@ Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they dif
   its text and "Allow" do not follow later edits. `saveClairicSetup(accountID:token:agreedThisRun:)` grants Cloudflare
   only for this setup run's "I Agree" (`SetupModel.agreedThisRun`), not the saved `hasSeenPrivacyNotice`.
 
-- 2026-11-22 (review 4 of `a86feb3`, approved; commit below): **a Process Existing request lasts the whole job.**
+- 2026-11-22 (review 4 of `a86feb3`, approved; commit `0d844e4`, green run 44979988085): **a Process Existing request lasts the whole job.**
   Supersedes "taken when a run starts" above: `ProcessingQueue.enqueue(_:processExisting:)` carries the
   generation-stamped `ProcessExistingRequest` with the job and hands it to every attempt (a 429 retry or a hold no
   longer loses it); it is dropped when the job ends, and a running job does not take on a second request, so nothing
