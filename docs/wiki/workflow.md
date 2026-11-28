@@ -242,3 +242,11 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   Again asks first, 10 integration + real-Mac pass. The integration branch **`t3/wave2` is cut from
   `t3/wave1-search`**, not from main: migration 4 must sit on top of wave 1's migration 3, and the versions test
   requires contiguous numbers. `t3/wave2` takes wave 1's tip as it moves.
+- 2026-11-28: **Trash research** ([../research/trash-and-last-used.md](../research/trash-and-last-used.md)): keep
+  `FileManager.trashItem` in core `FileOrganizer`, behind `#if canImport(Darwin)` (Linux Foundation lacks it). Put
+  Back is best-effort for batches (Apple bug r. 23153124 hits `recycle` too), so the confirmation promises Undo, not
+  Put Back. Undo uses `renameNoReplace` from the stored Trash URL; "never opened" and "unknown" can't be told apart
+  through `MDItemCopyAttribute`. The network-volume behaviour must be tested on a real Mac before clean-up ships.
+  - **Environment idea:** real-Mac checks are piling up across specs (Spotlight with ad-hoc signing, Vision
+    settings, Trash on network volumes, Sparkle prompts, date-field Return). Plan: one consolidated Mac checklist
+    for Parag per release, built from the specs' real-Mac sections.

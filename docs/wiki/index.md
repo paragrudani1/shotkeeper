@@ -36,6 +36,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [../research/spotlight-shortcuts-ocr.md](../research/spotlight-shortcuts-ocr.md): App Intents by OS version, Core Spotlight and signing, Live Text in plain Spotlight, Vision OCR (2026-11-28).
 - [../research/capture-types.md](../research/capture-types.md): screen recordings (naming, finishing, frames, cost) and clipboard screenshots (pasteboard, privacy alert from macOS 27.2) (2026-11-28).
 - [../research/auto-update.md](../research/auto-update.md): Sparkle 2 on an ad-hoc build: EdDSA-only trust, keychain and privacy prompts after each update, quarantine, self-signed option, release flow (2026-11-28).
+- [../research/trash-and-last-used.md](../research/trash-and-last-used.md): `trashItem` vs `recycle` (Put Back bug r. 23153124 hits both), `kMDItemLastUsedDate` reading, undo from the Trash, real-Mac tests (2026-11-28).
 - [../research/openrouter.md](../research/openrouter.md): OpenRouter + Inkling 2 Mini: parameters per provider, reasoning switch, logprobs, headers, usage/cost, privacy routing, errors (2026-11-22).
 
 ## Code map
