@@ -282,3 +282,6 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   push run 46139318397, and it is the same actool exception seen on PR #11, with a doubled path `App/App/Shotkeeper`.
   So the merged code is the tested code, but the rule was broken. **Rule:** before every merge, refuse if any line of
   `gh pr checks` is not `pass`. A diagnosis agent was started for the actool step (no retries, root cause only).
+  - **Guard added:** `/root/local-dev/shotkeeper-llm/bin/merge-if-green <pr> <sha>` refuses unless the head matches
+    and every `gh pr checks` line is `pass`, marks a draft ready, then merges with `--match-head-commit`. All merges
+    go through it from now on.
