@@ -29,11 +29,15 @@ public struct ProcessingReport: Equatable, Sendable {
     public var outcome: ProcessingOutcome
     /// The undo record written for the rename/move, if any.
     public var undoRecordID: UUID?
+    /// The subfolder below the organized folder the file was moved into (`["Chats", "Slack"]`), for the toast's
+    /// "Sorted into …". Empty when no subfolder was used, also when the fallback put it in the organized folder itself.
+    public var sortedInto: [String]
 
-    public init(originalURL: URL, outcome: ProcessingOutcome, undoRecordID: UUID? = nil) {
+    public init(originalURL: URL, outcome: ProcessingOutcome, undoRecordID: UUID? = nil, sortedInto: [String] = []) {
         self.originalURL = originalURL
         self.outcome = outcome
         self.undoRecordID = undoRecordID
+        self.sortedInto = sortedInto
     }
 }
 
@@ -75,14 +79,15 @@ public struct UndoBatchResult: Equatable, Sendable {
 /// The undo record is appended right after a successful move (before index/Finder writes) so a later failure can
 /// never leave a move that cannot be undone.
 public final class ScreenshotProcessor: Sendable {
-    private let snapshot: @Sendable () -> AnalyzerSnapshot
-    private let imagePreparer: any ImagePreparer
-    private let metadataWriter: any FileMetadataWriter
-    private let index: ScreenshotIndex
-    private let organizer: FileOrganizer
-    private let undoLog: UndoLog
-    private let now: @Sendable () -> Date
-    private let timeZone: TimeZone
+    // Internal, not private, for the extensions in their own files (`+Subfolders`).
+    let snapshot: @Sendable () -> AnalyzerSnapshot
+    let imagePreparer: any ImagePreparer
+    let metadataWriter: any FileMetadataWriter
+    let index: ScreenshotIndex
+    let organizer: FileOrganizer
+    let undoLog: UndoLog
+    let now: @Sendable () -> Date
+    let timeZone: TimeZone
 
     /// - Parameters:
     ///   - snapshot: the analyzer and the settings it was built from, read together (the app keeps them in one
@@ -129,13 +134,14 @@ public final class ScreenshotProcessor: Sendable {
     ///   allowed be sent, only while that destination is still the job's and still allowed (`UploadConsent.decide`).
     public func processWithReport(_ url: URL, userRequest: UserUploadAuthorization? = nil) async throws -> ProcessingReport {
         let original = url.standardizedFileURL
-        var undoRecordID: UUID?
-        let outcome = try await process(original, userRequest: userRequest, undoRecordID: &undoRecordID)
-        return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: undoRecordID)
+        var placed = Placement(url: original)
+        let outcome = try await process(original, userRequest: userRequest, placed: &placed)
+        return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: placed.undoRecordID,
+                                sortedInto: placed.sortedInto)
     }
 
     private func process(_ url: URL, userRequest: UserUploadAuthorization?,
-                         undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
+                         placed: inout Placement) async throws -> ProcessingOutcome {
         let url = url.standardizedFileURL
         let early = self.snapshot().settings
         let fm = FileManager.default
@@ -220,20 +226,8 @@ public final class ScreenshotProcessor: Sendable {
                 notes.append("kept name: title confidence \(Self.format(analysis.titleConfidence)) < \(Self.format(settings.minTitleConfidence))")
             }
         }
-        let folder = settings.moveEnabled ? settings.organizedFolder : nil
-
-        var finalURL = url
-        if stem != nil || folder != nil {
-            do {
-                finalURL = try organizer.organize(url, stem: stem, into: folder)
-            } catch {
-                notes.append("kept name: rename failed (\(error))")
-            }
-        }
-        if finalURL != url {
-            do { undoRecordID = try undoLog.append(from: url, to: finalURL, at: now()).id }
-            catch { notes.append("undo record not written (\(error))") }
-        }
+        placed = place(url, stem: stem, into: destination(for: analysis, settings: settings), notes: &notes)
+        let finalURL = placed.url
 
         if settings.writeFinderMetadata {
             do {

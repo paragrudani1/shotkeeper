@@ -58,6 +58,11 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `FilenameStyle(casing:datePrefix:)` (`AppSettings.filenameStyle`): `stem(from:capturedAt:timeZone:)` = `FilenameSanitizer`
     then Sentence case (first letter only; default) / Title Case / kebab-case, plus the optional "2026-11-21 " date prefix.
     The pipeline and `ScreenshotProcessor.rename(_:to:)` (toast "Edit name") both use it.
+  - `SubfolderRule` (wave 2 ticket 04; `AppSettings.subfolderRule`, default `.off`): `.byType`, `.bySource`,
+    `.byTypeThenSource`. `relativeFolder(contentType:source:existing:) -> [String]` is the pure router (`[]` = the
+    organized folder itself; `existing(parent)` lists the folder names already below `parent`, reused by `SourceKey`,
+    first alphabetically; type folders in any letter case). `typeFolderName(_:)` (Tweets … Other), `unknownSources`
+    (the non-answer list), `folderName(forSource:)` (the safe folder name, nil = unknown), `usesSource`.
   - `UndoLog`: `append(from:to:)`, `records()`, `undo(id:)`, `undoLast()`. Errors: `UndoError`
     (`.originalPathOccupied`, `.fileNotAtDestination`, …). Prefer `ScreenshotProcessor.undoLast()`, which also fixes the index.
   - `FinderMetadata`: attribute names, `tagsPayload`, `commentPayload`, `decode*`, `mergedTags`, `apply(tags:comment:to:using:)`.
@@ -115,7 +120,14 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
 - **Pipeline/**
   - `ScreenshotProcessor(snapshot:…)`: `process(_:userRequest:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`; `.awaitingConsent` = `UploadConsent.decide` refused),
     `undoLast()`, `undo(id:)`. Throws analyzer/preparer errors after recording `failed` in the index; the file is untouched.
-    - `processWithReport(_:) -> ProcessingReport` (`originalURL`, `outcome`, `undoRecordID`): what the toast needs.
+    - `processWithReport(_:) -> ProcessingReport` (`originalURL`, `outcome`, `undoRecordID`, `sortedInto`): what the
+      toast needs. `sortedInto` is the subfolder used (`["Chats", "Slack"]`), empty when none (also on the fallback).
+    - Destination (`ScreenshotProcessor+Subfolders.swift`, internal, for `process` and Analyze Again):
+      `destination(for:settings:)` = organized folder + `SubfolderRule` folders (new source folders named from
+      `SourceFacet.displayName`, else the screenshot's own spelling); `place(_:stem:into:notes:)` makes the subfolder
+      one level at a time (never through a link, never outside the organized folder), organizes, and writes the undo
+      record. A subfolder it can't make or use → the organized folder itself, note "subfolder not created (…)" /
+      "subfolder not used (…)"; if that fails too, the file keeps its name and place.
     - `rename(_:to:asSuggestedTitle:) -> ManualRenameResult` (toast and search window "Edit name"): `FilenameSanitizer` +
       original extension + `FileOrganizer` collisions ("Name 2.png"), undo record, index path and title, marked
       `titleSource = .user`. `asSuggestedTitle: true` (default false) is "Use This Name": the title becomes the given
@@ -130,7 +142,8 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `ToastBatcher`: `beginRun(_:)` (Process existing), `record(_ event: ScreenshotEvent, at:) -> ToastContent?`. One summary
     for > 3 counted files within 10 s or for a run; counts renamed/moved and excluded files.
   - `ToastContent`: `.renamed(RenamedToast)`, `.restored(RestoredToast)`, `.batch(BatchToast)`, `.error(ErrorToast)`, each
-    with its label/title/subline/button text. `ToastCountdown`: 4 s, `pause(at:)`/`resume(at:)`, `fraction(at:)`.
+    with its label/title/subline/button text. `RenamedToast.sortedInto` gives the label "Sorted into Chats › Slack"
+    (else "Renamed" / "Moved") and `accessibilityLabel` ("Renamed and sorted into Receipts: <name>."). `ToastCountdown`: 4 s, `pause(at:)`/`resume(at:)`, `fraction(at:)`.
   - `RecentItems.make(from:)` (last 5 `done`, newest first) → `RecentItem` with `accessibilityLabel(now:time:)`.
   - `TimeLabel(calendar:locale:)`: `short` ("4:24 PM", "Yesterday", "Mon", "Nov 14"), `spoken` ("today 4:24 PM"), `timeOrDateTime`.
   - `MenuText`: `status(queue:watchedFolderName:indexedCount:failure:now:time:) -> MenuStatusSummary` (`StatusDot` + two
@@ -198,6 +211,10 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     A new setting needs a `CodingKeys` case and an `init(from:)` line; `SettingsTests.testEveryPropertyRoundTrips` checks both.
     `showRenameToast` (default true) and `playRenameSound` (default false) drive the toast and the sound.
     Toggle Finder metadata with `writeFinderMetadata`. Show the Clairic privacy notice until `hasSeenPrivacyNotice`.
+  - `subfolderRule: SubfolderRule` (default `.off`; an unknown stored value decodes as `.off`). Settings' words:
+    `SubfolderSettingsText` (`title(for:)`, `example(rule:folderName:style:renameEnabled:capturedAt:timeZone:)`,
+    `note(for:)`, `leftAlone`, `warning(_:folderName:)`); `OrganizedFolderStatus.check(_:)` → `.ok` / `.missing` /
+    `.unreadable`.
   - `filenameCasing`, `filenameDatePrefix` (→ `filenameStyle`), `searchShortcut: HotKeyShortcut` (default ⌥⌘S; a stored
     shortcut that `HotKeyRules` refuses decodes as the default).
   - `HotKeyShortcut(keyCode:modifiers:)` (`kVK_*` key code + `Modifiers`): `displayString` ("⌥⌘S"), `spokenName`.

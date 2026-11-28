@@ -46,6 +46,9 @@ struct EventDebouncer {
 
 /// Watches one folder with an FSEventStream (`kFSEventStreamCreateFlagFileEvents`) and emits created/renamed
 /// regular files that are direct, non-hidden children of the folder, once each has been quiet for `debounce`.
+/// Direct children only is an invariant (wave 2 spec, "Subfolders in the pipeline"): subfolders, such as those of an
+/// organized folder inside the watched folder, are never watched. A later recursive watch must exclude the organized
+/// folder.
 ///
 /// Tolerates the folder not existing: it polls until the folder appears, and goes back to polling if the
 /// folder is deleted or moved (`kFSEventStreamEventFlagRootChanged`).

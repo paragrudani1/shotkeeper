@@ -14,6 +14,16 @@ enum SettingsSnapshots {
             // real window toolbar). General is drawn taller than the window so the whole form shows.
             UISnapshot("settings-general") { Fixtures.settings(.general) },
             UISnapshot("settings-general-kebab-date") { Fixtures.settings(.general, kebabWithDate: true) },
+            // Sort into subfolders (wave 2 ticket 04, design §4), under "Move into the organized folder".
+            UISnapshot("settings-general-subfolders-off") { Fixtures.settings(.general, subfolders: .off) },
+            UISnapshot("settings-general-subfolders-by-type") { Fixtures.settings(.general, subfolders: .byType) },
+            UISnapshot("settings-general-subfolders-by-app") { Fixtures.settings(.general, subfolders: .bySource) },
+            UISnapshot("settings-general-subfolders-two-level") {
+                Fixtures.settings(.general, kebabWithDate: true, subfolders: .byTypeThenSource)
+            },
+            UISnapshot("settings-general-subfolders-folder-missing") {
+                Fixtures.settings(.general, subfolders: .byType, folderStatus: .missing)
+            },
             UISnapshot("settings-model-clairic") { Fixtures.settings(.model) },
             UISnapshot("settings-model-custom-consent") { Fixtures.settings(.model, backend: .customEndpoint) },
             UISnapshot("settings-model-openrouter-consent") { Fixtures.settings(.model, backend: .openRouter) },
@@ -102,7 +112,8 @@ extension Fixtures {
 
     static func settings(_ tab: SettingsTab, backend: AppSettings.Backend = .clairic, install: LocalInstallState? = nil,
                          rules: Bool = false, kebabWithDate: Bool = false, openRouterAllowed: Bool = false,
-                         openRouterAdvanced: Bool = false, openRouterModel: String? = nil) -> some View {
+                         openRouterAdvanced: Bool = false, openRouterModel: String? = nil,
+                         subfolders: SubfolderRule? = nil, folderStatus: OrganizedFolderStatus = .ok) -> some View {
         let coordinator = settingsCoordinator({ settings in
             settings.backend = backend
             settings.clairicAccountID = account
@@ -123,12 +134,18 @@ extension Fixtures {
                                                .init(.filenameGlob, "*invoice*")]
             }
             if kebabWithDate { settings.filenameStyle = FilenameStyle(casing: .kebab, datePrefix: true) }
+            if let subfolders {
+                settings.moveEnabled = true
+                settings.subfolderRule = subfolders
+            }
         }, token: backend == .clairic, openRouterKey: backend == .openRouter)
         let content: AnyView
         var height = SettingsView.size.height
         switch tab {
         case .general:
-            content = AnyView(GeneralSettingsTab(coordinator: coordinator, navigation: SettingsNavigation(), showSetup: {}))
+            // The organized folder is made up (it does not exist on the CI Mac): its status is the fixture's.
+            content = AnyView(GeneralSettingsTab(coordinator: coordinator, navigation: SettingsNavigation(), showSetup: {},
+                                                 organizedFolderStatus: { _ in folderStatus }))
             height = 1_000
         case .model:
             content = AnyView(ModelSettingsTab(coordinator: coordinator, installStateOverride: install,

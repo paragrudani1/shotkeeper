@@ -12,6 +12,7 @@ enum ToastSnapshots {
         [
             UISnapshot("toast-renamed") { Fixtures.toast(.renamed(Fixtures.renamed)) },
             UISnapshot("toast-renamed-long-name") { Fixtures.toast(.renamed(Fixtures.renamedLong)) },
+            UISnapshot("toast-sorted") { Fixtures.toast(.renamed(Fixtures.sorted)) },
             UISnapshot("toast-editing") { Fixtures.toast(.renamed(Fixtures.renamed), editing: true) },
             UISnapshot("toast-editing-error") {
                 Fixtures.toast(.renamed(Fixtures.renamed), editing: true,
@@ -55,6 +56,11 @@ extension Fixtures {
         originalURL: URL(fileURLWithPath: originalPath),
         currentURL: URL(fileURLWithPath: "/Users/parag/Desktop/Invoice from Acme Cloud Services for November with VAT breakdown and payment link.png"),
         undoRecordIDs: [UUID()])
+    /// Design §7: "Sorted into Receipts", a long name on two lines.
+    static let sorted = RenamedToast(
+        originalURL: URL(fileURLWithPath: "/Users/parag/Desktop/Screenshot 2026-11-28 at 09.12.44.png"),
+        currentURL: URL(fileURLWithPath: "/Users/parag/Pictures/Screenshots/Receipts/Invoice from Acme Cloud Services for November.png"),
+        undoRecordIDs: [UUID()], sortedInto: ["Receipts"])
     static let batchPaths = (1...3).map { "/Users/parag/Desktop/Batch item \($0).png" }
 
     static func batch(excluded: Int) -> BatchToast {

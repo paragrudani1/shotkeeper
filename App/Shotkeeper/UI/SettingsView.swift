@@ -81,13 +81,17 @@ struct GeneralSettingsTab: View {
     let coordinator: AppCoordinator
     let navigation: SettingsNavigation
     let showSetup: () -> Void
+    /// Whether the organized folder can take subfolders; snapshots pass a fixed answer for their made-up folder.
+    let organizedFolderStatus: (URL) -> OrganizedFolderStatus
     @State private var recorder: ShortcutRecorderModel
 
     init(coordinator: AppCoordinator, navigation: SettingsNavigation, showSetup: @escaping () -> Void,
-         recorder: ShortcutRecorderModel? = nil) {
+         recorder: ShortcutRecorderModel? = nil,
+         organizedFolderStatus: @escaping (URL) -> OrganizedFolderStatus = { OrganizedFolderStatus.check($0) }) {
         self.coordinator = coordinator
         self.navigation = navigation
         self.showSetup = showSetup
+        self.organizedFolderStatus = organizedFolderStatus
         _recorder = State(initialValue: recorder ?? ShortcutRecorderModel { coordinator.changeSearchShortcut(to: $0) })
     }
 
@@ -106,8 +110,13 @@ struct GeneralSettingsTab: View {
                     }
                     Section("New screenshots") {
                         Toggle("Rename with a descriptive title", isOn: draft.renameEnabled)
-                        if draft.wrappedValue.organizedFolder != nil {
+                        if let organized = draft.wrappedValue.organizedFolder {
                             Toggle("Move into the organized folder", isOn: draft.moveEnabled)
+                            if draft.wrappedValue.moveEnabled {
+                                SubfolderSettingsRows(settings: draft,
+                                                      folderName: FileManager.default.displayName(atPath: organized.path),
+                                                      folderStatus: organizedFolderStatus(organized))
+                            }
                         }
                         Toggle("Write Finder tags and comment", isOn: draft.writeFinderMetadata)
                         if draft.wrappedValue.renameEnabled {
