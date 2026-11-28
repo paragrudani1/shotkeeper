@@ -350,14 +350,14 @@ final class SetupModelTests: TempDirectoryTestCase {
         let heldQueue = try XCTUnwrap(coordinator.queue)
         let carriedWhileHeld = await heldQueue.carriedRequestCount
         XCTAssertEqual(carriedWhileHeld, 1, "the held job keeps its request (one job, many attempts)")
-        let clicked = coordinator.processExistingRequests.generation
+        let clicked = coordinator.userUploadRequests.generation
 
         var events: [ScreenshotEvent] = []
         let observer = coordinator.addEventObserver { events.append($0) }
         defer { coordinator.removeEventObserver(observer) }
         coordinator.acceptPrivacyStep()
         coordinator.saveClairicSetup(accountID: "acct", token: "tok", agreedThisRun: true)
-        XCTAssertNotEqual(coordinator.processExistingRequests.generation, clicked, "the switch invalidates the request")
+        XCTAssertNotEqual(coordinator.userUploadRequests.generation, clicked, "the switch invalidates the request")
         XCTAssertEqual(coordinator.readiness, .ready)
         try await waitForEvents({ events })
         let queue = try XCTUnwrap(coordinator.queue)
@@ -388,7 +388,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         let queue = try XCTUnwrap(coordinator.queue)
         let carried = await queue.carriedRequestCount
         XCTAssertEqual(carried, 1, "held by the pause, not run yet")
-        let clicked = coordinator.processExistingRequests.generation
+        let clicked = coordinator.userUploadRequests.generation
 
         let endpoint = try XCTUnwrap(URL(string: "http://127.0.0.1:1"))
         coordinator.updateSettings {
@@ -396,7 +396,7 @@ final class SetupModelTests: TempDirectoryTestCase {
             $0.customEndpointURL = endpoint
             $0.customModelName = "m"
         }
-        XCTAssertNotEqual(coordinator.processExistingRequests.generation, clicked,
+        XCTAssertNotEqual(coordinator.userUploadRequests.generation, clicked,
                           "a request is never carried to another destination")
         coordinator.allowUploads(to: .customEndpoint, endpoint: CustomEndpointIdentity(url: endpoint))
         XCTAssertEqual(coordinator.readiness, .ready)
@@ -412,23 +412,23 @@ final class SetupModelTests: TempDirectoryTestCase {
 
     /// Process Existing requests are invalidated on any destination change, also a grant change (here: Cloudflare
     /// allowed while a Local request waits), and not by unrelated settings.
-    func testProcessExistingRequestsAreInvalidatedWhenTheDestinationChanges() async throws {
+    func testUserUploadRequestsAreInvalidatedWhenTheDestinationChanges() async throws {
         let coordinator = makeCoordinator()
         let watched = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
         try ConnectionTestImage.payload().data.write(to: watched.appendingPathComponent("Screenshot 2026-11-21 at 15.00.00.png"))
         coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
         coordinator.pauseIndefinitely()
         try await wait { coordinator.isPaused }
-        let clicked = coordinator.processExistingRequests.generation
+        let clicked = coordinator.userUploadRequests.generation
         _ = await coordinator.capture.processExistingScreenshots()
         let queue = try XCTUnwrap(coordinator.queue)
         let carried = await queue.carriedRequestCount
         XCTAssertEqual(carried, 1)
-        let request = try XCTUnwrap(coordinator.processExistingRequests.request(for: .thisMac, madeIn: clicked))
+        let request = try XCTUnwrap(coordinator.userUploadRequests.request(for: .thisMac, madeIn: clicked))
         coordinator.updateSettings { $0.renameEnabled = false }
-        XCTAssertNotNil(coordinator.processExistingRequests.authorization(for: request), "an unrelated setting keeps it")
+        XCTAssertNotNil(coordinator.userUploadRequests.authorization(for: request), "an unrelated setting keeps it")
         coordinator.allowUploads(to: .cloudflare, endpoint: nil)
-        XCTAssertNil(coordinator.processExistingRequests.authorization(for: request), "a grant change invalidates it")
+        XCTAssertNil(coordinator.userUploadRequests.authorization(for: request), "a grant change invalidates it")
     }
 
     /// Review 4 nit: a destination change during the folder scan queues nothing and says so.

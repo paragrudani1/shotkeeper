@@ -447,7 +447,7 @@ final class CoordinatorPartsTests: TempDirectoryTestCase {
         var readiness = BackendReadiness.ready
         var index: ScreenshotIndex?
         var queue: ProcessingQueue?
-        let processExistingRequests = ProcessExistingRequests()
+        let userUploadRequests = UserUploadRequests()
         var lastMessage: String?
         func beginProcessExistingRun(_ files: [URL]) {}
     }

@@ -176,9 +176,9 @@ final class ScreenshotProcessorTests: XCTestCase {
     }
 
     /// The one choke point: a file taken before its destination was allowed is skipped on every run, whatever
-    /// brought it to the queue (a resumed hold, a later file event). Only a Process Existing request made for this
+    /// brought it to the queue (a resumed hold, a later file event). Only a user request (Process Existing) made for this
     /// destination lifts the time rule.
-    func testFilesTakenBeforeTheGrantAreSkippedUnlessProcessExistingAskedForThisDestination() async throws {
+    func testFilesTakenBeforeTheGrantAreSkippedUnlessTheUserAskedForThisDestination() async throws {
         let source = try screenshot()
         let analyzer = StubAnalyzer(analysis(title: "Old receipt"))
         let later = Date().addingTimeInterval(3_600) // granted after the file was created
@@ -186,20 +186,20 @@ final class ScreenshotProcessorTests: XCTestCase {
         let skipped = try await processor(analyzer).process(source)
         XCTAssertEqual(skipped, .skipped(.awaitingConsent))
 
-        let onLocal = try await processor(analyzer).process(source, processExisting: .init(target: .thisMac))
+        let onLocal = try await processor(analyzer).process(source, userRequest: .init(target: .thisMac))
         XCTAssertEqual(onLocal, .skipped(.awaitingConsent), "a request made on another destination does not count")
         XCTAssertEqual(analyzer.calls.get.count, 0)
 
-        let requested = try await processor(analyzer).process(source, processExisting: .init(target: .cloudflare))
+        let requested = try await processor(analyzer).process(source, userRequest: .init(target: .cloudflare))
         guard case .processed = requested else { return XCTFail("\(requested)") }
         XCTAssertEqual(analyzer.calls.get.count, 1, "Process Existing may send an older file to an allowed destination")
     }
 
-    func testProcessExistingStillNeedsTheDestination() async throws {
+    func testAUserRequestStillNeedsTheDestination() async throws {
         let source = try screenshot()
         let analyzer = StubAnalyzer(analysis(title: "Secret"))
         settings.mutate { $0.uploadGrants = [] }
-        let outcome = try await processor(analyzer).process(source, processExisting: .init(target: .cloudflare))
+        let outcome = try await processor(analyzer).process(source, userRequest: .init(target: .cloudflare))
         XCTAssertEqual(outcome, .skipped(.awaitingConsent))
         XCTAssertEqual(analyzer.calls.get.count, 0)
     }
@@ -314,18 +314,18 @@ final class ScreenshotProcessorTests: XCTestCase {
 
     /// Review 4 S1: one job, many attempts. A Process Existing file that gets a 429 and then succeeds is analyzed
     /// and renamed on the retry, with the real queue and processor.
-    func testAProcessExistingRequestLastsTheWholeJobAcrossRetries() async throws {
+    func testAUserUploadRequestLastsTheWholeJobAcrossRetries() async throws {
         let source = try screenshot() // named 2026-01-13: before the grant
         settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: Date())] }
         let analyzer = StubAnalyzer([.failure(.rateLimited(retryAfter: 1)), .success(analysis(title: "Invoice From Acme"))])
         let processor = self.processor(analyzer)
-        let requests = ProcessExistingRequests()
+        let requests = UserUploadRequests()
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
                                     jobHandler: { url, request in
-            _ = try await processor.process(url, processExisting: requests.authorization(for: request))
+            _ = try await processor.process(url, userRequest: requests.authorization(for: request))
         })
         let request = try XCTUnwrap(requests.request(for: .cloudflare, madeIn: requests.generation))
-        await queue.enqueue(source, processExisting: request)
+        await queue.enqueue(source, userRequest: request)
         await queue.waitUntilIdle()
         XCTAssertEqual(analyzer.calls.get.count, 2, "retried after the 429")
         let renamed = dir.url.appendingPathComponent("Desktop/Invoice From Acme.png")

@@ -313,18 +313,18 @@ final class ProcessingQueueTests: XCTestCase {
         XCTAssertEqual(peak.get, 2)
     }
 
-    // MARK: Process Existing requests carried by jobs (review 4 S1, S2)
+    // MARK: User upload requests carried by jobs (review 4 S1, S2)
 
     func testARequestIsGivenToEveryAttemptOfItsJobAndDroppedAfterIt() async throws {
-        let request = ProcessExistingRequest(authorization: .init(target: .cloudflare), generation: 0)
-        let seen = Locked<[ProcessExistingRequest?]>([])
+        let request = UserUploadRequest(authorization: .init(target: .cloudflare), generation: 0)
+        let seen = Locked<[UserUploadRequest?]>([])
         let failures = Locked(2)
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
                                     jobHandler: { _, carried in
             seen.mutate { $0.append(carried) }
             if failures.mutate({ $0 -= 1; return $0 >= 0 }) { throw AnalyzerError.serverError(status: 503, message: "busy") }
         })
-        await queue.enqueue(a, processExisting: request)
+        await queue.enqueue(a, userRequest: request)
         await queue.waitUntilIdle()
         XCTAssertEqual(seen.get, [request, request, request])
         let carried = await queue.carriedRequestCount
@@ -336,8 +336,8 @@ final class ProcessingQueueTests: XCTestCase {
 
     /// Review 4 S2: Process Existing twice while the file is in flight left a request behind for a later run.
     func testARequestForARunningJobIsNotKeptForLater() async throws {
-        let request = ProcessExistingRequest(authorization: .init(target: .cloudflare), generation: 0)
-        let seen = Locked<[ProcessExistingRequest?]>([])
+        let request = UserUploadRequest(authorization: .init(target: .cloudflare), generation: 0)
+        let seen = Locked<[UserUploadRequest?]>([])
         let started = Locked(false)
         let release = Locked(false)
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
@@ -346,10 +346,10 @@ final class ProcessingQueueTests: XCTestCase {
             started.set(true)
             while !release.get { try await Task.sleep(nanoseconds: 1_000_000) }
         })
-        await queue.enqueue(a, processExisting: request)
+        await queue.enqueue(a, userRequest: request)
         for _ in 0..<2_000 where !started.get { try await Task.sleep(nanoseconds: 1_000_000) }
         XCTAssertTrue(started.get)
-        await queue.enqueue(a, processExisting: request) // the second Process Existing while in flight
+        await queue.enqueue(a, userRequest: request) // the second Process Existing while in flight
         let carriedWhileRunning = await queue.carriedRequestCount
         XCTAssertEqual(carriedWhileRunning, 1, "only the running job's own request")
         release.set(true)
@@ -362,13 +362,13 @@ final class ProcessingQueueTests: XCTestCase {
     }
 
     func testAWaitingJobTakesOnALaterRequest() async throws {
-        let request = ProcessExistingRequest(authorization: .init(target: .cloudflare), generation: 0)
-        let seen = Locked<[ProcessExistingRequest?]>([])
+        let request = UserUploadRequest(authorization: .init(target: .cloudflare), generation: 0)
+        let seen = Locked<[UserUploadRequest?]>([])
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
                                     jobHandler: { _, carried in seen.mutate { $0.append(carried) } })
         await queue.pause()
         await queue.enqueue(a) // the watcher
-        await queue.enqueue(a, processExisting: request) // then Process Existing, before it ran
+        await queue.enqueue(a, userRequest: request) // then Process Existing, before it ran
         await queue.resume()
         await queue.waitUntilIdle()
         XCTAssertEqual(seen.get, [request])

@@ -20,7 +20,7 @@ let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .u
 let index = try ScreenshotIndex(fileURL: support.appendingPathComponent("index.sqlite"))
 let undoLog = UndoLog(fileURL: support.appendingPathComponent("undo.jsonl"))
 let box = LockedValue(AnalyzerSnapshot(analyzer: makeAnalyzer(settings), settings: settings))  // replaced whole on rebuild
-let requests = ProcessExistingRequests()
+let requests = UserUploadRequests()
 let processor = ScreenshotProcessor(
     snapshot: { box.value },                       // analyzer + the settings it was built from, read together
     imagePreparer: ImageIOPreparer(), metadataWriter: XattrWriter(),
@@ -29,8 +29,8 @@ let queue = ProcessingQueue(
     configuration: .init(concurrency: 1, requestsPerMinute: settings.requestsPerMinute),
     probe: { await localServerHealthy() },         // optional; e.g. GET MLXRuntimePlan.healthURL(port:)
     jobHandler: { url, request in                  // request: carried by the job, every attempt
-        _ = try await processor.process(url, processExisting: requests.authorization(for: request)) })
-// Process Existing: queue.enqueue(url, processExisting: requests.request(for: target, madeIn: generationAtClick))
+        _ = try await processor.process(url, userRequest: requests.authorization(for: request)) })
+// Process Existing: queue.enqueue(url, userRequest: requests.request(for: target, madeIn: generationAtClick))
 for await status in await queue.statusUpdates() { menuBar.show(status) }
 ```
 For the toast, the handler calls `processor.processWithReport(url)` and feeds a `ScreenshotEvent` to a `ToastBatcher`
@@ -42,7 +42,7 @@ At launch, re-enqueue `index.entries(withStatus: .pending)` and `.failed` if you
 `AppCoordinator` is the wiring point; its parts each have a file and a small host protocol the coordinator implements:
 | Part | File | Owns |
 |---|---|---|
-| `FolderCapture` (`coordinator.capture`) | `App/Shotkeeper/Coordinator/FolderCapture.swift` | Folder watcher, `ScreenshotDetector`, re-queue of `pending` rows, Process Existing (`ProcessExistingRequests`). |
+| `FolderCapture` (`coordinator.capture`) | `App/Shotkeeper/Coordinator/FolderCapture.swift` | Folder watcher, `ScreenshotDetector`, re-queue of `pending` rows, Process Existing (a `UserUploadRequest` from `coordinator.userUploadRequests`). |
 | `FileActions` (`coordinator.fileActions`) | `App/Shotkeeper/Coordinator/FileActions.swift` | `undoLast()`, `undo(ids:)`, `rename(_:to:)` through `ScreenshotProcessor`. |
 | Test Connection | `App/Shotkeeper/Coordinator/ConnectionTest.swift` | `testConnection(settings:secrets:)` (generated image only). |
 | `SearchResultActions` | `App/Shotkeeper/Platform/SearchResultActions.swift` | Open / Copy Image / Reveal on a search result. `WorkspaceActions`: the `NSWorkspace`/pasteboard calls. |
@@ -104,7 +104,7 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `.error` means held on `unauthorized`/`notConfigured`: show "Fix settings", call `resume()` after the user fixes them.
   - `QueueClock`/`SystemQueueClock`, `BackoffPolicy`, `TokenBucket`.
 - **Pipeline/**
-  - `ScreenshotProcessor(snapshot:…)`: `process(_:processExisting:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`; `.awaitingConsent` = `UploadConsent.decide` refused),
+  - `ScreenshotProcessor(snapshot:…)`: `process(_:userRequest:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`; `.awaitingConsent` = `UploadConsent.decide` refused),
     `undoLast()`, `undo(id:)`. Throws analyzer/preparer errors after recording `failed` in the index; the file is untouched.
     - `processWithReport(_:) -> ProcessingReport` (`originalURL`, `outcome`, `undoRecordID`): what the toast needs.
     - `rename(_:to:asSuggestedTitle:) -> ManualRenameResult` (toast and search window "Edit name"): `FilenameSanitizer` +
@@ -144,17 +144,19 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `reservedCommandCharacters` (A V X Z H M Q stay free). `SearchKeyMapTests` fail when two actions share a key. The app
     only translates `NSEvent`s (`SearchPanel.swift`) and performs the action (`SearchPanelController.handle`).
 - **Setup/** (first-run setup; the app renders it)
-  - **`UploadConsent.decide(target:grants:capturedAt:processExisting:) -> UploadDecision`** (`Setup/UploadConsent.swift`):
-    THE consent decision (CODING_STANDARDS #2), pure. `.allow` for `UploadTarget.thisMac`; for `.cloudflare` /
-    `.customEndpoint(identity)` only when a grant covers the target AND (`capturedAt >= grantedAt` OR a
-    `ProcessExistingAuthorization` made for the same target); else `.skip(.destinationNotAllowed)` /
-    `.skip(.takenBeforeGrant)`. `decide(settings:capturedAt:processExisting:)` for the selected backend.
+  - **`UploadConsent.decide(target:grants:capturedAt:userRequest:) -> UploadDecision`** (`Setup/UploadConsent.swift`):
+    THE consent decision (CODING_STANDARDS #2), pure. `.allow` for `UploadTarget.thisMac`; for a cloud target only
+    when a grant covers the target AND (`capturedAt >= grantedAt` OR a `UserUploadAuthorization` made for the same
+    target); else `.skip(.destinationNotAllowed)` (a user request never lifts this) / `.skip(.takenBeforeGrant)`.
+    `UserUploadAuthorization(target:)` = the user asked, while `target` was selected and allowed, to send these
+    particular files ("Process Existing Screenshots…", "Analyze Again"); it has no reason field, and `decide` never
+    branches on why the user asked. `decide(settings:capturedAt:userRequest:)` for the selected backend.
     `effectiveCaptureTime(creationDate:modificationDate:nameDate:)` = the earliest, `.distantPast` when none (fails
     closed); the name time is `ScreenshotDetector.captureDate(fromFilename:timeZone:)`; the processor reads a file's
     dates (`effectiveCaptureTime(of:timeZone:)`) before and after preparing it and uses the earlier. `ScreenshotProcessor` is its
     only file-level caller: on the `AnalyzerSnapshot` read once after preparing the image, right before `analyze`.
-    `ProcessExistingRequests` issues generation-stamped `ProcessExistingRequest`s and `invalidateAll()`s them on a
-    backend/endpoint/grant change; `ProcessingQueue.enqueue(_:processExisting:)` carries one with its job for every
+    `UserUploadRequests` issues generation-stamped `UserUploadRequest`s and `invalidateAll()`s them on a
+    backend/endpoint/grant change; `ProcessingQueue.enqueue(_:userRequest:)` carries one with its job for every
     attempt (retries, holds) and drops it when the job ends; a running job does not take on a later request. `UploadConsent.grant(for:in:)` is the shared matching rule.
   - `BackendGate.readiness(settings:hasClairicToken:) -> BackendReadiness` (`.ready`, `.needsConsent`,
     `.notConfigured(reason)`): what the UI shows and offers (the analyzer factory's hold, `mayWatch` for the folder

@@ -399,6 +399,12 @@ Supersedes the consent entries of 2026-11-21 and 2026-11-22 above where they dif
   destination changed. Run Process Existing again." Capture time for consent now also includes the modification date
   (archives, `rsync -t`), the processor reads the dates again after preparing and uses the earlier read, and the name's
   time uses `TimeZone.autoupdatingCurrent`. `BackendGate.hasUploadConsent` derives from `UploadTarget`.
+- 2026-11-28 (wave 2 ticket 01, `24d5560`): **the Process Existing entries above are superseded by name only.**
+  `ProcessExistingAuthorization` is now `UserUploadAuthorization(target:)`, `ProcessExistingRequest(s)` is
+  `UserUploadRequest(s)` (the coordinator's `userUploadRequests`), and every `processExisting:` parameter is
+  `userRequest:`. The rule, the generation stamp, `invalidateAll()` and the per-job carrying are unchanged; Analyze
+  Again will issue the same request. CODING_STANDARDS #2 is reworded to match. The entries above stay as the record.
+  See [subfolders-and-retitle](subfolders-and-retitle.md).
 
 ### What CI cannot check (Parag, on a real Mac)
 - First launch opens setup; the window is 720×520, not resizable, comes to the front, and the app stays a menu-bar

@@ -260,6 +260,16 @@ final class ScreenshotIndexTests: XCTestCase {
                 VALUES ('/model.png', 'Screenshot 2.png', 'h2', 'Invoice From Acme', 'Finder metadata not written', 'done')
                 """)
             try db.run("INSERT INTO screenshots (path, original_filename, content_hash) VALUES ('/bare.png', 'b.png', 'h3')")
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, title, note, status)
+                VALUES ('/only.png', 'o.png', 'h4', 'Typed', 'renamed by the user', 'done')
+                """)
+            // A model title quoted in an error note must not count as the user's.
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, title, note, status)
+                VALUES ('/quoted.png', 'q.png', 'h5', 'File renamed by the user',
+                        'kept name: rename failed (File renamed by the user.png exists)', 'done')
+                """)
         }
         let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: path))
         XCTAssertEqual(index.schemaVersion, ScreenshotIndex.migrations.last?.version)
@@ -270,7 +280,9 @@ final class ScreenshotIndexTests: XCTestCase {
         XCTAssertEqual(typed.textStatus, .done, "the other values stay")
         XCTAssertNil(try index.lookup(byPath: "/model.png")?.titleSource)
         XCTAssertNil(try index.lookup(byPath: "/bare.png")?.titleSource)
-        XCTAssertEqual(try index.stats().count, 3)
+        XCTAssertEqual(try index.lookup(byPath: "/only.png")?.titleSource, .user, "the phrase as the whole note")
+        XCTAssertNil(try index.lookup(byPath: "/quoted.png")?.titleSource, "the phrase inside a quoted error")
+        XCTAssertEqual(try index.stats().count, 5)
         XCTAssertEqual(try index.search("march").map(\.path), ["/typed.png"])
     }
 

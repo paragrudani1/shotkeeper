@@ -563,10 +563,11 @@ public final class ScreenshotIndex: @unchecked Sendable {
             "CREATE INDEX screenshots_text_pending ON screenshots(text_status) WHERE text_status = 'pending'",
         ]),
         // Wave 2 (spec "Index schema"): names typed in the toast before this migration count as the user's. They are
-        // found by the note `rename(_:to:)` has appended since `02e6420`; `instr` matches it exactly (case included).
-        // Every other row stays NULL (= the model's). `title_source` is not an FTS column, so FTS is untouched.
+        // found by the note `rename(_:to:)` has appended at the end since `02e6420`: the whole note, or its last `; `
+        // part (GLOB is case-sensitive). Not anywhere in the note: `process` notes can quote an error that contains the
+        // model's title. Every other row stays NULL (= the model's). `title_source` is not an FTS column.
         SQLiteMigration(version: 4, statements: addColumns("title_source") + [
-            "UPDATE screenshots SET title_source = 'user' WHERE instr(note, 'renamed by the user') > 0",
+            "UPDATE screenshots SET title_source = 'user' WHERE note = 'renamed by the user' OR note GLOB '*; renamed by the user'",
         ]),
     ]
 
