@@ -127,3 +127,9 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   accepts them: OCR always on with no setting, and Pause does not stop it; ⇧⌘C copies the text; OCR text is in the
   search match, weighted far below the title; Copy Text reads a never-read screenshot on demand; one source at a
   time; type filter = the seven chips; a tag click clears all filters.
+- 2026-11-28: **Review of PR #9 (head `e09b0eb`): fix first.** The `macos-app` job failed: a test helper used
+  `AsyncSequence.Failure` (macOS 15+) while the package targets 14. The author had reported done on a Linux run
+  only, reasoning that no app code was touched. Also, two column PRs could still share migration 3 silently, because
+  identical added lines merge cleanly. A fix agent was started the same day.
+  - **Lesson → environment:** AGENTS.md gained a line saying Linux green does not prove a macOS build; core-only
+    changes need `macos-app` green too (commit on `t3/roadmap-2026-11`).
