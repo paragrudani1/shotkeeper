@@ -44,3 +44,17 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   wording that calls the promo current needs updating after 2026-12-01. Source:
   [../research/clairic/pricing-2026-11-28.md](../research/clairic/pricing-2026-11-28.md). The pricing page also lists
   `@cf/cloudflare/clairic-flash`, which stays at $0.10 per M; it is untested.
+- 2026-11-28: **More decisions from Parag**, answering the survey's open questions
+  ([roadmap-survey](roadmap-survey.md)):
+  - Re-analyse (#5): an explicit "Analyse Again" on one screenshot is the user's request to upload it, **but only if
+    the current backend's destination is allowed at that moment**. Otherwise it asks first. CODING_STANDARDS #2 is
+    reworded once, in the consent prefactor PR (survey prefactor 6), before #5 and #7.
+  - Auto-update (#8): **Sparkle is allowed** as the one exception to "no third-party dependencies" (2026-11-21), with a
+    pinned version and the exception written into the docs.
+  - Clipboard capture (#7): **on by default** (Parag chose this over the recommended opt-in). Folder and filename
+    exclusions cannot match these screenshots. Open: whether the pasteboard privacy prompt on newer macOS makes on by
+    default unworkable; see `../research/capture-types.md` once it is written.
+  - Copy text (#2): **full on-device OCR with Apple Vision**. The text goes in the index, where it can be searched and
+    copied, and can be added to existing screenshots on request. The model's `key_text` stays as it is.
+  - Prefactor A (named index columns, settings round-trip test, index change feed, row builder) started 2026-11-28 on
+    branch `t3/prefactor-index`.
