@@ -74,11 +74,12 @@ public struct DatePickerState: Equatable, Sendable {
 }
 
 extension SearchWindowState {
-    /// ⌘D or a click on the Date pill: opens the picker on the current value, or closes it.
+    /// ⌘D or a click on the Date pill: opens the picker on the current value (closing the source picker), or closes it.
     public mutating func toggleDatePicker() {
         if datePicker != nil {
             datePicker = nil
         } else {
+            sourcePicker = nil
             datePicker = DatePickerState(today: CalendarDay(now, calendar: time.calendar), current: date,
                                          calendar: time.calendar)
         }
