@@ -43,7 +43,7 @@ final class FolderCapture {
         isWatching = true
         restartWatcher()
         if let index = host?.index, let queue = host?.queue, let pending = try? index.entries(withStatus: .pending) {
-            Task { for entry in pending { await queue.enqueue(URL(fileURLWithPath: entry.path)) } }
+            Task { for entry in pending { await queue.enqueue(.process(URL(fileURLWithPath: entry.path))) } }
         }
     }
 
@@ -76,7 +76,7 @@ final class FolderCapture {
             for await event in watcher.events {
                 guard !Task.isCancelled, let self else { break }
                 guard self.detector.isScreenshot(event.url), let queue = self.host?.queue else { continue }
-                await queue.enqueue(event.url)
+                await queue.enqueue(.process(event.url))
             }
         }
     }
@@ -113,7 +113,7 @@ final class FolderCapture {
             return 0
         }
         host.beginProcessExistingRun(candidates)
-        for url in candidates { await queue.enqueue(url, userRequest: request) }
+        for url in candidates { await queue.enqueue(.process(url), userRequest: request) }
         host.lastMessage = candidates.isEmpty ? "No unprocessed screenshots in \(folder.lastPathComponent)"
             : "Queued \(candidates.count) screenshot\(candidates.count == 1 ? "" : "s")"
         return candidates.count
