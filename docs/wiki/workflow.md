@@ -342,3 +342,9 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **PR #25 merged into `t3/wave2`** (`2c691eb`, head `45f55b1`; wave 2 03, queue job kinds with the
   pause/429 state fix). Wave 2 tickets 08–09 (panel) still wait for wave 1's panel tickets; 05 (Sort Existing)
   waits for 04.
+- 2026-11-28: **PR #28** (wave 1 06, Copy Text) opened. Its app code had not compiled yet at handback; a review
+  started in parallel. Notable deviation: the open panel refreshes on the index change feed (needed for "Reading
+  text…" and the waiting copy).
+  - **Process correction:** delegated agents refuse to wait on CI (T3 rule: children never watch or poll), so the
+  "waiting for CI is part of the task" line in briefs does nothing. The chief of staff watches each PR's checks,
+  and a red `macos-app` gets its own fix delegate.
