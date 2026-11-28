@@ -188,6 +188,8 @@ final class SearchPanelController {
     let model: SearchViewModel
     /// "Process Existing Screenshots…" in the empty state (the app delegate starts the scan).
     var onProcessExisting: () -> Void = {}
+    /// ⌘S while the Source pill is disabled (design §6). Replaced in tests.
+    var beep: () -> Void = { NSSound.beep() }
     private(set) lazy var panel: SearchPanel = makePanel()
     /// The app that was in front when the panel opened. A click into Quick Look activates Shotkeeper (Quick Look's
     /// panel is a normal panel); hiding the search window gives the focus back to this app.
@@ -222,6 +224,7 @@ final class SearchPanelController {
         rememberFrontApp()
         positionOnActiveScreen()
         model.refresh()
+        model.reloadSources()  // the source list is loaded each time the panel opens (wave 1 spec)
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         model.requestFocus()
@@ -232,7 +235,10 @@ final class SearchPanelController {
     func showBatch(_ paths: [String]) {
         rememberFrontApp()
         model.showBatch(paths)
-        if !panel.isVisible { positionOnActiveScreen() }
+        if !panel.isVisible {
+            positionOnActiveScreen()
+            model.reloadSources()
+        }
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         model.requestFocus()
@@ -265,6 +271,7 @@ final class SearchPanelController {
     /// Returns true when the key was handled.
     func handle(_ key: SearchKey) -> Bool {
         if let picker = model.state.datePicker { return handleInDatePicker(key, picker) }
+        if let picker = model.state.sourcePicker { return handleInSourcePicker(key, picker) }
         switch key {
         case .up, .down:
             model.moveSelection(by: key == .up ? -1 : 1)
@@ -301,12 +308,19 @@ final class SearchPanelController {
             model.selectChip(chip)
         case .dateFilter:
             model.toggleDatePicker()
+        case .sourceFilter:
+            toggleSourcePicker()
         case .deleteBackward:
             return false  // deletes in the field
         case .copyText:
             return resultActions.copyText()
         }
         return true
+    }
+
+    /// ⌘S: opens or closes the source picker (closing the date picker), or beeps when the pill is disabled.
+    private func toggleSourcePicker() {
+        if !model.toggleSourcePicker() { beep() }
     }
 
     /// Keys while the date picker is open (design §6). The list takes ↑/↓/↩/⌫; while the custom range is shown, ↑/↓,
@@ -325,10 +339,39 @@ final class SearchPanelController {
             model.clearDateFromPicker()
         case .dateFilter:
             model.toggleDatePicker()
+        case .sourceFilter:
+            toggleSourcePicker()  // switches to the source picker
         case .space:
             return picker.takesArrowKeys  // nothing to type into in the list
         case .copyImage:
             return false  // ⌘C copies a date field's selected text, never the image behind the picker
+        case .reveal, .quickLook, .chip, .copyText:
+            break  // ignored while a picker is open
+        }
+        return true
+    }
+
+    /// Keys while the source picker is open (design §6). Its narrow field has the focus: letters, Space and ⌫ with
+    /// text edit it; ↑/↓ move the highlight, ↩ chooses, ⌫ in an empty field clears the source, Esc closes. While an
+    /// input method is composing in the narrow field, the panel doesn't call this at all (`SearchPanel.isComposingText`),
+    /// so ↩ in the candidate list commits the text and never chooses a source.
+    private func handleInSourcePicker(_ key: SearchKey, _ picker: SourcePickerState) -> Bool {
+        switch key {
+        case .up, .down:
+            model.moveSourceHighlight(by: key == .up ? -1 : 1)
+        case .open:
+            model.chooseHighlightedSource()
+        case .close:
+            _ = model.escape()
+        case .deleteBackward:
+            guard picker.deleteClearsSource else { return false }  // deletes in the narrow field
+            model.clearSourceFromPicker()
+        case .sourceFilter:
+            toggleSourcePicker()  // closes it
+        case .dateFilter:
+            model.toggleDatePicker()  // switches to the date picker
+        case .space, .copyImage:
+            return false  // a typed space; ⌘C copies the narrow field's selected text, never the image
         case .reveal, .quickLook, .chip, .copyText:
             break  // ignored while a picker is open
         }
@@ -418,7 +461,7 @@ final class SearchPanelController {
             return true
         case .reveal, .chip, .copyText:
             return handle(key)
-        case .dateFilter, .deleteBackward:
+        case .dateFilter, .sourceFilter, .deleteBackward:
             return false
         }
     }

@@ -14,13 +14,14 @@ struct FilterPillAnchorKey: PreferenceKey {
     }
 }
 
-/// The filters that have a pill and a picker. (Ticket 03 adds `source`.)
+/// The filters that have a pill and a picker.
 enum SearchFilterKind: Hashable {
-    case date
+    case date, source
 }
 
 /// A filter pill: off, the chip style with the filter's name and a chevron; on, the selected-chip indigo with the
-/// value and an ✕ that clears only this filter; open, a 2 pt focus ring (design §4 "Row 2").
+/// value and an ✕ that clears only this filter; open, a 2 pt focus ring; disabled, 40% opacity and no chevron, the
+/// tooltip saying why (design §4 "Row 2"). A long value truncates at the tail within `maxWidth`.
 struct FilterPill: View {
     let symbol: String
     let title: String
@@ -33,6 +34,8 @@ struct FilterPill: View {
     let clearHelp: String
     let toggle: () -> Void
     let clear: () -> Void
+    var maxWidth: CGFloat?
+    var isDisabled = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -45,7 +48,7 @@ struct FilterPill: View {
                         .font(.system(size: 12, weight: isOn ? .semibold : .medium))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if !isOn {
+                    if !isOn && !isDisabled {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(Brand.secondaryText)
@@ -58,6 +61,7 @@ struct FilterPill: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isDisabled)
             .accessibilityLabel(accessibilityName)
             .accessibilityValue(accessibilityValue)
             .help(help)
@@ -75,7 +79,12 @@ struct FilterPill: View {
                 .help(clearHelp)
             }
         }
+        .frame(maxWidth: maxWidth)
         .background(Capsule().fill(isOn ? AnyShapeStyle(Brand.indigo) : AnyShapeStyle(Color.primary.opacity(0.07))))
+        .opacity(isDisabled ? 0.4 : 1)
+        // A disabled button shows no tooltip of its own; the pill's shape keeps the reason on hover.
+        .contentShape(Capsule())
+        .help(ifSet: isDisabled ? help : nil)
         .overlay {
             if isOpen {
                 Capsule().strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2).padding(-2)
@@ -128,11 +137,19 @@ struct InPanelPicker<Content: View>: View {
     }
 }
 
-/// A picker row: 28 pt, 13 pt text, a check mark on the current value, the selection tint on the highlight.
+/// A picker row: 28 pt, 13 pt text, a check mark on the current value, the selection tint on the highlight, and an
+/// optional count right-aligned in secondary text with tabular figures (source rows).
 struct PickerRow: View {
+    static let height: CGFloat = 28
+
     let title: String
     let isCurrent: Bool
     let isHighlighted: Bool
+    var count: Int?
+    /// VoiceOver label when it differs from the title ("Slack, 64 screenshots").
+    var accessibilityLabel: String?
+    /// Tooltip (the full name of a source that may be truncated).
+    var help: String?
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
@@ -148,10 +165,16 @@ struct PickerRow: View {
                     .font(.system(size: 13))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: 13))
+                        .monospacedDigit()
+                        .foregroundStyle(Brand.secondaryText)
+                }
             }
             .padding(.horizontal, 6)
-            .frame(height: 28)
+            .frame(height: Self.height)
             .background {
                 if isHighlighted {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -161,7 +184,9 @@ struct PickerRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel ?? title)
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
+        .help(ifSet: help)
     }
 }
 
@@ -244,5 +269,13 @@ struct DatePickerPanel: View {
             .labelsHidden()
             .focused($focus, equals: target)
             .accessibilityLabel(label)
+    }
+}
+
+extension View {
+    /// A tooltip only when there is text; no tooltip view at all otherwise (an empty one could cover a child's).
+    @ViewBuilder
+    func help(ifSet text: String?) -> some View {
+        if let text { help(text) } else { self }
     }
 }

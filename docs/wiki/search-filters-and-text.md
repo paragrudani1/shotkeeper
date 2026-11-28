@@ -131,6 +131,82 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
 - VoiceOver reads the pill as "Date, any time" / "Date, last 7 days", the ✕ as "Clear date", and announces "Date
   cleared", "Filters cleared" and "Search cleared".
 
+## Ticket 03: source filter (2026-11-28, branch `t3/w1-03-source-filter`)
+
+### What was built
+- Core `SourceKey` and `SourceFacet` (`Sources/ShotkeeperCore/Search/SourceKey.swift`), a public API so wave 2's
+  ticket 04 can reuse the rule that "x.com" and "X" are one source. `ScreenshotIndex.sources()`; `ScreenshotQuery.source`
+  and its filter in `search`.
+  `SourceKey.rawValue` is a matching key only, never a display or folder name (it is lowercased, folded and may have
+  lost its domain); folder and display names come from `SourceFacet.displayName`.
+- `SearchWindowState`: `source`/`sourceName`, `setSource(_:)`, the loaded list (`sources`, `setSources(_:)`), the Source
+  pill wording, and the picker (`SourcePickerState` in `Search/SourcePicker.swift`, beside `DatePickerState`).
+  `SearchKeyMap`: ⌘S (`.sourceFilter`, character `s`, physical key 1).
+- App: `SearchSourceFilterViews.swift` (`SourceFilterPill`, `SourcePickerPanel`) on ticket 02's `FilterPill`,
+  `InPanelPicker` and `PickerRow` (which gained a count, a VoiceOver label and a tooltip; `FilterPill` gained `maxWidth`
+  and `isDisabled`). `SearchView` hangs either picker with one helper. `SearchPanelController.handleInSourcePicker`
+  routes keys while it is open. `SearchViewModel.reloadSources()` runs on each `show()` (and `showBatch` when the panel
+  was hidden), off the main actor.
+
+### Decisions and departures
+- 2026-11-28: **the normalization rule** (`SourceKey`). Trim, fold case and diacritics, drop a leading `www.`; when what
+  is left is one name plus one top-level domain, drop the domain. "One top-level domain" is read as: exactly two
+  dot-separated labels, no whitespace, the last label two or more ASCII letters. So `x.com` → `x`, `github.com` →
+  `github`, `www.nytimes.com` → `nytimes`; `bbc.co.uk` and `docs.google.com` stay as they are. No alias table (Twitter
+  ≠ X). Without a TLD list, a name like "Node.js" also becomes `node` (it only merges with a source spelled "Node").
+  Tests go through `sources()` (`SourceListTests`).
+- 2026-11-28 (review fix): the rule also folds width ("ＧｉｔＨｕｂ" = "GitHub", "ｘ.ｃｏｍ" → `x`) and collapses runs of
+  whitespace to one space ("Google  Chrome" = "Google Chrome"); ß folds to "ss", dotted İ to i, dotless ı stays its
+  own letter. The top-level-domain step skips a first label containing `:` or `/`, so "https://github.com" stays a URL
+  instead of becoming `https://github`. Tests: `testFullWidthLettersAreFolded`, `testRunsOfWhitespaceCollapseToOneSpace`,
+  `testUnicodeEdgeCasesKeepTheirMeaning`, `testAURLKeepsItsDomain`. `reloadSources()` cancels the previous load first.
+- 2026-11-28: the display name is the most common **trimmed** spelling ("Slack " and "Slack" count as one spelling).
+  "Alphabetical" for the tie-break and the list's name order ignores case and diacritics, then falls back to Unicode
+  order, so it never depends on the locale.
+- 2026-11-28: the filter resolves the key against the raw spellings of rows **of any status**, then the query keeps
+  `done` rows. `SELECT DISTINCT source_app_or_site` reads only the `screenshots_source_app_or_site` index, and the filter
+  itself uses that index (`SourceFilterQueryPlanTests`; checked that `LOWER(...)` on the column makes it `SCAN s`).
+- 2026-11-28: **a source with no text lists newest taken first**, like a date (ticket 02's rule): the footer then says
+  "N of M", not "Recent", and the list agrees with the times its rows show.
+- 2026-11-28: the Source pill is disabled only when the loaded list is empty **and** no source is chosen. Not before the
+  list has loaded (nil), so it doesn't flash disabled, and never while a source is chosen, so a gone source can always
+  be cleared. ⌘S on a disabled pill beeps and is consumed (it never reaches the menu).
+- 2026-11-28: a disabled SwiftUI button shows no tooltip, so the disabled pill's reason is set on the pill's capsule
+  (`help(ifSet:)`). Real-Mac check below.
+- 2026-11-28: **the chosen source keeps its name** in the state (`sourceName`). When the reloaded list still has it, the
+  name follows the list's display name; when it is gone, the pill, the picker's pinned row (count 0, checked) and the
+  no-match sentence keep the old name.
+- 2026-11-28: while narrowing, "Any source" is hidden, so the first match is the first row and "sl ↩" picks Slack. The
+  pinned gone source is narrowed like the others. ↩ with no match does nothing and leaves the picker open. The narrow
+  field starts empty each time the picker opens. When the list reloads while the picker is open, the highlighted row is
+  kept if it is still there.
+- 2026-11-28: **keys while the source picker is open:** ↑/↓ move, ↩ chooses, Esc closes (core Esc order), ⌫ clears the
+  source only when the narrow field is empty (else it deletes), Space and ⌘C go to the narrow field, ⌘S closes, ⌘D
+  switches to the date picker (and ⌘S in the date picker switches back), ⌘R/⌘Y/⌘1–7 are swallowed. One picker at a time:
+  opening one closes the other (`isPickerOpen`, `closePickers()`).
+- 2026-11-28: **IME in the narrow field** needs no new code: `SearchPanel.sendEvent` and `performKeyEquivalent` skip the
+  key handler while the first responder has marked text, and the narrow field's field editor is then the first
+  responder. The narrow field has no `onSubmit`; ↩ is handled only by the panel, so ↩ in the candidate list commits the
+  text and never chooses a source. Real-Mac check below.
+- 2026-11-28: no-match wording follows design §5: "No screenshots from Slack", "No screenshots from Slack taken in the
+  last 7 days", "No Receipt screenshots from Stripe taken in the last 30 days"; with text, "Your filters limit this
+  search to screenshots from X." A source counts like a date for the buttons ("Clear filters", plus "Clear search" with
+  text). A chip alone keeps the approved states.
+- 2026-11-28: the Source pill's VoiceOver value when disabled is the reason ("No screenshot has an app or site yet.");
+  VoiceOver adds "dimmed" itself. "Source cleared" is announced for the ✕ and for ⌘S ⌫.
+
+### Real-Mac checks (CI can't see these)
+- The narrow field takes the focus when the picker opens (typed letters don't edit the search text) and the search field
+  gets it back when it closes, by a choice, Esc, ⌘S or a click outside.
+- Japanese IME in the narrow field: type "すらっく", ↩ in the candidate list commits and does not choose a source; the
+  next ↩ chooses the highlighted one.
+- ⌘S on QWERTY, Dvorak and Russian layouts; ⌘S beeps when the pill is disabled; ⌘S ⌫ clears the source; ⌫ with text in
+  the narrow field deletes a letter.
+- VoiceOver: the pill reads "Source, any source" / "Source, Slack"; picker rows read "Slack, 64 screenshots" with the
+  selected trait on the current one; "Source cleared" is announced.
+- The disabled pill shows its tooltip on hover; a long name truncates at 180 pt and shows the full name on hover.
+- The list scrolls with ↑/↓ past the eighth row.
+
 ## Ticket 06: Copy Text (⇧⌘C and the badge) (2026-11-28, branch `t3/w1-06-copy-text`)
 
 ### What was built

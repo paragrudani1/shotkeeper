@@ -91,8 +91,13 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `contentType` chip + optional batch `paths` + optional `date: DateFilter`, AND-combined, `done` rows only; returns
     `rows`, `matchCount` and `totalCount` for the footer. The date filter compares
     `COALESCE(captured_at, processed_at)` (the `screenshots_taken_at` index) with `date.interval(now:calendar:)`, resolved
-    on each call; the app passes the search model's `now()` and `time.calendar`. With a date and no text: newest taken
-    first. `searchSQL(_:now:calendar:)` (internal) builds the statements, for query-plan tests.
+    on each call; the app passes the search model's `now()` and `time.calendar`. With a date or a source and no text:
+    newest taken first. `source: SourceKey` is resolved to the raw `source_app_or_site` spellings with that key and
+    filtered with `IN (SELECT value FROM json_each(?))` (the `screenshots_source_app_or_site` index); a key with no rows
+    left finds nothing. `searchSQL(_:sourceSpellings:now:calendar:)` (internal) builds the statements, for query-plan tests.
+  - `sources() -> [SourceFacet]` (wave 1 ticket 03): the source list, one facet per `SourceKey` over `done` rows
+    (`key`, `displayName` = most common trimmed spelling, alphabetical tie-break; `count` over the whole index), sorted by
+    count then name; rows without a source left out.
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
     Text fields: `recognizedText`, `textStatus: TextStatus?` (nil = never requested; `.pending` / `.done` /
     `.noText` (stored `none`) / `.failed`), `textRecognizedBy`, `textError`. `save` writes them like every column, so a
@@ -139,6 +144,16 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `label`, `spokenValue`, `takenPhrase(now:time:)`. `SearchWindowState`: `date`, `setDateFilter(_:)`,
     `clearFilters()`, `datePicker: DatePickerState?` (highlight, custom range, From/To; `DatePickerState(today:current:calendar:)`),
     `noMatchButtons`, `now`/`time` for the wording. `SearchKeyMap`: ⌘D (`.dateFilter`) and ⌫ (`.deleteBackward`).
+  - Source filter (wave 1 ticket 03, 2026-11-28): **`SourceKey`** (`Search/SourceKey.swift`), the one rule that two
+    spellings are one source: `SourceKey(_ raw:)` (nil when blank) trims, folds case and diacritics, drops a leading
+    `www.` and a lone top-level domain (`x.com` → `x`; `bbc.co.uk`, `docs.google.com` kept); no alias table.
+    `SourceKey.fold(_:)` is the folding alone (the picker's narrow field uses it). `SourceFacet` (`key`, `displayName`,
+    `count`). `SearchWindowState`: `source`, `sourceName`, `setSource(_ facet:)`, `sources` (nil until loaded) and
+    `setSources(_:)`, Source pill wording (`sourcePillTitle`/`Value`/`Help`, `sourcePillIsDisabled`), the picker
+    `sourcePicker: SourcePickerState?` (`narrowText`, `rows: [SourcePickerRow]`, `highlighted`, `noMatchMessage`,
+    `deleteClearsSource`) with `toggleSourcePicker()` (false = disabled, beep), `setSourceNarrowText`,
+    `moveSourceHighlight`, `chooseSource`, `chooseHighlightedSource`, `clearSourceFromPicker`; `isPickerOpen`,
+    `closePickers()`. `SearchKeyMap`: ⌘S (`.sourceFilter`).
   - Copy Text (wave 1 ticket 06, 2026-11-28): `SearchResultItem` carries `recognizedText`, `textStatus`, `textError`.
     `SearchWindowState.copyTextOutcome: CopyTextOutcome` (`.copy(text)` for `done`, `.readFirst(id:)` for never read,
     `.noText`, `.failed(fileMissing:)`, `.wait(id:)` for `pending`, `.notAvailable`; `message` gives the pill text);

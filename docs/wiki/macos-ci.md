@@ -11,6 +11,8 @@ Workflow: `.github/workflows/ci.yml` (added on branch `app/phase1`, 2026-11-21).
   `brew install xcodegen`; `xcodegen generate --spec App/project.yml`; `xcodebuild build` (Release) and
   `xcodebuild test` (Debug), both `CODE_SIGNING_ALLOWED=NO`; ad-hoc `codesign --sign -` of the Release app;
   `ditto -c -k --keepParent` → artifact `Shotkeeper-unsigned`.
+  2026-11-28 (`t3/ci-lint-on-macos`): first step after checkout "Lint on macOS (bash 3.2, BSD grep/sed)" runs
+  `scripts/lint.sh --self-test` and the rules under `/bin/bash`. Before this the step of that name ran in `linux-core`.
 - Caches: SwiftPM `.build` only (keyed by Xcode version and source hashes). DerivedData is not cached.
 
 ## UI snapshots (added 2026-11-21, UI polish PR 1)
@@ -68,6 +70,20 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
   list with a legacy-scroller gutter in one run and without it in the other; the other 169 PNGs were byte-identical to
   main (run 45052894155). The gutter is render timing, not a code change: when comparing snapshot runs, a width
   change of the list rows in `search-results-*` alone is this flake.
+- 2026-11-28 (branch `t3/ci-actool-path`): the step "Compile the Icon Composer icon (actool)" failed in runs
+  46129416874 (push, `7edf4b0`) and 46139322159 (pull_request, `d6ceef4`); push run 46139318397 at `d6ceef4` passed.
+  All three ran the same image (`macos-26-arm64` 20261123.0526.1), Xcode 26.6 (17F113) and XcodeGen 2.48.0, so it
+  was neither the event, the image nor Xcode. The failures log `The file "AppIcon.icon" couldn't be opened`, then
+  `.../shotkeeper/App/App/Shotkeeper/AppIcon.icon: error: Exception while running actool: *** -[__NSPlaceholderArray
+  initWithObjects:count:]: attempt to insert nil object` with a backtrace through `IBCLIServerRunSingleInvocation`
+  (in ibtoold), and `Failed to read file attributes for ".../App/App/Shotkeeper/Assets.xcassets"`. The step passed
+  relative paths (`App/Shotkeeper/...`), and xcodebuild runs actool with `cd .../shotkeeper/App` (its
+  `CompileAssetCatalogVariant` log). Cause: actool forwards the call to an `ibtoold` server; when one that xcodebuild
+  started is still alive, the relative paths resolve against its cwd `App/`. Timing fits: in the failures each actool
+  call took ~0.03–0.2 s and started ~1m45 after xcodebuild's last actool call (server reused); in the pass each took
+  2–3 s and started ~3m20 after (server had exited, a fresh one started in the step's cwd). The server lifetime is
+  inferred from these logs, not documented by Apple. Fix: the step passes absolute paths, as Xcode does. Rule: give
+  `xcrun actool` absolute paths only.
 
 ## Outages
 - 2026-11-21 ~20:07 UTC: from run 44944596470 on, every job of every run failed in about 2 s with no runner and

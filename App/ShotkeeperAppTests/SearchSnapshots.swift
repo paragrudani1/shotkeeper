@@ -21,6 +21,8 @@ enum SearchSnapshots {
             UISnapshot("search-date-custom") { Fixtures.search(rows: Array(Fixtures.searchRows.prefix(5)), date: .novemberWeek, datePicker: true) },
             UISnapshot("search-no-match-filters-only") { Fixtures.search(chip: .receipt, rows: [], date: .yesterday) },
             UISnapshot("search-no-match-filters") { Fixtures.search(text: "stripe", chip: .receipt, rows: [], date: .last30Days) },
+            UISnapshot("search-filters-on") { Fixtures.search(chip: .receipt, date: .last30Days, source: "Mail") },
+            UISnapshot("search-source-picker") { Fixtures.search(sourcePicker: true) },
             UISnapshot("search-text-copied") { Fixtures.searchText(.done, pill: .textCopied) },
             UISnapshot("search-text-reading") { Fixtures.searchText(.pending) },
             UISnapshot("search-text-failed") { Fixtures.searchText(.failed, pill: .problem(SearchWindowState.textFailedMessage)) },
@@ -71,17 +73,29 @@ extension Fixtures {
         return row
     }
 
+    /// The source list the panel loads (`ScreenshotIndex.sources()`): many sources, one long name (design §7).
+    static let searchSources: [SourceFacet] = [
+        ("Slack", 64), ("X", 41), ("GitHub", 27), ("Mail", 18), ("Xcode", 12),
+        ("Microsoft Remote Desktop Connection Client for Mac", 9), ("console.cloud.google.com", 4), ("Figma", 3),
+        ("Wallet", 2), ("sqlite.org", 1),
+    ].map { SourceFacet(key: SourceKey($0.0)!, displayName: $0.0, count: $0.1) }
+
     static func search(text: String = "", chip: SearchChip = .all, batch: Bool = false, rows: [IndexedScreenshot]? = nil,
                        total: Int = 214, selected: Int = 0, copied: Bool = false, problem: String? = nil,
-                       date: DateFilter? = nil, datePicker: Bool = false) -> some View {
+                       date: DateFilter? = nil, datePicker: Bool = false, source: String? = nil,
+                       sourcePicker: Bool = false) -> some View {
         var state = SearchWindowState(now: now, time: time)
+        state.setSources(total == 0 ? [] : searchSources)  // an empty index has no source: the pill is disabled
         if batch { state.showBatch(Array(searchRows.prefix(4)).map(\.path)) }
         state.setText(text)
         if chip != .all { state.selectChip(chip) }
         if let date { state.setDateFilter(date) }  // setting nil would leave the batch view
+        if let source { state.setSource(searchSources.first { $0.displayName == source }) }
         if datePicker { state.toggleDatePicker() }
+        if sourcePicker { state.toggleSourcePicker() }
         var shown = rows ?? (batch ? Array(searchRows.prefix(4)) : searchRows)
         if rows == nil, let type = chip.contentType { shown = shown.filter { $0.contentType == type } }
+        if rows == nil, let key = state.source { shown = shown.filter { $0.sourceAppOrSite.flatMap(SourceKey.init) == key } }
         state.apply(ScreenshotSearchResult(rows: shown, matchCount: shown.count, totalCount: total), for: state.query)
         for _ in 0..<selected { state.moveSelection(by: 1) }
         return searchView(state, copied: copied, problem: problem)
