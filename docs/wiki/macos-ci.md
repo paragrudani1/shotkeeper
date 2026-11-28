@@ -22,6 +22,8 @@ Workflow: `.github/workflows/ci.yml` (added on branch `app/phase1`, 2026-11-21).
   signs a throwaway app with a Sparkle-shaped framework built from tiny `cc` binaries with the real `codesign`.
   After the upload, the job downloads `Shotkeeper-unsigned` back, unzips it and runs
   `codesign --verify --deep --strict --verbose=2` on what a user gets. Details: [auto-update](auto-update.md).
+  2026-11-28 (`t3/ci-lint-on-macos`): first step after checkout "Lint on macOS (bash 3.2, BSD grep/sed)" runs
+  `scripts/lint.sh --self-test` and the rules under `/bin/bash`. Before this the step of that name ran in `linux-core`.
 - Caches: SwiftPM `.build` only (keyed by Xcode version and source hashes). DerivedData is not cached.
 
 ## UI snapshots (added 2026-11-21, UI polish PR 1)
