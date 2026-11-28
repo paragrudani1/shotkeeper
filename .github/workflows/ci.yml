@@ -166,7 +166,7 @@ jobs:
             echo "=== actool: $name"
             xcrun actool "$@" --compile "$dir" --output-format human-readable-text --notices --warnings --errors \
               --output-partial-info-plist "$dir/partial-info.plist" --app-icon AppIcon --target-device mac \
-              --minimum-deployment-target 14.0 --platform macosx 2>&1 | tee "$dir/actool.log"
+              --minimum-deployment-target 15.0 --platform macosx 2>&1 | tee "$dir/actool.log"
             ls -l "$dir"
             [ -f "$dir/partial-info.plist" ] && plutil -p "$dir/partial-info.plist"
             if [ -f "$dir/AppIcon.icns" ]; then
