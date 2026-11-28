@@ -168,3 +168,15 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   `UserUploadAuthorization`, and CODING_STANDARDS #2 is reworded in the same PR.
 - 2026-11-28: **PR #10 re-check: merge once `macos-app` is green.** Every fix was proven with planted files and a
   simulated "keep both" merge. The chief of staff fixed the remaining doc-comment nit directly (`903b3fc`).
+- 2026-11-28: **Auto-update spec** ([../specs/auto-update-2026-11.md](../specs/auto-update-2026-11.md), `b87c047`).
+  Parag's answers:
+  - The N → N+1 prompt test uses **the first two real releases** (0.2.0 → 0.2.1). Recommended was private test
+    releases; Parag chose real ones. They are public before the prompt count is known.
+  - **No required approval per release**: Parag ticked "You approve each release" to change it. The `release`
+    environment keeps its tag restriction (`v*`) and secrets, but has no required reviewer.
+  - Accepted: feed on GitHub Releases (`releases/latest/download/appcast.xml`, redirect checked in the first
+    release); `CHANGELOG.md` section required per release; tag `vMAJOR.MINOR.PATCH` with build number
+    MAJOR×10000+MINOR×100+PATCH (no betas).
+  - The spec's other calls stand (two jobs, build without secrets / sign without build tools; Sparkle pinned
+    2.10.1; `SUAllowsAutomaticUpdates = false`; no design pass, since the UI is one menu row).
+  - Before the app work: Parag must create the self-signed certificate and Sparkle's EdDSA keys (spec checklist P1/P2).
