@@ -16,9 +16,10 @@ settings prefactors (1 and 2, and the core row builder) are a separate PR on `t3
 `AppCoordinator` (841 → ~710 lines) stays the wiring point and the one object views observe. The parts that features
 will grow are now their own types. Each type has a small `@MainActor` host protocol, and the coordinator implements
 it, so a part never reaches into coordinator internals.
-- `CaptureSources` (`coordinator.capture`, `@Observable`): watcher, detector, `watchedFolder`, `isWatching`, the
-  re-queue of `pending` rows, Process Existing. Feature 7 (clipboard, recordings) adds its source here. The coordinator
-  still decides *when* watching starts (`startWatchingIfReady`: services started and `BackendGate` ready).
+- `FolderCapture` (`coordinator.capture`, `@Observable`; named `CaptureSources` until the review fixes below): the
+  watched folder and Process Existing. Watcher, detector, `watchedFolder`, `isWatching`, the re-queue of `pending`
+  rows. The coordinator still decides *when* watching starts (`startWatchingIfReady`: services started and
+  `BackendGate` ready).
 - `FileActions` (`coordinator.fileActions`): `undoLast()`, `undo(ids:)`, `rename(_:to:)`. All three go through
   `ScreenshotProcessor`. Features 4 (re-sort into subfolders), 6 (move to the Bin) and 5 (re-analyse from the search
   window) add their action as an extension in `FileActions+<Feature>.swift`, so the three PRs do not edit one file.
@@ -73,6 +74,35 @@ it, so a part never reaches into coordinator internals.
     generated image).
   - Per-line markers rather than per-file: a new delete in the same file still fails.
 - Tests are not linted (they delete their temp folders).
+
+## Feature 7 dropped (2026-11-28)
+- Parag dropped feature 7 (clipboard images and screen recordings as capture sources) on 2026-11-28. The capture type
+  stays, as it keeps the watcher and Process Existing out of `AppCoordinator`, but it was renamed `FolderCapture`, and
+  its doc comment, this page and the PR body no longer promise a home for new sources.
+
+## Review fixes (2026-11-28)
+Review of PR 10 at `06d1aea` (no blockers). Branch `t3/prefactor-app-fix`, merged `origin/main` (PR 9) first, no conflicts.
+- `scripts/lint.sh`:
+  - `core-imports` sees Swift 6 access-level imports (`public`/`package`/`internal`/`fileprivate`/`private import`)
+    and every `;`-separated import on a line.
+  - `file-op` also matches `recycle(` (`NSWorkspace`), `unlinkat(`, `rmdir(`, `Darwin.`/`Glibc.`/`Foundation.remove(`
+    (not `Array.remove(at:)`) and whitespace before `(`. Feature 6 (move to the Bin) will hit it with `recycle` or
+    `trashItem` and must live in, or go through, `FileOrganizer`.
+  - Allow markers count only as the line's trailing `// lint-allow: <rule> (<why>)` with a non-empty reason. A marker
+    in a string literal, in a `/* */` mid-line, or without a reason fails (self-test cases for each). All existing
+    markers already had that form.
+  - The header lists the blind spots: a line starting with a comment is skipped (code after `*/` too), method
+    references without a call, and a call split across lines.
+  - `macos-app` runs `/bin/bash scripts/lint.sh --self-test && /bin/bash scripts/lint.sh`, so it is proven on bash 3.2
+    and BSD grep/sed.
+- `testTheCoordinatorWiresItsParts` replaced by `testStartWatchingRequeuesPendingRowsOnce` (`FolderCapture` with a
+  fake host: only `pending` rows are queued, and a second `startWatching()` queues nothing).
+- `GlobalHotKey.modifiers(from:)` is `nonisolated` and the search keys use it (the copy in `SearchPanel.swift` is gone).
+  `SearchKeyMap.keypadEnter` moved to `KeyCode.keypadEnter` (checked against `kVK_ANSI_KeypadEnter` in the app tests).
+  `SearchResultActions.hidePanel`/`announce` are `@MainActor` closures. `FileActions.processor` stays a `var` with a
+  comment: the coordinator sets it once in `openStorage()`, which cannot run before `fileActions` is initialized.
+- PR 9 follow-up: `shippedColumns` (core `ScreenshotIndexTests`) is an ordered `(version, columns)` list, and the test
+  asserts versions are unique and run 1, 2, 3…. A "keep both" merge used to crash the run on a duplicate dictionary key.
 
 ## Verification (2026-11-28)
 - Linux: `SCRATCH=.build/linux-pfb scripts/test-linux.sh`, 410 tests, 0 failures. `scripts/lint.sh` and `--self-test` pass.

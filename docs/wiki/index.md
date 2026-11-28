@@ -17,7 +17,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
   295df83 schema test), `changes()` feed, settings every-property round-trip, `IndexedScreenshot.testRow` (2026-11-28).
 - [ui-polish](ui-polish.md): UI polish PRs (spec `../specs/ui-polish-2026-11.md`): toast batching, restored-by-undo rule, status item menu, focus, deviations; PR 2 search window rules, Quick Look, batch view; PR 3 setup steps, consent and watch gate, computed Clairic cost, icon geometry (2026-11-21); the consent choke point `UploadConsent.decide` (2026-11-22); PR 4 Settings scene, shortcut recorder, filename style, contrast; app icon: one geometry source, SVG + asset catalog + Icon Composer `.icon` (shipped on every macOS, Parag's decision), glyph stays code-drawn (2026-11-22).
 
-- [prefactor-app](prefactor-app.md): app prefactor before the eight features: `AppCoordinator` parts (`CaptureSources`, `FileActions`), search-panel action set, search key table in core (`SearchKeyMap`), shared app test harness and row builder, snapshots per screen, `scripts/lint.sh` in CI (2026-11-28).
+- [prefactor-app](prefactor-app.md): app prefactor before the eight features: `AppCoordinator` parts (`FolderCapture`, `FileActions`), search-panel action set, search key table in core (`SearchKeyMap`), shared app test harness and row builder, snapshots per screen, `scripts/lint.sh` in CI (2026-11-28).
 
 ## Standards
 - [../../CODING_STANDARDS.md](../../CODING_STANDARDS.md): review checklist (2026-11-21).
