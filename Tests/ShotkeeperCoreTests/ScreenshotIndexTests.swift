@@ -164,9 +164,339 @@ final class ScreenshotIndexTests: XCTestCase {
                        [.text("/v1.png"), .text("Screenshot.png"), .text("h")])
         }
         let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: path))
-        XCTAssertEqual(index.schemaVersion, 2)
+        XCTAssertEqual(index.schemaVersion, ScreenshotIndex.migrations.last?.version)
         let row = try XCTUnwrap(index.lookup(byPath: "/v1.png"))
         XCTAssertFalse(row.restoredByUndo)
+    }
+
+    func testMigrationVersionsAreUniqueAndContiguous() {
+        let versions = ScreenshotIndex.migrations.map(\.version)
+        XCTAssertEqual(versions, Array(1...Int32(versions.count)), "1, 2, 3, ... in order, no duplicates or gaps")
+        for migration in ScreenshotIndex.migrations {
+            XCTAssertFalse(migration.statements.isEmpty, "migration \(migration.version) does nothing")
+        }
+        let names = ScreenshotIndex.columns.map(\.name)
+        XCTAssertEqual(Set(names).count, names.count, "duplicate column")
+        XCTAssertEqual(names.first, "path", "the upsert key comes first")
+        for column in ScreenshotIndex.columns {
+            XCTAssertTrue(versions.contains(column.addedIn), "\(column.name): no migration \(column.addedIn)")
+        }
+        // ADD COLUMN appends, so the table order is the order columns were added in.
+        XCTAssertEqual(ScreenshotIndex.columns.map(\.addedIn), ScreenshotIndex.columns.map(\.addedIn).sorted())
+    }
+
+    /// Each migration adds exactly the columns whose `addedIn` names it, and exactly the columns it shipped with.
+    /// A column moved into a version that is already out (and so never reruns on a user's database) fails here.
+    func testEachMigrationAddsItsShippedColumns() {
+        XCTAssertEqual(Set(Self.shippedColumns.keys), Set(ScreenshotIndex.migrations.map(\.version)),
+                       "add `n: [columns]` to shippedColumns with each new migration")
+        for migration in ScreenshotIndex.migrations {
+            let declared = ScreenshotIndex.columns(addedIn: migration.version).map(\.name)
+            XCTAssertEqual(declared, Self.shippedColumns[migration.version] ?? [],
+                           "columns with addedIn: \(migration.version) differ from what that version shipped")
+            guard migration.version > 1 else { continue }
+            let prefix = "ALTER TABLE screenshots ADD COLUMN "
+            let added = migration.statements.filter { $0.hasPrefix(prefix) }
+                .map { String($0.dropFirst(prefix.count).prefix { $0 != " " }) }
+            XCTAssertEqual(added, declared, "migration \(migration.version) adds other columns than their addedIn says")
+        }
+    }
+
+    /// The columns each migration adds, as shipped. Append `n: [...]` with each new migration; never edit a line:
+    /// a database already at that version will not run it again.
+    private static let shippedColumns: [Int32: [String]] = [
+        1: ["path", "original_filename", "content_hash", "captured_at", "processed_at", "title", "title_confidence",
+            "source_app_or_site", "content_type", "description", "tags", "key_text", "date_mentioned", "produced_by",
+            "billed_input_tokens", "status", "last_error", "note"],
+        2: ["restored_by_undo"],
+    ]
+
+    /// The migrated table has exactly the declared columns, in order: a column without its migration (or the other
+    /// way round) fails here, not at the first save on a user's Mac.
+    func testMigratedTableMatchesColumnTable() throws {
+        let db = try SQLiteDatabase(path: ":memory:")
+        try db.migrate(ScreenshotIndex.migrations)
+        XCTAssertEqual(try tableColumns(db).map(\.name), ["id"] + ScreenshotIndex.columns.map(\.name))
+    }
+
+    /// Every column survives save → read by its own name (a mixed-up read would swap two values).
+    func testEveryColumnRoundTrips() throws {
+        let index = try ScreenshotIndex.inMemory()
+        let row = IndexedScreenshot.testRow("/full.png") {
+            $0.originalFilename = "Screenshot 2026-11-28 at 10.00.00.png"
+            $0.contentHash = "v1:1:2:3"
+            $0.capturedAt = t0
+            $0.processedAt = t0.addingTimeInterval(1)
+            $0.title = "Title"
+            $0.titleConfidence = 0.75
+            $0.sourceAppOrSite = "x.com"
+            $0.contentType = .tweet
+            $0.description = "Description"
+            $0.tags = ["a", "b"]
+            $0.keyText = "Key text"
+            $0.dateMentioned = "2026-01-13"
+            $0.producedBy = "model"
+            $0.billedInputTokens = 640
+            $0.status = .failed
+            $0.lastError = "boom"
+            $0.note = "note"
+            $0.restoredByUndo = true
+        }
+        var expected = row
+        expected.id = try index.save(row)
+        XCTAssertEqual(try index.lookup(byPath: "/full.png"), expected)
+        // Every stored property is non-default above, so a new column without a value here fails this check.
+        let blank = IndexedScreenshot(path: "", originalFilename: "", contentHash: "")
+        for (label, value) in Mirror(reflecting: row).children where label != "id" {
+            let blankValue = Mirror(reflecting: blank).children.first { $0.label == label }?.value
+            XCTAssertNotEqual(String(describing: value), String(describing: blankValue ?? ""), "set \(label ?? "") above")
+        }
+    }
+
+    /// A database created by the build at `295df83` (schema version 2) opens, runs only the migrations after 2, keeps
+    /// every row and every value, and has exactly the schema a new database gets.
+    func testDatabaseFrom295df83OpensWithEveryValueKept() throws {
+        let dir = try TempDir()
+        let legacyPath = dir.url.appendingPathComponent("legacy.sqlite").path
+        do {
+            let db = try SQLiteDatabase(path: legacyPath)
+            try db.migrate(Self.schemaAt295df83)
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, captured_at, processed_at, title,
+                    title_confidence, source_app_or_site, content_type, description, tags, key_text, date_mentioned,
+                    produced_by, billed_input_tokens, status, last_error, note, restored_by_undo)
+                VALUES ('/old.png', 'Screenshot.png', 'v1:1:2:3', 1800000000, 1800000060, 'Invoice from Acme', 0.8,
+                    'Mail', 'receipt', 'An invoice', '["invoice","acme"]', 'Total 42', '2026-01-13', 'clairic', 640,
+                    'done', NULL, 'kept', 1)
+                """)
+            try db.run("INSERT INTO screenshots (path, original_filename, content_hash) VALUES ('/pending.png', 'p.png', 'h')")
+            XCTAssertEqual(try db.userVersion, 2, "the frozen schema")
+        }
+        let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: legacyPath))
+        XCTAssertEqual(index.schemaVersion, ScreenshotIndex.migrations.last?.version)
+        let old = try XCTUnwrap(index.lookup(byPath: "/old.png"))
+        XCTAssertEqual(old, IndexedScreenshot(
+            id: old.id, path: "/old.png", originalFilename: "Screenshot.png", contentHash: "v1:1:2:3",
+            capturedAt: t0, processedAt: t0.addingTimeInterval(60), title: "Invoice from Acme", titleConfidence: 0.8,
+            sourceAppOrSite: "Mail", contentType: .receipt, description: "An invoice", tags: ["invoice", "acme"],
+            keyText: "Total 42", dateMentioned: "2026-01-13", producedBy: "clairic", billedInputTokens: 640,
+            status: .done, note: "kept", restoredByUndo: true))
+        let pending = try XCTUnwrap(index.lookup(byPath: "/pending.png"))
+        XCTAssertEqual(pending.status, .pending)
+        XCTAssertEqual(pending.tags, [])
+        XCTAssertFalse(pending.restoredByUndo)
+        XCTAssertEqual(try index.search("acme").map(\.path), ["/old.png"])
+        try index.save(entry("/new.png", title: "Fresh"))
+        XCTAssertEqual(try index.search("fresh").map(\.path), ["/new.png"])
+
+        let freshPath = dir.url.appendingPathComponent("fresh.sqlite").path
+        _ = try ScreenshotIndex(fileURL: URL(fileURLWithPath: freshPath))
+        XCTAssertEqual(try schema(SQLiteDatabase(path: freshPath)), try schema(SQLiteDatabase(path: legacyPath)),
+                       "a new database is built exactly like one from 295df83")
+    }
+
+    /// The schema SQL as shipped at `295df83`, copied verbatim. Frozen: never update it.
+    private static let schemaAt295df83: [SQLiteMigration] = [
+        SQLiteMigration(version: 1, statements: [
+            """
+            CREATE TABLE screenshots (
+                id INTEGER PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                original_filename TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                captured_at REAL,
+                processed_at REAL,
+                title TEXT,
+                title_confidence REAL,
+                source_app_or_site TEXT,
+                content_type TEXT,
+                description TEXT,
+                tags TEXT NOT NULL DEFAULT '[]',
+                key_text TEXT,
+                date_mentioned TEXT,
+                produced_by TEXT,
+                billed_input_tokens INTEGER,
+                status TEXT NOT NULL DEFAULT 'pending',
+                last_error TEXT,
+                note TEXT
+            )
+            """,
+            "CREATE INDEX screenshots_content_hash ON screenshots(content_hash)",
+            "CREATE INDEX screenshots_processed_at ON screenshots(processed_at)",
+            """
+            CREATE VIRTUAL TABLE screenshots_fts USING fts5(
+                title, tags, description, key_text, source_app_or_site,
+                content='screenshots', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+            )
+            """,
+            """
+            CREATE TRIGGER screenshots_ai AFTER INSERT ON screenshots BEGIN
+                INSERT INTO screenshots_fts(rowid, title, tags, description, key_text, source_app_or_site)
+                VALUES (new.id, new.title, new.tags, new.description, new.key_text, new.source_app_or_site);
+            END
+            """,
+            """
+            CREATE TRIGGER screenshots_ad AFTER DELETE ON screenshots BEGIN
+                INSERT INTO screenshots_fts(screenshots_fts, rowid, title, tags, description, key_text, source_app_or_site)
+                VALUES ('delete', old.id, old.title, old.tags, old.description, old.key_text, old.source_app_or_site);
+            END
+            """,
+            """
+            CREATE TRIGGER screenshots_au AFTER UPDATE OF title, tags, description, key_text, source_app_or_site ON screenshots BEGIN
+                INSERT INTO screenshots_fts(screenshots_fts, rowid, title, tags, description, key_text, source_app_or_site)
+                VALUES ('delete', old.id, old.title, old.tags, old.description, old.key_text, old.source_app_or_site);
+                INSERT INTO screenshots_fts(rowid, title, tags, description, key_text, source_app_or_site)
+                VALUES (new.id, new.title, new.tags, new.description, new.key_text, new.source_app_or_site);
+            END
+            """,
+        ]),
+        SQLiteMigration(version: 2, statements: [
+            "ALTER TABLE screenshots ADD COLUMN restored_by_undo INTEGER NOT NULL DEFAULT 0",
+        ]),
+    ]
+
+    private struct TableColumn: Equatable {
+        var name: String, type: String, notNull: Bool, defaultValue: String?, primaryKey: Bool
+    }
+
+    private func tableColumns(_ db: SQLiteDatabase) throws -> [TableColumn] {
+        var columns: [TableColumn] = []
+        try db.query("PRAGMA table_info(screenshots)") {
+            columns.append(TableColumn(name: $0.text(1) ?? "", type: $0.text(2) ?? "", notNull: $0.int64(3) != 0,
+                                       defaultValue: $0.text(4), primaryKey: $0.int64(5) != 0))
+        }
+        return columns
+    }
+
+    /// Every schema object's SQL text plus the version.
+    private func schema(_ db: SQLiteDatabase) throws -> [String] {
+        var objects = ["user_version \(try db.userVersion)"]
+        try db.query("SELECT type, name, sql FROM sqlite_master ORDER BY type, name") {
+            objects.append("\($0.text(0) ?? "") \($0.text(1) ?? ""): \($0.text(2) ?? "")")
+        }
+        return objects
+    }
+
+    // MARK: - Change feed
+
+    /// Awaits `operation`. After `seconds` it fails the test with a message naming `what`, and returns nil instead of
+    /// hanging (the operation need not react to cancellation).
+    private func awaitResult<T: Sendable>(_ what: String, seconds: Double = 10, file: StaticString = #filePath,
+                                          line: UInt = #line, _ operation: @escaping @Sendable () async -> T) async -> T? {
+        let work = Task { await operation() }
+        let timer = Locked<Task<Void, Never>?>(nil)
+        let result: T? = await withCheckedContinuation { continuation in
+            let resumed = Locked(false)
+            let finish: @Sendable (T?) -> Void = { value in
+                if resumed.mutate({ done in defer { done = true }; return !done }) { continuation.resume(returning: value) }
+            }
+            Task { finish(await work.value) }
+            timer.set(Task { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)); finish(nil) })
+        }
+        timer.get?.cancel()
+        work.cancel()
+        if result == nil { XCTFail("timed out after \(seconds) s waiting for \(what)", file: file, line: line) }
+        return result
+    }
+
+    /// Everything `stream` yields until it finishes. Free the index first: that is what finishes it.
+    private func collect(_ stream: AsyncStream<IndexChange>, file: StaticString = #filePath,
+                         line: UInt = #line) async -> [IndexChange] {
+        await awaitResult("the change stream to finish (it ends when the index is freed)", file: file, line: line) {
+            var changes: [IndexChange] = []
+            for await change in stream { changes.append(change) }
+            return changes
+        } ?? []
+    }
+
+    func testChangesReportInsertUpdateAndRemoveInCommitOrder() async throws {
+        var index: ScreenshotIndex! = try ScreenshotIndex.inMemory()
+        let stale = try index.save(.testRow("/b.png"))
+        let changes = index.changes()
+
+        let a = try index.save(.testRow("/a.png") { $0.title = "Alpha" })
+        try index.save(.testRow("/a.png") { $0.title = "Alpha 2" })
+        try index.markRestoredByUndo(path: "/a.png")
+        try index.updatePath(from: "/a.png", to: "/b.png")
+        // No row changes: nothing is published.
+        try index.markRestoredByUndo(path: "/missing.png")
+        try index.updatePath(from: "/missing.png", to: "/c.png")
+        try index.updatePath(from: "/b.png", to: "/b.png")
+        try index.updatePath(from: "/b.png", to: "/c.png")
+        // An identical row is still reported (save does not diff).
+        let current = try XCTUnwrap(index.lookup(byPath: "/c.png"))
+        try index.save(current)
+        index = nil
+
+        let received = await collect(changes)
+        XCTAssertEqual(received, [
+            IndexChange(.inserted, id: a, path: "/a.png"),
+            IndexChange(.updated, id: a, path: "/a.png"),
+            IndexChange(.updated, id: a, path: "/a.png"),
+            IndexChange(.removed, id: stale, path: "/b.png"),
+            IndexChange(.updated, id: a, path: "/b.png"),
+            IndexChange(.updated, id: a, path: "/c.png"),
+            IndexChange(.updated, id: a, path: "/c.png"),
+        ])
+    }
+
+    func testEverySubscriberGetsEveryChangeAndStreamsEndWithTheIndex() async throws {
+        var index: ScreenshotIndex! = try ScreenshotIndex.inMemory()
+        let first = index.changes()
+        let second = index.changes()
+        let id = try index.save(.testRow("/a.png"))
+        index = nil
+        let expected = [IndexChange(.inserted, id: id, path: "/a.png")]
+        let firstReceived = await collect(first)
+        let secondReceived = await collect(second)
+        XCTAssertEqual(firstReceived, expected)
+        XCTAssertEqual(secondReceived, expected)
+    }
+
+    func testAFailedWritePublishesNothing() async throws {
+        let dir = try TempDir()
+        let url = dir.url.appendingPathComponent("index.sqlite")
+        var index: ScreenshotIndex! = try ScreenshotIndex(fileURL: url)
+        try index.save(.testRow("/a.png"))
+        let changes = index.changes()
+        let b = try index.save(.testRow("/b.png"))
+        // Makes the UPDATE fail after the stale row's DELETE, so the transaction rolls back.
+        try SQLiteDatabase(path: url.path).execute("""
+            CREATE TRIGGER fail_update BEFORE UPDATE OF path ON screenshots BEGIN SELECT RAISE(ABORT, 'no'); END
+            """)
+        XCTAssertThrowsError(try index.updatePath(from: "/a.png", to: "/b.png"))
+        XCTAssertNotNil(try index.lookup(byPath: "/b.png"), "rolled back")
+        let c = try index.save(.testRow("/c.png"))
+        index = nil
+        let received = await collect(changes)
+        XCTAssertEqual(received, [IndexChange(.inserted, id: b, path: "/b.png"), IndexChange(.inserted, id: c, path: "/c.png")],
+                       "nothing from the failed updatePath")
+    }
+
+    func testADroppedStreamUnsubscribes() throws {
+        let index = try ScreenshotIndex.inMemory()
+        let kept = index.changes()
+        _ = index.changes()
+        XCTAssertEqual(index.subscriberCount, 1, "the dropped stream unsubscribed, the kept one did not")
+        withExtendedLifetime(kept) {}
+    }
+
+    func testCancellingTheIteratingTaskUnsubscribes() async throws {
+        let index = try ScreenshotIndex.inMemory()
+        let changes = index.changes()
+        let received = Locked(0)
+        let iterating = Task { for await _ in changes { received.mutate { $0 += 1 } } }
+        try index.save(.testRow("/a.png"))
+        for _ in 0..<2_000 where received.get == 0 { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertEqual(received.get, 1, "the task is iterating")
+        XCTAssertEqual(index.subscriberCount, 1)
+
+        iterating.cancel()
+        _ = await awaitResult("the cancelled iteration to end") { await iterating.value }
+        XCTAssertEqual(index.subscriberCount, 0, "cancelling the iteration unsubscribed (the stream itself is still held)")
+        try index.save(.testRow("/b.png"))
+        XCTAssertEqual(received.get, 1)
+        withExtendedLifetime(changes) {}
     }
 
     func testGenericMigrationsApplyOnlyNewSteps() throws {
