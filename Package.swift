@@ -5,7 +5,7 @@ import PackageDescription
 // SQLite comes from the system: `import SQLite3` on Apple platforms, the CSQLite module map on Linux.
 let package = Package(
     name: "Shotkeeper",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [
         .library(name: "ShotkeeperCore", targets: ["ShotkeeperCore"]),
         .executable(name: "shotkeeper-cli", targets: ["shotkeeper-cli"]),
