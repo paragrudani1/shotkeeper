@@ -253,3 +253,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **PR #15 merged into `t3/auto-update`** (`b59226b`, head `089ef62`; auto-update ticket 01). Next for
   auto-update: ticket 06 (signing scripts, ad-hoc in CI), then 07 (Sparkle + menu row); 08 waits for Parag's
   public key.
+- 2026-11-28: **PR #17 review (consent): fix first**, no blockers. The truth table is unchanged and the new
+  CODING_STANDARDS #2 is stricter than the old one. Should-fix: the public `UserUploadAuthorization.init` let app code
+  bypass the generation check. The chief of staff made it internal (`d6ceef4`; lint ok, 433 Linux tests pass). The
+  "issue only if allowed at the click" guard is assigned to ticket 08. Kept app identifiers that name the
+  Process Existing command (accepted deviation).
