@@ -408,8 +408,7 @@ the results go into a dated note in `docs/research/` and set the constants befor
 - Selecting or copying part of the text inside the panel, translating it, or showing a full-text viewer.
 - More than one source at a time, an "Other" chip, and filters by tag, folder or `date_mentioned`.
 - Changing what the model returns: `key_text` stays as it is.
-- Reading text from screen recordings or clipboard captures (wave 3). They reach the same pipeline, and get the same
-  `pending` handling, once those capture types land.
+- Reading text from screen recordings or clipboard captures: Parag dropped feature 7 on 2026-11-28 (`58e5542`).
 - A Settings switch to turn text reading off.
 
 ## Decisions Parag might disagree with

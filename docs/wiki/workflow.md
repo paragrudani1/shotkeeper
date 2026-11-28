@@ -104,3 +104,17 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   private key can never be replaced without a Developer ID, so losing it ends auto-update for installed copies.
   `CURRENT_PROJECT_VERSION` is fixed at "1" (as of `295df83`) and must increase with every release. Went back to
   Parag: the prompts versus a self-signed certificate versus Developer ID.
+- 2026-11-28: **Auto-update decisions (Parag):** use a **self-signed certificate, tested first**. Parag creates one
+  certificate in Keychain Access, CI signs with it, and a build N → N+1 update is tested on Parag's Mac, counting the
+  keychain and Desktop prompts. If prompts remain, the choice goes back to Parag. Update checks are **manual only**: a
+  "Check for Updates…" menu item, no automatic checks. Parag also has to create the Sparkle EdDSA key (see the
+  research note's checklist).
+- 2026-11-28: **Lesson (process):** `git add docs` in the chief-of-staff's commit `0a5505f` swept in the wave 1 spec
+  while its agent was still writing it. While agents write to the shared checkout, stage named paths only.
+- 2026-11-28: **Wave 1 spec** written: [../specs/search-filters-and-text-2026-11.md](../specs/search-filters-and-text-2026-11.md)
+  (first version in `0a5505f`). Test seams proposed: `ScreenshotIndex` public API, `SearchWindowState`, and a new
+  `TextRecognizer` port behind `TextRecognitionRunner`. Went to Parag for confirmation together with the spec's
+  judgement calls.
+- 2026-11-28: **Prefactor A** opened as PR #9 (`e09b0eb`): `ScreenshotIndex.columns`, frozen-schema migration test,
+  settings round-trip test, `changes()` feed, `IndexedScreenshot.testRow`. Details: [prefactor-index](prefactor-index.md)
+  (on that branch).

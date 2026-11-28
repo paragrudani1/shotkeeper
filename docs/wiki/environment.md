@@ -26,3 +26,7 @@
   `(set -a; . /root/.t3/projects/shotkeeper/.env.local; set +a; SHOTKEEPER_DOCKER_NETWORK=bridge scripts/test-linux.sh run shotkeeper-cli analyze <png> --raw <out.json>)`.
   `--raw` scrubs both values from the saved JSON. Sample screenshots were made in a throwaway `python:3.12-slim` + Pillow
   container, which was removed afterwards.
+- 2026-11-28: **`git push` via the clone's credential helper failed**: the helper reads
+  `/root/.t3/userdata/secrets/files/32306658849bfc2f7a6de271ace37e97`, which no longer exists. The prefactor A agent
+  pushed once with `gh-shotkeeper`'s token instead (AGENTS.md allows `gh-shotkeeper` for pushes). Reported to Parag;
+  the helper is not fixed as of this date.
