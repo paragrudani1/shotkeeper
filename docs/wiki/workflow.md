@@ -97,3 +97,10 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   "on by default" decision above. `../research/capture-types.md` stays as the record of why. With only #5 left
   needing the consent change, it moves into the #5 (fix or re-run a title) work instead of a separate prefactor PR.
   The remaining roadmap is features 1–6 and 8 (auto-update only).
+- 2026-11-28: **Auto-update research** ([../research/auto-update.md](../research/auto-update.md), from docs and
+  Sparkle 2.10.1 source; not run on a Mac). Sparkle works on an ad-hoc build, but each update is a new code identity.
+  That probably means up to 3 keychain dialogs per update (Cloudflare token, OpenRouter key, custom-endpoint key: the
+  file-based keychain) and the Desktop privacy prompt again. Quarantine only affects the first install. The EdDSA
+  private key can never be replaced without a Developer ID, so losing it ends auto-update for installed copies.
+  `CURRENT_PROJECT_VERSION` is fixed at "1" (as of `295df83`) and must increase with every release. Went back to
+  Parag: the prompts versus a self-signed certificate versus Developer ID.
