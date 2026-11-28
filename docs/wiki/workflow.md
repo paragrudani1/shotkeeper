@@ -1,0 +1,182 @@
+# Workflow
+
+How feature work and wiki upkeep are organised. Related: [index](index.md), [environment](environment.md).
+
+## Specs and tickets
+- 2026-11-28: Parag decided that specs stay as files in `docs/specs/` (requirements verbatim from Parag, never
+  edited), not GitHub issues. Reason given in the question: the repo is public since 2026-11-22, so issues would be
+  public. Prior art: `docs/specs/ui-polish-2026-11.md`.
+
+## Wiki lint
+- 2026-11-28: Parag approved a weekly wiki lint on **Gemini 4 Hydrogen** (T3 provider `antigravity`, model
+  `gemini-4-hydrogen`, `thought_level: high`). T3 scheduled task `scheduled-task:dfd40791-3543-42be-9121-768973dc7f2d`,
+  Mondays 09:00 (first run 2026-11-30 08:00 UTC). The task runs read-only and posts its report to a separate thread.
+  It checks index coverage, contradictions, claims that have been overtaken but not marked superseded, undated code
+  claims, answered open questions and broken links, all against `origin/main`. The scheduled run only hands the work
+  to the Hydrogen delegate. If that model is unavailable, the run reports it and does not fall back to another model.
+  The chief of staff turns the findings into wiki edits.
+
+## Agent concurrency
+- 2026-11-28: Parag set a cap of **at most 4 subagents at a time**. Five research agents had been started; the
+  distribution research (signing, notarization, Sparkle) was cancelled and is re-run when a slot frees.
+
+## Roadmap
+- 2026-11-28: Parag approved all eight candidate features ("let's do all of it"): search filters, copying a
+  screenshot's text, Shortcuts and Spotlight, sorting into subfolders, fixing or re-running a title, clean-up help
+  (duplicates, old screenshots), more capture types (screen recordings, clipboard), and signed, notarized builds with
+  auto-update. Plus a fix for the Clairic price before the promo ends on 2026-12-01. The research notes and the code
+  survey come first ([roadmap-survey](roadmap-survey.md) once it is written), then specs in `docs/specs/`.
+- 2026-11-28: disk had 14 GB free, below the 15 GB floor (see [environment](environment.md)). Most of the space is in
+  other projects' T3 worktrees, which are not this project's to delete. Docker builds are on hold until Parag frees space.
+  *Resolved the same day:* Parag chose to delete only stale worktrees. Of the 47 clean easysocial worktrees, 44 had a
+  commit on 2026-11-27 or 2026-11-28, so they were probably in use. Only the 3 clean ones older than 3 days were removed
+  (`git worktree remove`, which keeps their branches): easysocial-api `research/template-volume-by-source`,
+  `research/meta-template-ttl-api` and `t3/triage-issue-1994`. Afterwards there was 19 GB free; the free space moves
+  with other projects' activity, so check `df -h /` before starting parallel Docker builds.
+- 2026-11-28: **Parag's decisions on scope.**
+  - Feature 8 becomes **auto-update only**: there is no Apple Developer Program membership, so the build stays
+    ad-hoc signed and is not notarized. Research: `../research/auto-update.md` (once written).
+  - Clean-up: **move to Trash** after the user confirms a list they ticked, with Undo. This needs a written exception
+    to the AGENTS.md rule "never delete or overwrite a user file"; the clean-up spec adds it. Moving to the Trash
+    still never replaces a file.
+- 2026-11-28: **Clairic price after the promo:** no code change is needed. At `295df83`, `SetupCopy.swift` already
+  uses the standard $0.24 per M input tokens ($1.98 per 1,000 screenshots, shown as "About $2"). Only README and wiki
+  wording that calls the promo current needs updating after 2026-12-01. Source:
+  [../research/clairic/pricing-2026-11-28.md](../research/clairic/pricing-2026-11-28.md). The pricing page also lists
+  `@cf/cloudflare/clairic-flash`, which stays at $0.10 per M; it is untested.
+- 2026-11-28: **More decisions from Parag**, answering the survey's open questions
+  ([roadmap-survey](roadmap-survey.md)):
+  - Re-analyse (#5): an explicit "Analyse Again" on one screenshot is the user's request to upload it, **but only if
+    the current backend's destination is allowed at that moment**. Otherwise it asks first. CODING_STANDARDS #2 is
+    reworded once, in the consent prefactor PR (survey prefactor 6), before #5 and #7.
+  - Auto-update (#8): **Sparkle is allowed** as the one exception to "no third-party dependencies" (2026-11-21), with a
+    pinned version and the exception written into the docs.
+  - Clipboard capture (#7): **on by default** (Parag chose this over the recommended opt-in). Folder and filename
+    exclusions cannot match these screenshots. Open: whether the pasteboard privacy prompt on newer macOS makes on by
+    default unworkable; see `../research/capture-types.md` once it is written.
+  - Copy text (#2): **full on-device OCR with Apple Vision**. The text goes in the index, where it can be searched and
+    copied, and can be added to existing screenshots on request. The model's `key_text` stays as it is.
+  - Prefactor A (named index columns, settings round-trip test, index change feed, row builder) started 2026-11-28 on
+    branch `t3/prefactor-index`.
+- 2026-11-28: **Spotlight/Shortcuts/OCR research** ([../research/spotlight-shortcuts-ocr.md](../research/spotlight-shortcuts-ocr.md)).
+  - The note worries that the CI artifact may be fully unsigned (`CODE_SIGNING_ALLOWED=NO`). It is not: as of
+    `295df83`, `ci.yml:180-187` ad-hoc signs the Release app (`codesign --force --deep --sign -`) and verifies it.
+    Whether Core Spotlight accepts an *ad-hoc* signature is still undocumented and needs a real-Mac check before the
+    Spotlight spec is final.
+  - OCR timing follows from Parag's choice that the text is searchable: OCR runs when a screenshot is indexed. The
+    default minimum text height (1/32 of image height) and the speed per image need measuring on real screenshots.
+  - Left for the Spotlight spec (wave 3), to ask Parag then: keep macOS 14 as the minimum (macOS 15+ for
+    `IndexedEntity`/`FileEntity`)? A Shotkeeper section in Spotlight, given that plain Spotlight already finds the
+    text, tags and comment (possible duplicate results)? What should opening a Spotlight result do?
+
+## UI design step
+- 2026-11-28: Parag asked that new UI be designed with the **frontend-design** skill
+  (`/root/.claude/plugins/cache/anthropic-plugin-directory/frontend-design/1.1.1-0fbfda5a91f4/skills/frontend-design/SKILL.md`).
+  How it fits:
+  - Every spec with UI gets a design pass after the spec and before the tickets. A design agent reads the skill, the
+    spec, `../specs/ui-polish-2026-11.md`, [appkit-gotchas](appkit-gotchas.md) and the latest CI snapshot PNGs, and writes
+    `docs/design/<feature>.md`: layout as ASCII wireframes, hierarchy, every piece of copy, the states (empty, error,
+    loading, many results) and keyboard behaviour. It also produces an HTML mockup, which I render for Parag to approve.
+    Tickets cite the approved design note.
+  - The skill's rule "where the brief pins down a visual direction, follow it exactly" applies: the ui-polish spec
+    already fixes the identity (SF system font, semantic colours, indigo #5856D6/#5E5CE6 only for brand moments, light
+    and dark). So the design pass makes choices about layout, hierarchy, copy and interaction within native macOS
+    conventions. It does not invent a new palette or typeface. Its "spend boldness in one place" and writing rules
+    (sentence case, plain verbs, an action keeps its name through the flow, errors say how to fix them) apply in full.
+  - The HTML mockup is for review only. CI snapshot PNGs of the real SwiftUI views stay the acceptance check.
+- 2026-11-28: **Capture research** ([../research/capture-types.md](../research/capture-types.md)). No backend accepts
+  video, so recordings become still frames on the Mac (AVFoundation, app side, behind a seam). Four frames cost about
+  3.5× a screenshot on Clairic; one tiled image costs the same as a screenshot. Clipboard: Apple documents no way to
+  tell a screenshot from any other copied image, and from macOS 27.2 reading a copied image in the background
+  probably shows a privacy alert until the user chooses "Always Allow". That conflicts with Parag's "on by default"
+  decision (above), so it went back to Parag.
+  - Side finding: OpenRouter's endpoint list for Inkling 2 Mini changed after 2026-11-22: six endpoints and $0.06/M
+    input. `../research/openrouter.md`, the `provider.only` pin and the ZDR checks need re-checking.
+- 2026-11-28: **Feature 7 dropped.** After the capture research, Parag dropped **both clipboard capture and screen
+  recordings**: "Drop clipboard capture", "drop screen recording feature too". This supersedes the clipboard
+  "on by default" decision above. `../research/capture-types.md` stays as the record of why. With only #5 left
+  needing the consent change, it moves into the #5 (fix or re-run a title) work instead of a separate prefactor PR.
+  The remaining roadmap is features 1–6 and 8 (auto-update only).
+- 2026-11-28: **Auto-update research** ([../research/auto-update.md](../research/auto-update.md), from docs and
+  Sparkle 2.10.1 source; not run on a Mac). Sparkle works on an ad-hoc build, but each update is a new code identity.
+  That probably means up to 3 keychain dialogs per update (Cloudflare token, OpenRouter key, custom-endpoint key: the
+  file-based keychain) and the Desktop privacy prompt again. Quarantine only affects the first install. The EdDSA
+  private key can never be replaced without a Developer ID, so losing it ends auto-update for installed copies.
+  `CURRENT_PROJECT_VERSION` is fixed at "1" (as of `295df83`) and must increase with every release. Went back to
+  Parag: the prompts versus a self-signed certificate versus Developer ID.
+- 2026-11-28: **Auto-update decisions (Parag):** use a **self-signed certificate, tested first**. Parag creates one
+  certificate in Keychain Access, CI signs with it, and a build N → N+1 update is tested on Parag's Mac, counting the
+  keychain and Desktop prompts. If prompts remain, the choice goes back to Parag. Update checks are **manual only**: a
+  "Check for Updates…" menu item, no automatic checks. Parag also has to create the Sparkle EdDSA key (see the
+  research note's checklist).
+- 2026-11-28: **Lesson (process):** `git add docs` in the chief-of-staff's commit `0a5505f` swept in the wave 1 spec
+  while its agent was still writing it. While agents write to the shared checkout, stage named paths only.
+- 2026-11-28: **Wave 1 spec** written: [../specs/search-filters-and-text-2026-11.md](../specs/search-filters-and-text-2026-11.md)
+  (first version in `0a5505f`). Test seams proposed: `ScreenshotIndex` public API, `SearchWindowState`, and a new
+  `TextRecognizer` port behind `TextRecognitionRunner`. Went to Parag for confirmation together with the spec's
+  judgement calls.
+- 2026-11-28: **Prefactor A** opened as PR #9 (`e09b0eb`): `ScreenshotIndex.columns`, frozen-schema migration test,
+  settings round-trip test, `changes()` feed, `IndexedScreenshot.testRow`. Details: [prefactor-index](prefactor-index.md)
+  (on that branch).
+- 2026-11-28: **OpenRouter re-check** ("Re-check 2026-11-28" in [../research/openrouter.md](../research/openrouter.md)):
+  the consent text is still accurate and no privacy change is needed. The `provider.only` pin reaches
+  `primeintellect/fp4`, `io-net/nvfp4` and the priority tier `primeintellect/fast`, all ZDR. The `fast` tier bills
+  2.5× ($0.15/$0.60 per M), and `service_tier: "default"` would keep requests off it. Planned as a small PR together
+  with the out-of-date README/wiki prices (Prime Intellect standard is now $0.06/$0.24) and the Clairic promo wording.
+- 2026-11-28: Parag **confirmed the wave 1 test seams** and left all of the spec's judgement calls unticked, which
+  accepts them: OCR always on with no setting, and Pause does not stop it; ⇧⌘C copies the text; OCR text is in the
+  search match, weighted far below the title; Copy Text reads a never-read screenshot on demand; one source at a
+  time; type filter = the seven chips; a tag click clears all filters.
+- 2026-11-28: **Review of PR #9 (head `e09b0eb`): fix first.** The `macos-app` job failed: a test helper used
+  `AsyncSequence.Failure` (macOS 15+) while the package targets 14. The author had reported done on a Linux run
+  only, reasoning that no app code was touched. Also, two column PRs could still share migration 3 silently, because
+  identical added lines merge cleanly. A fix agent was started the same day.
+  - **Lesson → environment:** AGENTS.md gained a line saying Linux green does not prove a macOS build; core-only
+    changes need `macos-app` green too (commit on `t3/roadmap-2026-11`).
+- 2026-11-28: PR #9 fixes pushed (`bb786fe`; both CI jobs green, runs 46127211459/46127216459); a re-check was started.
+  **PR #10** (prefactor B, head `06d1aea`, both jobs green) opened: `CaptureSources`, `FileActions` (+ one file per
+  feature), `SearchResultActions`, `WorkspaceActions`, `SearchKeyMap` in core, `scripts/lint.sh` with per-line
+  `lint-allow` comments, and per-screen snapshot tests ([prefactor-app](prefactor-app.md) on that branch). Note:
+  `CaptureSources` was designed for feature 7, which Parag had dropped by then; the review was asked to judge it.
+  **PR #11** (OpenRouter `service_tier: "default"` + README refresh, head `7edf4b0`) opened. Reviews of #10 and #11 were started.
+- 2026-11-28: **Wave 1 design pass** done: [../design/search-filters-and-text.md](../design/search-filters-and-text.md) +
+  mockup. Date/Source pills at the end of the chip row (⌘D/⌘S open in-panel pickers); Copy Text as a Live-Text-style
+  badge on the preview image (the one bold choice). Departures from the polish spec: picker fields take focus while
+  open, Esc order picker → clear → close, "Clear filters" button. Sent to Parag for approval. Practical note: the
+  mockup's 880 px panel overflows the 728 px render frame; it was shown through a `body{zoom:.8}` copy in /tmp.
+- 2026-11-28: Parag **approved the wave 1 design** and left all four polish-spec departures unticked, which accepts
+  them: picker focus, Esc order, "Clear filters", menu bar items.
+- 2026-11-28: **PR #9 merged** (`b5c2984`, head `bb786fe`) after a re-check verdict of "merge". That re-check
+  simulated two column PRs merged with "keep both": the suite fails. Follow-up: `shippedColumns` is a dictionary
+  literal, so a duplicate key crashes the run (signal 4) instead of failing the test. It should become ordered pairs
+  with a uniqueness assert.
+- 2026-11-28: **PR #10 review: fix first**, no blockers. Behaviour is preserved. The lint misses Swift 6 access-level
+  imports (`public import AppKit`), `NSWorkspace.recycle` and POSIX deletes, and accepts a `lint-allow` marker with
+  no reason or one inside a string. The `CaptureSources` docs still describe dropped feature 7; the reviewer advised
+  keeping the type and rewording it. **PR #11 review: fix first**: README overstates shortcut-conflict detection;
+  the research it cites must reach main first (this docs branch); it lacked a wiki line (added to
+  [openrouter-backend](openrouter-backend.md)); `macos-app` failed once in the actool step, probably a flake.
+- 2026-11-28: **Wave 2 spec** ([../specs/subfolders-and-retitle-2026-11.md](../specs/subfolders-and-retitle-2026-11.md),
+  `d82de8d`). Parag **accepted all 15 recommended decisions**: sort modes Off / By type / By app or site / By type then
+  app or site; fixed type folder names; unknown app → "Other" (or the type folder in two-level mode); subfolders only
+  inside the organized folder; "Sort Existing" only touches files still where Shotkeeper put them, asks with counts
+  first and uploads nothing; ⌘E edits the name, ⇧⌘E runs Analyse Again; when the destination isn't allowed, the
+  existing Settings question (a lasting grant); a hand-typed name is kept (the model's title is offered as "Use This
+  Name"); restored-by-undo files keep their name; Analyse Again applies current rename/move/sort settings; undo
+  restores name and place only; exclusions and Pause refuse; Analyse Again jumps the queue; leaving the panel cancels
+  a name edit; a failed Analyse Again leaves the row as it was. Consent: `ProcessExistingAuthorization` becomes
+  `UserUploadAuthorization`, and CODING_STANDARDS #2 is reworded in the same PR.
+- 2026-11-28: **PR #10 re-check: merge once `macos-app` is green.** Every fix was proven with planted files and a
+  simulated "keep both" merge. The chief of staff fixed the remaining doc-comment nit directly (`903b3fc`).
+- 2026-11-28: **Auto-update spec** ([../specs/auto-update-2026-11.md](../specs/auto-update-2026-11.md), `b87c047`).
+  Parag's answers:
+  - The N → N+1 prompt test uses **the first two real releases** (0.2.0 → 0.2.1). Recommended was private test
+    releases; Parag chose real ones. They are public before the prompt count is known.
+  - **No required approval per release**: Parag ticked "You approve each release" to change it. The `release`
+    environment keeps its tag restriction (`v*`) and secrets, but has no required reviewer.
+  - Accepted: feed on GitHub Releases (`releases/latest/download/appcast.xml`, redirect checked in the first
+    release); `CHANGELOG.md` section required per release; tag `vMAJOR.MINOR.PATCH` with build number
+    MAJOR×10000+MINOR×100+PATCH (no betas).
+  - The spec's other calls stand (two jobs, build without secrets / sign without build tools; Sparkle pinned
+    2.10.1; `SUAllowsAutomaticUpdates = false`; no design pass, since the UI is one menu row).
+  - Before the app work: Parag must create the self-signed certificate and Sparkle's EdDSA keys (spec checklist P1/P2).
