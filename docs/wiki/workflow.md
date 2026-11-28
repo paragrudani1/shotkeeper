@@ -68,3 +68,19 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   - Left for the Spotlight spec (wave 3), to ask Parag then: keep macOS 14 as the minimum (macOS 15+ for
     `IndexedEntity`/`FileEntity`)? A Shotkeeper section in Spotlight, given that plain Spotlight already finds the
     text, tags and comment (possible duplicate results)? What should opening a Spotlight result do?
+
+## UI design step
+- 2026-11-28: Parag asked that new UI be designed with the **frontend-design** skill
+  (`/root/.claude/plugins/cache/anthropic-plugin-directory/frontend-design/1.1.1-0fbfda5a91f4/skills/frontend-design/SKILL.md`).
+  How it fits:
+  - Every spec with UI gets a design pass after the spec and before the tickets. A design agent reads the skill, the
+    spec, `../specs/ui-polish-2026-11.md`, [appkit-gotchas](appkit-gotchas.md) and the latest CI snapshot PNGs, and writes
+    `docs/design/<feature>.md`: layout as ASCII wireframes, hierarchy, every piece of copy, the states (empty, error,
+    loading, many results) and keyboard behaviour. It also produces an HTML mockup, which I render for Parag to approve.
+    Tickets cite the approved design note.
+  - The skill's rule "where the brief pins down a visual direction, follow it exactly" applies: the ui-polish spec
+    already fixes the identity (SF system font, semantic colours, indigo #5856D6/#5E5CE6 only for brand moments, light
+    and dark). So the design pass makes choices about layout, hierarchy, copy and interaction within native macOS
+    conventions. It does not invent a new palette or typeface. Its "spend boldness in one place" and writing rules
+    (sentence case, plain verbs, an action keeps its name through the flow, errors say how to fix them) apply in full.
+  - The HTML mockup is for review only. CI snapshot PNGs of the real SwiftUI views stay the acceptance check.
