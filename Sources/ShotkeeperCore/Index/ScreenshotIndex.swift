@@ -83,11 +83,14 @@ public struct ScreenshotQuery: Equatable, Sendable {
     public var contentType: ContentType?
     /// Only these paths (a batch from the toast); nil = the whole index.
     public var paths: [String]?
+    /// Only screenshots taken on these days (`COALESCE(captured_at, processed_at)`); nil = any time.
+    public var date: DateFilter?
 
-    public init(text: String = "", contentType: ContentType? = nil, paths: [String]? = nil) {
+    public init(text: String = "", contentType: ContentType? = nil, paths: [String]? = nil, date: DateFilter? = nil) {
         self.text = text
         self.contentType = contentType
         self.paths = paths
+        self.date = date
     }
 }
 
@@ -288,11 +291,15 @@ public final class ScreenshotIndex: @unchecked Sendable {
         }
     }
 
-    /// The search window's query: free text (same rules as `search(_:limit:)`), an optional content-type chip and an
-    /// optional set of paths (a batch from the toast's "View in Search"), all combined with AND. Only `done` rows
-    /// (analyzed screenshots) are considered, so `totalCount` matches the menu's "214 screenshots in the index".
-    /// Text → bm25 rank; no text → most recently processed first.
-    public func search(_ query: ScreenshotQuery, limit: Int = 50) throws -> ScreenshotSearchResult {
+    /// The search window's query: free text (same rules as `search(_:limit:)`), an optional content-type chip, an
+    /// optional set of paths (a batch from the toast's "View in Search") and an optional date filter, all combined
+    /// with AND. Only `done` rows (analyzed screenshots) are considered, so `totalCount` matches the menu's
+    /// "214 screenshots in the index". The date filter is resolved here, against `now` and `calendar`, so "today" is
+    /// today on every call (spec story 5).
+    /// Text → bm25 rank; no text → most recently processed first, or with a date filter newest taken first (the
+    /// date the rows show, so the list and its labels agree).
+    public func search(_ query: ScreenshotQuery, limit: Int = 50, now: Date = Date(),
+                       calendar: Calendar = .current) throws -> ScreenshotSearchResult {
         var conditions = ["s.status = 'done'"]
         var bindings: [SQLiteValue] = []
         let match = Self.ftsQuery(query.text)
@@ -311,13 +318,19 @@ public final class ScreenshotIndex: @unchecked Sendable {
             conditions.append("s.path IN (SELECT value FROM json_each(?))")
             bindings.append(.text(json))
         }
+        if let date = query.date {
+            // The date the result row and the preview's "Taken" show (`SearchResultItem.date`).
+            let days = date.interval(now: now, calendar: calendar)
+            conditions.append("\(Self.takenAt) >= ? AND \(Self.takenAt) < ?")
+            bindings += [.optional(days.lowerBound), .optional(days.upperBound)]
+        }
         let from = match == nil
             ? "FROM screenshots s"
             : "FROM screenshots_fts JOIN screenshots s ON s.id = screenshots_fts.rowid"
         let whereClause = "WHERE " + conditions.joined(separator: " AND ")
-        let order = match == nil
-            ? "ORDER BY COALESCE(s.processed_at, s.captured_at, 0) DESC, s.id DESC"
-            : "ORDER BY bm25(screenshots_fts, \(Self.bm25Weights)), s.id DESC"
+        let order = match != nil ? "ORDER BY bm25(screenshots_fts, \(Self.bm25Weights)), s.id DESC"
+            : query.date != nil ? "ORDER BY \(Self.takenAt) DESC, s.id DESC"
+            : "ORDER BY COALESCE(s.processed_at, s.captured_at, 0) DESC, s.id DESC"
         return try lock.withLock {
             var result = ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0)
             try db.query("SELECT \(Self.selectColumns("s")) \(from) \(whereClause) \(order) LIMIT ?",
@@ -327,6 +340,9 @@ public final class ScreenshotIndex: @unchecked Sendable {
             return result
         }
     }
+
+    /// When a screenshot was taken, else when it was processed: what the date filter and the result rows use.
+    private static let takenAt = "COALESCE(s.captured_at, s.processed_at)"
 
     public func stats() throws -> IndexStats {
         try lock.withLock {
