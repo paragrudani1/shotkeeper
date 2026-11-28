@@ -261,3 +261,11 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **PR #16 merged into `t3/wave1-search`** (`6841d92`, head `327a7a0`; wave 1 ticket 02). The chief of
   staff checked `search-date-custom-light.png` from run 46138812725: the picker sits below the row-2 divider, as the
   design says. Ticket 03 (source filter) and 06 (Copy Text) are next on the panel.
+- 2026-11-28: Parag **approved the Clean Up design** ([../design/clean-up.md](../design/clean-up.md)) and left all
+  departures unticked, which accepts them. One list with two sections; a "Keep" pill; a stack of the ticked
+  thumbnails in the footer (the one bold element); a sheet alert with Cancel as the default; ⌘⌫ ignored for 0.5 s and
+  on key repeat; rows that change are locked until Check Again; "Show Only Ticked" (⌘T); one "no record" note per
+  section. The window has no default button, on purpose.
+- 2026-11-28: **PR #18** (wave 1 04, reading text; provisional Apple-default Vision settings
+  `vision-r3-accurate-h1/32-lc1`) opened. It cannot merge until Parag's measurement. `t3/wave1-search` took main
+  (`c72dbdf`: research notes, docs, #11) so code can cite `docs/research/` on the integration branch.
