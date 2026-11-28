@@ -269,3 +269,10 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **PR #18** (wave 1 04, reading text; provisional Apple-default Vision settings
   `vision-r3-accurate-h1/32-lc1`) opened. It cannot merge until Parag's measurement. `t3/wave1-search` took main
   (`c72dbdf`: research notes, docs, #11) so code can cite `docs/research/` on the integration branch.
+- 2026-11-28: **Clean-up tickets** (10, `docs/specs/clean-up-2026-11/tickets/`). 01 migration (`last_opened_at`,
+  `trashed_from`, `trashed`); 02 `FileOrganizer.trash` with the AGENTS.md exception, CODING_STANDARDS #1 and the lint
+  `trash` rule in one PR; 03 undo batches; 04 record opens; 05 list duplicates (read-only); 06 never opened; 07 Move
+  to Trash; 08 list out of date; 09 failed Undo and Put Back; 10 integration and the real-Mac pass. The SMB
+  network-volume check must pass before clean-up ships.
+- 2026-11-28: **PR #20** (wave 2 02, `title_source`, migration 4) opened; review started. **PR #21** (CI triggers:
+  one run per PR push, docs-only changes skipped) opened; it carries out the macOS-bottleneck improvement noted above.
