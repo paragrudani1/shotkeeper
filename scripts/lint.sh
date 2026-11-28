@@ -14,6 +14,10 @@
 #   analyze       `.analyze(` (sending an image to a model) only in ScreenshotProcessor, after UploadConsent.decide
 #                 (CODING_STANDARDS #2). Other callers that never send a user file mark the line with
 #                 `// lint-allow: analyze (<why>)`.
+#   deep-sign     (shell scripts in scripts/ and workflows in .github/workflows/, not Swift) a line that runs codesign
+#                 with the deep option must be a `--verify` call: signing is inside-out, one item at a time
+#                 (scripts/sign-app.sh; Sparkle "Sandboxing" > "Code Signing", Apple "Creating distribution-signed
+#                 code for macOS"). Lines that are only a `#` comment are ignored; no allow marker.
 #
 # Allow markers must be the trailing comment of the line and give a non-empty reason in parentheses:
 #   `// lint-allow: <rule> (<why>)`. A marker inside a string literal or without a reason does not count.
@@ -21,7 +25,8 @@
 # Known blind spots (grep, not a parser): a line that starts with a comment is skipped entirely, so code after a
 # closing `*/` on a `/* ... */ code` line is not checked; method references without a call
 # (`let op = FileManager.default.trashItem`) are not caught; a call split so the name and `(` are on different
-# lines is not caught.
+# lines is not caught. deep-sign sees one line at a time: a codesign call continued with `\` onto the next line,
+# or codesign reached through a variable, is not caught.
 set -euo pipefail
 
 ROOT="${LINT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -81,11 +86,25 @@ EOF
   cat > "$tmp/App/Shotkeeper/NotFileOps.swift" <<'EOF'
 func fine() { items.remove(at: 0); _ = list.removeAll(); set.remove(x) }
 EOF
+  # deep-sign: built from pieces so this file itself holds no deep signing line.
+  deep="--""deep"
+  mkdir -p "$tmp/scripts" "$tmp/.github/workflows"
+  cat > "$tmp/scripts/sign.sh" <<EOF
+codesign --force $deep --sign - App.app
+  codesign -f -s "\$ID" $deep x
+codesign --verify $deep --strict --verbose=2 App.app
+# codesign --force $deep --sign - is only a comment here
+EOF
+  cat > "$tmp/.github/workflows/ci.yml" <<EOF
+      - run: codesign $deep -s - build/App.app
+      - run: codesign --verify $deep --strict build/App.app
+EOF
   output="$(LINT_ROOT="$tmp" "$0" 2>&1 || true)"
   # core: 7 imports (AppKit, Security, SwiftUI.Color, public AppKit, package SwiftUI, internal CoreGraphics,
   # `; import Security`) + trashItem + analyze = 9; app: removeItem + unlink + recycle + unlinkat + rmdir +
-  # 3 qualified remove + spaced removeItem + 4 bad file-op markers + 1 bad analyze marker = 14
-  expected=23
+  # 3 qualified remove + spaced removeItem + 4 bad file-op markers + 1 bad analyze marker = 14;
+  # deep-sign: 2 in scripts/sign.sh + 1 in the workflow = 3
+  expected=26
   found="$(printf '%s\n' "$output" | grep -c '^  ' || true)"
   if [ "$found" != "$expected" ]; then
     echo "self-test: expected $expected violations, got $found:"; printf '%s\n' "$output"; exit 1
@@ -152,6 +171,17 @@ report file-op "user files move only through FileOrganizer/UndoLog and are never
 hits="$(code_matches '\.analyze\(' Sources App/Shotkeeper \
   | grep -vE '^Sources/ShotkeeperCore/Pipeline/ScreenshotProcessor\.swift:' | grep -vE "$(allow_marker analyze)" || true)"
 report analyze "images go to a model only from ScreenshotProcessor, after UploadConsent.decide (CODING_STANDARDS #2)" "$hits"
+
+# deep-sign
+deep_files=()
+for f in scripts/*.sh .github/workflows/*.yml .github/workflows/*.yaml; do [ -f "$f" ] && deep_files+=("$f"); done
+deep_option='--''deep([^A-Za-z0-9_-]|$)' # split so this file holds no deep signing line
+hits=""
+if [ ${#deep_files[@]} -gt 0 ]; then
+  hits="$(grep -nE -- 'codesign' "${deep_files[@]}" /dev/null | grep -E -- "$deep_option" \
+    | grep -vE -- '--verify([^A-Za-z0-9_-]|$)' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+fi
+report deep-sign "never sign with the deep option; sign inside-out with scripts/sign-app.sh (verifying may use it)" "$hits"
 
 if [ "$failures" -gt 0 ]; then
   echo "lint: $failures violation(s). Rules and allow markers: scripts/lint.sh header."
