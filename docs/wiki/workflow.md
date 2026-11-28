@@ -58,3 +58,13 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
     copied, and can be added to existing screenshots on request. The model's `key_text` stays as it is.
   - Prefactor A (named index columns, settings round-trip test, index change feed, row builder) started 2026-11-28 on
     branch `t3/prefactor-index`.
+- 2026-11-28: **Spotlight/Shortcuts/OCR research** ([../research/spotlight-shortcuts-ocr.md](../research/spotlight-shortcuts-ocr.md)).
+  - The note worries that the CI artifact may be fully unsigned (`CODE_SIGNING_ALLOWED=NO`). It is not: as of
+    `295df83`, `ci.yml:180-187` ad-hoc signs the Release app (`codesign --force --deep --sign -`) and verifies it.
+    Whether Core Spotlight accepts an *ad-hoc* signature is still undocumented and needs a real-Mac check before the
+    Spotlight spec is final.
+  - OCR timing follows from Parag's choice that the text is searchable: OCR runs when a screenshot is indexed. The
+    default minimum text height (1/32 of image height) and the speed per image need measuring on real screenshots.
+  - Left for the Spotlight spec (wave 3), to ask Parag then: keep macOS 14 as the minimum (macOS 15+ for
+    `IndexedEntity`/`FileEntity`)? A Shotkeeper section in Spotlight, given that plain Spotlight already finds the
+    text, tags and comment (possible duplicate results)? What should opening a Spotlight result do?
