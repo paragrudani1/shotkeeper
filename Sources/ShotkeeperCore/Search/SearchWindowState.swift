@@ -136,6 +136,21 @@ public struct SearchMessage: Equatable, Sendable {
     public var message: String
 }
 
+/// A button in the no-match state (design §5).
+public enum SearchNoMatchButton: Hashable, Sendable {
+    /// Resets the chip and the date, keeps the words (`clearFilters()`).
+    case clearFilters
+    /// Resets the words and every filter (`clearSearch()`).
+    case clearSearch
+
+    public var title: String {
+        switch self {
+        case .clearFilters: return "Clear filters"
+        case .clearSearch: return "Clear search"
+        }
+    }
+}
+
 /// Everything the search window shows and how it reacts to input, without AppKit. The app renders it and runs the
 /// searches it asks for: when a mutating call returns true, run `query` with `resultLimit` and hand the outcome to
 /// `apply(_:for:)` or `fail(_:for:)`.
@@ -154,7 +169,9 @@ public struct SearchWindowState: Equatable, Sendable {
     }
 
     public enum EscapeOutcome: Equatable, Sendable {
-        /// The text and chip were cleared; run the search again.
+        /// An open picker was closed; nothing else changed.
+        case closedPicker
+        /// The text, chip and date were cleared; run the search again.
         case clearedSearch
         /// Nothing to clear: close the window.
         case close
@@ -172,9 +189,24 @@ public struct SearchWindowState: Equatable, Sendable {
     /// Copy Image could not read the image data.
     public static let copyFailedMessage = "The image could not be copied."
 
+    /// VoiceOver announcements when something is cleared (design §5). Choosing a value announces nothing: VoiceOver
+    /// reads the pill's new value.
+    public enum Announcement {
+        /// The Date pill's ✕, or ⌫ in the date picker.
+        public static let dateCleared = "Date cleared"
+        /// The "Clear filters" button.
+        public static let filtersCleared = "Filters cleared"
+        /// Esc that clears, or the "Clear search" button.
+        public static let searchCleared = "Search cleared"
+    }
+
     public private(set) var text = ""
     public private(set) var chip: SearchChip = .all
-    /// Set by the batch toast's "View in Search"; any edit of the text or chip leaves the batch.
+    /// The date filter (⌘D, the Date pill); nil = any time.
+    public private(set) var date: DateFilter?
+    /// The open date picker; nil while closed (`toggleDatePicker()`).
+    public internal(set) var datePicker: DatePickerState?
+    /// Set by the batch toast's "View in Search"; any edit of the text or a filter leaves the batch.
     public private(set) var batchPaths: [String]?
     public private(set) var items: [SearchResultItem] = []
     public private(set) var selectedIndex: Int?
@@ -184,22 +216,34 @@ public struct SearchWindowState: Equatable, Sendable {
     /// True after ↑/↓ or a click on a row, false after typing: Space then opens Quick Look instead of typing.
     public private(set) var isBrowsing = false
     private var lastApplied: ScreenshotQuery?
+    /// The clock and calendar for date wording (the Date pill, no-match sentences). The app sets `now` before each
+    /// search, the moment the index resolves "today" for that search.
+    public var now: Date
+    public var time: TimeLabel
 
-    public init() {}
+    public init(now: Date = Date(), time: TimeLabel = TimeLabel()) {
+        self.now = now
+        self.time = time
+    }
 
     // MARK: Derived
 
     public var query: ScreenshotQuery {
-        ScreenshotQuery(text: text, contentType: chip.contentType, paths: batchPaths)
+        ScreenshotQuery(text: text, contentType: chip.contentType, paths: batchPaths, date: date)
     }
 
     public var resultLimit: Int {
         min(Self.maxResults, max(Self.pageSize, batchPaths?.count ?? 0))
     }
 
-    /// Text or a chip narrows the results (the footer then says "6 of 214 screenshots").
+    /// Text, a chip or a date narrows the results (the footer then says "6 of 214 screenshots").
     public var hasFilter: Bool {
-        ScreenshotIndex.ftsQuery(text) != nil || chip != .all
+        ScreenshotIndex.ftsQuery(text) != nil || hasNarrowingFilter
+    }
+
+    /// A chip or a date filter is set (what "Clear filters" resets).
+    private var hasNarrowingFilter: Bool {
+        chip != .all || date != nil
     }
 
     /// The clear (x) button in the field.
@@ -232,11 +276,57 @@ public struct SearchWindowState: Equatable, Sendable {
         selected != nil && (text.isEmpty || isBrowsing)
     }
 
+    // MARK: Date pill (design §5, "Filter pills")
+
+    /// "Date" when off, else the value: "Last 7 days", "Oct 3 – 17".
+    public var datePillTitle: String {
+        date?.label(now: now, time: time) ?? "Date"
+    }
+
+    /// VoiceOver value: "any time", "last 7 days". The label is "Date".
+    public var datePillValue: String {
+        date?.spokenValue(now: now, time: time) ?? "any time"
+    }
+
+    public var datePillHelp: String {
+        date == nil ? "Filter by the day it was taken (⌘D)" : "Change the date (⌘D)"
+    }
+
+    // MARK: No match (design §5, "No-match states")
+
+    /// The buttons under the no-match message, in order. A date filter offers "Clear filters" (it keeps the words),
+    /// plus "Clear search" when words are typed. Without a date the approved states keep their one button.
+    public var noMatchButtons: [SearchNoMatchButton] {
+        guard date != nil else { return [.clearSearch] }
+        return hasText ? [.clearFilters, .clearSearch] : [.clearFilters]
+    }
+
+    /// Tooltip of a no-match button.
+    public func help(for button: SearchNoMatchButton) -> String {
+        switch button {
+        case .clearFilters: return hasText ? "Show every screenshot that matches the words" : "Show every screenshot"
+        case .clearSearch: return "Clear the words and every filter"
+        }
+    }
+
+    private var hasText: Bool { ScreenshotIndex.ftsQuery(text) != nil }
+
+    /// "Receipt screenshots taken in the last 30 days": the screenshots the filters allow. One pattern for every
+    /// combination: an optional type, then "taken …" (03 adds "from <source>" between them).
+    private var filterPhrase: String {
+        let kind = chip == .all ? "screenshots" : "\(chip.title) screenshots"
+        return [kind, date?.takenPhrase(now: now, time: time)].compactMap { $0 }.joined(separator: " ")
+    }
+
     private var noMatchMessage: SearchMessage {
         let hint = "Try other words from the title, from the text in the image, or a tag."
-        if ScreenshotIndex.ftsQuery(text) != nil {
+        if hasText {
             let terms = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return SearchMessage(title: "No screenshots match “\(terms)”", message: hint)
+            let message = date == nil ? hint : "Your filters limit this search to \(filterPhrase)."
+            return SearchMessage(title: "No screenshots match “\(terms)”", message: message)
+        }
+        if date != nil {
+            return SearchMessage(title: "No \(filterPhrase)", message: "Clear filters to see every screenshot.")
         }
         if chip != .all {
             return SearchMessage(title: "No \(chip.title) screenshots", message: "Choose All to see every screenshot.")
@@ -267,54 +357,78 @@ public struct SearchWindowState: Equatable, Sendable {
         return true
     }
 
-    /// A tag chip in the preview: the tag goes into the field and the type chip goes back to All.
+    /// The date filter (picker, the pill's ✕, ⌫ in the picker); nil clears it. Any change leaves a batch view.
     @discardableResult
-    public mutating func clickTag(_ tag: String) -> Bool {
-        let plain = tag.hasPrefix("#") ? String(tag.dropFirst()) : tag
-        let changed = plain != text || chip != .all || batchPaths != nil
-        text = plain
-        chip = .all
+    public mutating func setDateFilter(_ newDate: DateFilter?) -> Bool {
+        guard newDate != date || batchPaths != nil else { return false }
+        date = newDate
         batchPaths = nil
-        isBrowsing = false
-        return changed
-    }
-
-    /// The "Clear search" button: clears the text, the chip and a batch.
-    @discardableResult
-    public mutating func clearSearch() -> Bool {
-        let changed = !text.isEmpty || chip != .all || batchPaths != nil
-        text = ""
-        chip = .all
-        batchPaths = nil
-        isBrowsing = false
-        return changed
-    }
-
-    /// Esc clears the search first (text and chip), and closes only when there is nothing to clear.
-    public mutating func escape() -> EscapeOutcome {
-        guard !text.isEmpty || chip != .all else { return .close }
-        text = ""
-        chip = .all
-        batchPaths = nil
-        isBrowsing = false
-        return .clearedSearch
-    }
-
-    /// "View in Search" on a batch toast: show those files (newest first), with an empty text and the All chip.
-    @discardableResult
-    public mutating func showBatch(_ paths: [String]) -> Bool {
-        text = ""
-        chip = .all
-        batchPaths = paths
-        isBrowsing = false
         return true
     }
 
-    /// The window was hidden: a batch view does not survive it (the next open shows recent screenshots).
-    /// Returns true when the query changed.
+    /// The "Clear filters" button: resets the chip and the date, keeps the typed words, leaves a batch view.
+    @discardableResult
+    public mutating func clearFilters() -> Bool {
+        let changed = hasNarrowingFilter || batchPaths != nil
+        chip = .all
+        date = nil
+        batchPaths = nil
+        return changed
+    }
+
+    /// A tag chip in the preview: the tag goes into the field, and the chip and the date are reset, so the tag is
+    /// searched across all screenshots (story 20).
+    @discardableResult
+    public mutating func clickTag(_ tag: String) -> Bool {
+        let plain = tag.hasPrefix("#") ? String(tag.dropFirst()) : tag
+        let changed = plain != text || hasNarrowingFilter || batchPaths != nil
+        resetSearch()
+        text = plain
+        return changed
+    }
+
+    /// The "Clear search" button: clears the text, every filter and a batch.
+    @discardableResult
+    public mutating func clearSearch() -> Bool {
+        let changed = !text.isEmpty || hasNarrowingFilter || batchPaths != nil
+        resetSearch()
+        return changed
+    }
+
+    /// Esc closes an open picker first, then clears the search (text, chip and date), and closes the window only
+    /// when there is nothing to clear (design §6).
+    public mutating func escape() -> EscapeOutcome {
+        if datePicker != nil {
+            datePicker = nil
+            return .closedPicker
+        }
+        guard !text.isEmpty || hasNarrowingFilter else { return .close }
+        resetSearch()
+        return .clearedSearch
+    }
+
+    private mutating func resetSearch() {
+        text = ""
+        chip = .all
+        date = nil
+        batchPaths = nil
+        isBrowsing = false
+    }
+
+    /// "View in Search" on a batch toast: show those files (newest first), with an empty text and no filter.
+    @discardableResult
+    public mutating func showBatch(_ paths: [String]) -> Bool {
+        resetSearch()
+        batchPaths = paths
+        return true
+    }
+
+    /// The window was hidden: a batch view does not survive it (the next open shows recent screenshots). The text
+    /// and the filters stay (story 18). Returns true when the query changed.
     @discardableResult
     public mutating func windowHidden() -> Bool {
         isBrowsing = false
+        datePicker = nil
         guard batchPaths != nil else { return false }
         batchPaths = nil
         return true

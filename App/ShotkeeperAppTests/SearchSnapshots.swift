@@ -18,6 +18,9 @@ enum SearchSnapshots {
             UISnapshot("search-no-match") { Fixtures.search(text: "zebra crossing", rows: []) },
             UISnapshot("search-empty-index") { Fixtures.search(rows: [], total: 0) },
             UISnapshot("search-index-error") { Fixtures.searchIndexError() },
+            UISnapshot("search-date-custom") { Fixtures.search(rows: Array(Fixtures.searchRows.prefix(5)), date: .novemberWeek, datePicker: true) },
+            UISnapshot("search-no-match-filters-only") { Fixtures.search(chip: .receipt, rows: [], date: .yesterday) },
+            UISnapshot("search-no-match-filters") { Fixtures.search(text: "stripe", chip: .receipt, rows: [], date: .last30Days) },
         ]
     }
 }
@@ -65,11 +68,14 @@ extension Fixtures {
     }
 
     static func search(text: String = "", chip: SearchChip = .all, batch: Bool = false, rows: [IndexedScreenshot]? = nil,
-                       total: Int = 214, selected: Int = 0, copied: Bool = false, problem: String? = nil) -> some View {
-        var state = SearchWindowState()
+                       total: Int = 214, selected: Int = 0, copied: Bool = false, problem: String? = nil,
+                       date: DateFilter? = nil, datePicker: Bool = false) -> some View {
+        var state = SearchWindowState(now: now, time: time)
         if batch { state.showBatch(Array(searchRows.prefix(4)).map(\.path)) }
         state.setText(text)
         if chip != .all { state.selectChip(chip) }
+        if let date { state.setDateFilter(date) }  // setting nil would leave the batch view
+        if datePicker { state.toggleDatePicker() }
         var shown = rows ?? (batch ? Array(searchRows.prefix(4)) : searchRows)
         if rows == nil, let type = chip.contentType { shown = shown.filter { $0.contentType == type } }
         state.apply(ScreenshotSearchResult(rows: shown, matchCount: shown.count, totalCount: total), for: state.query)
@@ -85,9 +91,15 @@ extension Fixtures {
     }
 
     private static func searchView(_ state: SearchWindowState, copied: Bool, problem: String?) -> some View {
-        let model = SearchViewModel(state: state, now: { now }, time: time) { _, _ in throw CancellationError() }
+        let model = SearchViewModel(state: state, now: { now }, time: time) { _, _, _, _ in throw CancellationError() }
         if copied { model.showCopied() }
         if let problem { model.showProblem(problem) }
         return SearchView(model: model, actions: .none, opaqueBackground: true)
     }
+}
+
+extension DateFilter {
+    /// Nov 14 – 21, 2026: the fixture week ending on `Fixtures.now`, which holds the first five search rows.
+    static let novemberWeek = DateFilter.days(from: CalendarDay(year: 2026, month: 11, day: 14),
+                                              through: CalendarDay(year: 2026, month: 11, day: 21))
 }
