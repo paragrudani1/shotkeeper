@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mechanical rules from AGENTS.md and CODING_STANDARDS.md. CI runs this in the linux-core job; run it locally too:
+# Mechanical rules from AGENTS.md and CODING_STANDARDS.md. CI runs this in linux-core and macos-app; run it locally too:
 #   scripts/lint.sh               # check the repository; prints file:line per violation, exits 1 if any
 #   scripts/lint.sh --self-test   # check that each rule catches a planted violation
 #
@@ -35,6 +35,9 @@
 # or codesign reached through a variable, is not caught; a line that holds both a deep signing call and a `--verify`
 # call (`codesign --deep -s - A && codesign --verify A`) passes; scripts outside scripts/*.sh (subfolders, no `.sh`)
 # are not checked; an `OTHER_CODE_SIGN_FLAGS` value on a later line (a YAML list under the key) is not caught.
+#
+# Needs GNU or BSD grep: busybox grep has no `--include`, so the self-test fails there (checked 2026-11-28 with
+# BusyBox v1.38). CI runs it on Ubuntu (bash 5, GNU) and in macos-app under /bin/bash 3.2 with BSD grep/sed.
 set -euo pipefail
 
 ROOT="${LINT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
