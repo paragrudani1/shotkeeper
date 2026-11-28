@@ -36,6 +36,15 @@ final class ScreenshotIndexTests: XCTestCase {
         XCTAssertEqual(try index.entries(withStatus: .failed).map(\.id), [id])
     }
 
+    func testLookupByIDFollowsTheRowAcrossAMove() throws {
+        let index = try ScreenshotIndex.inMemory()
+        let id = try index.save(.testRow("/a.png") { $0.title = "Alpha" })
+        try index.updatePath(from: "/a.png", to: "/folder/b.png")
+        XCTAssertEqual(try index.lookup(id: id)?.path, "/folder/b.png")
+        XCTAssertEqual(try index.lookup(id: id)?.title, "Alpha")
+        XCTAssertNil(try index.lookup(id: id + 1))
+    }
+
     func testUpdatePath() throws {
         let index = try ScreenshotIndex.inMemory()
         try index.save(entry("/a.png", title: "Alpha"))

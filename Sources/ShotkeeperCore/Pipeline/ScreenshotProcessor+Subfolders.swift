@@ -26,6 +26,9 @@ extension ScreenshotProcessor {
         var undoRecordID: UUID?
         /// The subfolder the file was moved into; empty when none was used.
         var sortedInto: [String] = []
+        /// Every rename/move failed: the file kept its name and place (note "kept name: rename failed (…)").
+        /// Analyze Again reports that as `TitleKeptReason.renameFailed`.
+        var failed = false
     }
 
     /// The pipeline's move rule: nil when moving is off or no organized folder is set (the file stays in its folder);
@@ -70,6 +73,7 @@ extension ScreenshotProcessor {
             (finalURL, placement.sortedInto) = try organize(url, stem: stem, into: folders, notes: &notes)
         } catch {
             notes.append("kept name: rename failed (\(error))")
+            placement.failed = true
             return placement
         }
         guard finalURL != url else {

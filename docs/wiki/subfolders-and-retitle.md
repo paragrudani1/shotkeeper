@@ -75,6 +75,68 @@ not created twice.
   closures now take a `QueueJob` (`ScreenshotProcessorTests.testAUserUploadRequestLastsTheWholeJobAcrossRetries`,
   `CoordinatorPartsTests.testStartWatchingRequeuesPendingRowsOnce`). The ticket has the handler dispatch on the kind,
   so that is the handler's call shape changing, not a weaker test.
+- 2026-11-28 (`7569cb2`, ticket 06): **Analyze Again in core: `ScreenshotProcessor.reanalyze(rowID:request:)`** in
+  `ScreenshotProcessor+Reanalyze.swift`. `request:` is a `UserUploadAuthorization?` like `process(_:userRequest:)`: the
+  `.reanalyze` job (PR #25) passes `UserUploadRequests.authorization(for:)` of its request at each attempt. It keys on
+  the row id (new `ScreenshotIndex.lookup(id:)`) and reads the path at each call. Order as the spec: missing →
+  exclude/Pause → fingerprint + prepare → `decide` on the snapshot read once → `analyze` → apply → name → place →
+  undo → Finder → `updatePath` → `save`. Nothing is written before the analysis succeeds, so a throw leaves the row
+  byte-for-byte as it was. `restored_by_undo` is checked **before** `title_source`, as the PR #20 note asks.
+- 2026-11-28 (`7569cb2`): **one send path.** `.analyze(` stays only in `ScreenshotProcessor.swift`: `process` and
+  `reanalyze` both call `consentedJob(capturedAt:userRequest:)` (THE `decide` call on the snapshot it reads) and
+  `send(_:context:with:)`, which takes only the `ConsentedJob` that `consentedJob` makes (fileprivate init). No
+  `lint-allow`. They also share `destinationFolder(for:settings:)` (today `moveEnabled ? organizedFolder : nil`;
+  replaced by 04's `destination(for:settings:)` when 04 merged, below): **ticket 04 puts the subfolder rule there**, and whichever of 04/06 merges second adds the "Analyze Again moves to
+  the new type's folder" test (04 had not merged, so `testAnalyzeAgainAppliesTodaysMoveSettings` covers the
+  organized folder only).
+- 2026-11-28 (`7569cb2`): **choices the spec left open.**
+  - Consent capture time for a re-analysis is the earliest of the file's dates, the time in its **original** name and
+    the stored `capturedAt`: a renamed file has lost the time in its name, and earlier fails closed
+    (`testARenamedFileIsJudgedByItsOriginalNameToo`).
+  - A kept name (restored, your name, low confidence, unusable, rename failed) keeps the row's old title **and its
+    confidence**, so the title still matches the file name. With renaming off, the row gets the model's title, as
+    `process` stores it.
+  - Restored rows are **index only**: no rename, no move, and no Finder tags/comment either (the user's "leave this
+    file alone"). `suggestedTitle` is only returned for `.yourName`, and only when it gives a usable file name
+    (otherwise "Use This Name" would throw `unusableName`).
+  - The note keeps earlier parts, adds this run's notes (e.g. "kept name: rename failed (…)"), and ends with one
+    "analyzed again" (not repeated on later runs). `text_status = pending` on a hash change leaves the old
+    `recognizedText` until the runner reads it again, as the spec says.
+  - "Same title as before" (design §5.3) is `.updated(renamed: false, titleKept: nil)`.
+- 2026-11-28 (`7569cb2`): **deviation: `TitleKeptReason.renameFailed`**, a sixth reason beside the ticket's five.
+  Without it a `FileOrganizer` failure (EIO, too many collisions) would look like "the title is the same as before".
+  Ticket 08 needs wording for it (design §5.3 has none; "The name stays: it could not be renamed" fits the
+  "Moved, name kept by rule" pattern). Test: `testARenameFailureKeepsTheNameAndTheOldTitle`.
+
+- 2026-11-28 (`d885459`, review of PR #27): **reanalyze reads the row again after `analyze`.** The row read before
+  `send` was saved with its old path, and `save` upserts by path, so a hand rename or an Undo during the analysis left
+  two rows: one at the file, one at a path with no file. Now `reanalyze` looks the row up by id after `send` and runs
+  the name rules on that fresh row: a name typed meanwhile is kept and the model's title is the suggestion
+  (`.yourName`); a row restored meanwhile is index only (`.restoredByUndo`). If the row is gone, or its file is gone
+  (moved outside Shotkeeper, the index could not follow), it returns `.refused(.missing)` and writes nothing.
+  Remaining window: the steps after the second read are synchronous (no `await`), so a rename can only race them from
+  another thread. Tests: `testARenameByHandDuringTheAnalysisKeepsTheTypedName`,
+  `testAnUndoDuringTheAnalysisLeavesTheFileWhereUndoPutIt`, `testAFileMovedAwayDuringTheAnalysisIsNotWritten` (all
+  three failed before the fix; saving the old row again fails the first two).
+- 2026-11-28 (`d885459`): **status: refused in core.** New `ReanalysisRefusal.notDone(ProcessingStatus)`, checked
+  before the send and again after it. Search shows only `done` rows, so the panel should never offer a pending or
+  failed row. But a `process` run can take the path while the job waits or runs (it saves `pending`, then `done` or
+  `failed`), and writing over its row would race it. Ticket 08 needs wording for `.notDone` (nothing was written).
+  It may also disable Analyze Again for such a row, but core is what enforces the rule. Test:
+  `testARowThatIsNotDoneIsRefusedBeforeOrAfterTheAnalysis`.
+- 2026-11-28 (`d885459`): **a content change keeps `title_source = user` in reanalyze**, unlike `process`, which
+  resets it to `model` (spec "Index schema"). `process` sees a path whose bytes were replaced, which is usually a new
+  screenshot. Analyze Again is the user asking about *this* file, whose name they typed, and spec step 7 keeps a
+  user's name and offers the model's title as `suggestedTitle`. Resetting it would rename their file unasked; "Use
+  This Name" is one click away. Test: `testAUserNamedFileWhoseContentChangedKeepsTheUsersName`.
+- 2026-11-28 (`d885459`): **notes are replaced, not piled up.** `ScreenshotProcessor.note(after:adding:touchedFile:)`
+  drops earlier "kept name: …" parts (from `process` and from `place`'s "kept name: rename failed (…)") and, when this
+  run wrote Finder metadata again (not restored rows), "Finder metadata not written (…)". Then come this run's notes
+  and one "analyzed again". "renamed by the user" and "undo record not written" still hold, so they stay. The kept
+  reason itself is in the outcome (`titleKept`); reanalyze does not write `process`'s "kept name: title confidence…"
+  notes. Test: `testStaleNotePartsAreReplacedNotAppended`.
+- 2026-11-28 (`d885459`): `UserUploadAuthorization.target` is `public let`, so an issued authorization cannot be
+  pointed at another target. Nothing assigned it.
 - 2026-11-28 (ticket 04): **sort new screenshots into subfolders.** `SubfolderRule` (`Files/SubfolderRule.swift`) is
   `AppSettings.subfolderRule` (default `.off`, unknown stored value → `.off`). The pure router
   `relativeFolder(contentType:source:existing:)` returns the folders below the organized folder; `existing(parent)`
@@ -118,11 +180,15 @@ not created twice.
   "Moved: <name>.", the label and name as one element. Copy uses the repo's straight apostrophe ("Can't find").
   `GeneralSettingsTab(organizedFolderStatus:)` is injectable because the snapshots' organized folder does not exist on
   the CI Mac. The "Sort Existing Screenshots…" row is left for ticket 05.
-- 2026-11-28 (ticket 04): **interplay with 06.** PR #27 (06, open) splits `process` into
-  `destinationFolder(for:settings:)` and `place(_:stem:into:notes:)` in `ScreenshotProcessor.swift`. Whichever merges
-  second keeps 04's `destination(for:settings:)` and `place(_:stem:into:notes:)` (`+Subfolders`) as the one helper and
-  adds the seam 1 test "Analyze Again moves to the new type's folder". Both make the stored properties internal (one
-  comment line differs).
+- 2026-11-28 (review of PR #30, merge with 06): **one placement path for `process` and Analyze Again.** Merging
+  `t3/wave2` (PR #27) brought 06's `destinationFolder(for:settings:)` (organized folder only) and a second
+  `place(_:stem:into: URL?, notes:)` returning `(url, undoRecordID, failed)`. Both are gone: `reanalyze` calls 04's
+  `destination(for:settings:)` and `place(_:stem:into: Destination?, notes:)`, and `Placement.failed` carries the
+  "every rename/move failed" signal that `reanalyze` turns into `TitleKeptReason.renameFailed`. So Analyze Again sorts
+  into today's type or source folder (spec decision 10), and a file already in the right subfolder stays put with no
+  undo record (`organize` returns the same URL). The stored properties' comment names both extensions. Tests:
+  `ReanalyzeTests.testAnalyzeAgainMovesToTheNewTypesFolder` (the seam 1 test 06 left open),
+  `testAReceiptAlreadyInReceiptsStaysThereWithoutAnUndoRecord`; the 06 tests (ghost rows, rename failure) pass as is.
 
 ## Verification
 - 2026-11-28 (`1312ab1`, ticket 02): `SCRATCH=.build/linux-w2-02 scripts/test-linux.sh` green, 433 tests;
@@ -134,6 +200,20 @@ not created twice.
   (`testAnAttemptThatFailsAfterAPauseShowsAsHeldNotRunning`). `waitUntil` in the queue tests now fails loudly on
   timeout. For ticket 08: always pass `atFront: true` (a job already waiting at the back is not promoted), and look
   up `.process` jobs by standardized URL.
+- 2026-11-28 (`7569cb2`, ticket 06): `SCRATCH=.build/linux-w2-06 scripts/test-linux.sh` green, 457 tests;
+  `scripts/lint.sh` ok, no new `lint-allow`. Each key reanalyze test was checked to fail with its rule broken
+  (order of restored/your name, `text_status` reset, original-name consent time, a write before `analyze`).
+- 2026-11-28 (ticket 06, after merging `t3/wave2` with PR #25 and wave 1 03): green again, 548 tests; lint ok. PR #25's
+  `QueueJob.reanalyze(rowID: Int64)` matches `reanalyze(rowID:request:)` as is. New
+  `ReanalyzeTests.testAReanalyzeJobKeepsItsRequestAcrossRetries` runs a `.reanalyze` job with a user request through
+  the real queue (429, then success). This is the handler shape ticket 08 puts in `AppCoordinator`.
+- 2026-11-28 (`d885459`, review of PR #27): `SCRATCH=.build/linux-w2-06f scripts/test-linux.sh` green, 555 tests;
+  `scripts/lint.sh` ok. Mutation checks, each restored afterwards: removing the second date read after prepare fails
+  `testAFileReplacedWhilePreparingIsJudgedByItsOwnDates` (reanalyze's copy of the `process` test). Saving the
+  pre-send row fails the rename and Undo tests. Dropping the post-send status check fails
+  `testARowThatIsNotDoneIsRefusedBeforeOrAfterTheAnalysis`. Appending notes again fails
+  `testStaleNotePartsAreReplacedNotAppended`. Resetting `title_source` on a hash change fails
+  `testAUserNamedFileWhoseContentChangedKeepsTheUsersName`. The `macos-app` CI job is still pending.
 - 2026-11-28 (ticket 04): `SCRATCH=.build/linux-w2-04 scripts/test-linux.sh` green after merging `t3/wave2` (ticket 03),
   562 tests; `scripts/lint.sh` ok (no new `lint-allow`). Real-Mac checks (Finder shows the folders; "slack" reused for
   "Slack" on APFS; Undo from the toast and the menu leaves the empty folder; Settings does not jump) are open for ticket
