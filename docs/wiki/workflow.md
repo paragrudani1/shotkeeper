@@ -188,3 +188,13 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **Bottleneck: macOS CI.** PRs #10, #12 and #13 all waited on `macos-app` at once, and every docs push
   to #12 restarted its run. Rule from now on: batch docs pushes to an open docs PR. Candidate improvement (after
   #10 merges, since it edits `ci.yml`): skip `macos-app` for docs-only changes (`paths-ignore` for `docs/**`, `*.md`).
+- 2026-11-28: **PR #10 merged** (`000310c`, head `903b3fc`); `t3/wave1-search` fast-forwarded to it.
+- 2026-11-28: **PR #13 review: merge into integration once `macos-app` is green**, no blockers or should-fix. Proven
+  with a throwaway test: a 3,000-row v2 database with an injected failure after the FTS drop rolls back to v2 intact,
+  and the retry migrates cleanly (FTS `integrity-check` passes after insert, update, delete and upsert). Query plans
+  use the new indexes. Nits left for the wave 1 final review: migration 3 builds SQL from the live `ftsColumns` list
+  (freeze a copy); a partial index on the pending sort; a note in ticket 08 that a failed re-read drops old text.
+- 2026-11-28: **Auto-update tickets** (13, `docs/specs/auto-update-2026-11/tickets/`): 01 release plan + CLI +
+  CHANGELOG and 06 signing scripts have no blockers; 02–05 are Parag's P1–P4; 07 Sparkle + menu row; 08 public key;
+  09 release workflow; 10 README; 11 publish 0.2.0; 12 the P5 test with 0.2.1; 13 record the results. Ticket 05 asks
+  Parag for a tag ruleset, which replaces the dropped reviewer as the guard against a wrong tag.
