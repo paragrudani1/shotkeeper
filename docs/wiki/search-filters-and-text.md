@@ -160,6 +160,12 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   own letter. The top-level-domain step skips a first label containing `:` or `/`, so "https://github.com" stays a URL
   instead of becoming `https://github`. Tests: `testFullWidthLettersAreFolded`, `testRunsOfWhitespaceCollapseToOneSpace`,
   `testUnicodeEdgeCasesKeepTheirMeaning`, `testAURLKeepsItsDomain`. `reloadSources()` cancels the previous load first.
+- 2026-11-28 (wave 2 PR #30 review fix): `SourceKey.fold` also drops invisible format characters (general category
+  Cf: U+200E, U+200F, U+061C, U+FEFF, U+00AD, U+2060, …), so "\u{200E}Slack" = "Slack" and the list shows no look-alike
+  duplicates. U+200C/U+200D are kept so emoji ZWJ sequences survive. They are removed per word after the whitespace
+  split, so a lone mark between spaces leaves one space. Tests: `testInvisibleFormatCharactersAreFoldedAway`,
+  `testEmojiZWJSequencesAreKept`. U+200C has no test: swift-foundation's diacritic folding on Linux already drops it
+  before this step (macOS not checked). The display name is still the most common trimmed raw spelling, marks included.
 - 2026-11-28: the display name is the most common **trimmed** spelling ("Slack " and "Slack" count as one spelling).
   "Alphabetical" for the tie-break and the list's name order ignores case and diacritics, then falls back to Unicode
   order, so it never depends on the locale.
@@ -206,3 +212,95 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   selected trait on the current one; "Source cleared" is announced.
 - The disabled pill shows its tooltip on hover; a long name truncates at 180 pt and shows the full name on hover.
 - The list scrolls with ↑/↓ past the eighth row.
+
+## Ticket 06: Copy Text (⇧⌘C and the badge) (2026-11-28, branch `t3/w1-06-copy-text`)
+
+### What was built
+- Core: `SearchResultItem` carries `recognizedText`, `textStatus` and `textError`. `SearchWindowState.copyTextOutcome`
+  (`CopyTextOutcome`: copy / read first / no text / failed with "file missing" told apart / wait / not available),
+  `copyTextBadge` (`CopyTextBadge`: Copy Text, Reading text…, Read text again, with their tooltips and VoiceOver
+  wording), and the late-copy rule (`requestCopyText(pasteboardChangeCount:)`, `waitingTextCopy`,
+  `resolveWaitingTextCopy(pasteboardChangeCount:)`). Tests: `SearchCopyTextTests` (rows saved to an in-memory index,
+  late copies through the index's conditional write).
+- `SearchKeyMap`: ⇧⌘C → `.copyText`, a new trigger `.shiftCommand(Character)`, matched like ⌘ keys on the lowercased
+  ASCII character, else key code 8. Shift is accepted for C only. ⌘C is unchanged.
+- App: `WorkspaceActions.copyText` (one `NSPasteboardItem`, `.string` only), `SearchResultActions.copyText()` and
+  `resolveWaitingTextCopy()`, the pills `.textCopied` ("✓ Text copied", the "✓ Copied" 1.4 s) and `.noText` (3 s,
+  `text.viewfinder`), `CopyTextBadgeView.swift` (the badge), and four snapshots: `search-text-copied`,
+  `search-text-reading`, `search-text-failed` and `search-text-none`.
+
+### Decisions and departures
+- 2026-11-28: **departure from the spec: Copy Text is a badge on the preview image, not a button in the button row**
+  (design §2 "The one bold choice", approved by Parag). It sits bottom-right of the 220 pt image frame, inset 10 pt:
+  a 26 pt capsule, black 72%, with the "⇧⌘C" keycap. The button row keeps its four buttons and the footer keeps its
+  five hints. The keycap is shown only on "Copy Text": on a failed row ⇧⌘C shows the error rather than re-reading,
+  and the mockup shows no keycap on the reading or failed badges.
+- 2026-11-28: **interim until ticket 07: a never-read row (`textStatus` NULL) shows no badge, and ⇧⌘C beeps.** Core
+  already returns `.readFirst(id:)` for it. Ticket 07 performs the read and changes `copyTextBadge` for NULL from
+  hidden to `.copyText`, as design §5 asks (one line and its test in `SearchCopyTextTests`).
+- 2026-11-28: **until ticket 07, a click on "Read text again" does what ⇧⌘C does**: it shows "The text could not be
+  read." (or the missing-file sentence). The re-read itself is 07's.
+- 2026-11-28: "file missing" is recognised by `textError == "file missing"` (`SearchWindowState.fileMissingReason`).
+  That is the spec's reason and the value of PR #18's `TextRecognitionRunner.fileMissingReason`. Core can't reference
+  that constant until #18 merges; whoever merges second should make one of them use the other.
+- 2026-11-28: **the open panel refreshes on index changes.** While the panel is shown, `SearchPanelController`
+  subscribes to `ScreenshotIndex.changes()` (cancelled on hide). An `.updated` change of a listed row runs the search
+  again, so the badge goes from "Reading text…" to "Copy Text" without reopening. That refresh is also the moment a
+  waiting copy is resolved (`SearchViewModel.resultsApplied`). The spec assumed "an open search refreshes" on the
+  `.updated` change, but no ticket built it.
+- 2026-11-28: **late copy.** ⇧⌘C on a `pending` row records the pasteboard's `changeCount`. The copy is performed
+  after a refresh only if the panel still shows that row and the `changeCount` is unchanged. Moving the selection, a
+  query that selects another row, or hiding the panel drops the request at once, and coming back to the row does not
+  revive it. Pressing ⇧⌘C again replaces the request (only the last one counts).
+- 2026-11-28: a waiting copy whose row ends `none` or `failed` shows that state's pill: the user asked to copy, so
+  they learn why nothing was copied. A dropped copy shows nothing (design §5).
+- 2026-11-28: a `done` row without text (empty or whitespace only) counts as "no text". The runner never stores one,
+  but the badge and the pasteboard should not offer an empty copy.
+- 2026-11-28: **badge clicks are handled by `FileDragView`.** The drag view lies over the whole image and is told the
+  badge's frame (anchor preference `CopyTextBadgeFrameKey`). A press on the badge never starts a drag and is never
+  reported as an image click. The next press on the image counts as a single click, so badge then image is not a
+  double-click that opens the file. A release on the badge runs Copy Text. The SwiftUI `Button` underneath gives
+  VoiceOver and Full Keyboard Access the same action. This works whichever of the two SwiftUI's hit testing picks
+  (`testAClickOnTheBadgeIsNotAClickOnTheImage`).
+- 2026-11-28 (corrected in the review fixes): ⇧⌘C is ignored while either picker, date or source, is open (design §6;
+  `testTheDatePickerIgnoresShiftCommandC`, `testTheSourcePickerIgnoresShiftCommandC`). In Quick Look's panel it does
+  what it does in the search panel.
+- 2026-11-28 (review fix): **index-change refreshes are coalesced.** A listed row's `.updated` change calls
+  `SearchViewModel.refreshAfterIndexChange()`, which searches after the typing debounce (150 ms), so a burst of changes
+  (ticket 07 marking many rows) runs one search. When a search is already scheduled and has not started (typing, a
+  chip, an earlier change), the change schedules nothing: that search reads the index afterwards anyway, and the typing
+  debounce is neither cancelled nor pushed back. A change that arrives while a search runs schedules the next one; the
+  running one's answer is dropped (a detached SQLite query can't be stopped, but at most one runs per 150 ms). Tests:
+  `testABurstOfChangesRunsOneSearch`, `testAChangeWhileTypingKeepsTheTypedSearch`,
+  `testAfterHideAnIndexWriteRunsNoSearch`, `testAWriteToAnUnlistedRowRunsNoSearch`.
+- 2026-11-28 (review fix): **the list follows the selected row when a refresh moves it.** It scrolls on a change of the
+  selected id or of its index, so a re-sort that keeps the row (followed by path) but moves it keeps it in view.
+- 2026-11-28 (review fix): **the badge's tooltip is set by `FileDragView`.** The drag view lies over the badge, so the
+  badge's SwiftUI `.help` never gets the hover. `FileDragView` registers a tooltip rectangle (`addToolTip`) over the
+  badge's frame, re-measured when its height changes, and answers with the badge's help (`badgeHelp`). Test:
+  `testTheDragViewShowsTheBadgeTooltip`. Real-Mac check below.
+- 2026-11-28 (review fix): **the "Read text again" symbol is white**, like the problem pill's
+  `exclamationmark.triangle.fill`: design §3 gives the overlay pill and badge black 72% with white content. The
+  literal orange (#FFB340) is gone.
+- 2026-11-28 (review fix, PR #23 snapshot check): **filter pills hug their content.** `.frame(maxWidth: 180)` made
+  the Source pill 180 pt whenever row 2 offered more. `FilterPill` now sits in `HuggingMaxWidth`, a one-child
+  `Layout` that proposes the child's ideal width capped at `maxWidth` (and at the parent's offer), so a short name fits
+  its text and a long one truncates at the tail at 180 pt (design §4). The Date pill (no `maxWidth`) hugs as before.
+  Test: `testTheSourcePillHugsItsValueUpTo180Points` (measured in a 600 pt offer). New snapshot `search-source-long`.
+- 2026-11-28: **privacy.** The recognized text reaches only the pasteboard, through the user's ⇧⌘C or badge click.
+  `SearchResultActions` logs nothing. The announcement is "Text copied" and the pills never contain the text.
+
+### Real-Mac checks (CI can't see these)
+- ⇧⌘C on QWERTY, Dvorak and Russian layouts copies the text; ⌘C still copies the image, or the field's selected text.
+- The copy pastes as plain text only into TextEdit (rich text mode) and Slack, with line breaks kept.
+- Late copy: press ⇧⌘C on a row still being read, then copy something else in another app before it finishes. The
+  clipboard keeps the other copy, and the badge turns to "Copy Text".
+- The badge over a light and over a dark screenshot. A click on it doesn't start a drag; a click on it and then on the
+  image doesn't open the file.
+- The badge's tooltip shows on hover ("Copy the text in this screenshot (⇧⌘C)", the reading and failed wording), and
+  hovering the image outside the badge shows none.
+- With the panel open while ticket 07 reads many rows, the list doesn't flicker or jump, and typing stays responsive.
+- VoiceOver reads the badge as "Copy Text" / "Reading text" / "Read text again" (with its hint), and announces "Text
+  copied", "No text found in this screenshot." and "The text could not be read.".
+- Quick Look (Space): does macOS Live Text let the user select part of the text? Record the result here (spec
+  "Which key copies the text"; design §9).

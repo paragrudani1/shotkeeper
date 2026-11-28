@@ -208,6 +208,14 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `deleteClearsSource`) with `toggleSourcePicker()` (false = disabled, beep), `setSourceNarrowText`,
     `moveSourceHighlight`, `chooseSource`, `chooseHighlightedSource`, `clearSourceFromPicker`; `isPickerOpen`,
     `closePickers()`. `SearchKeyMap`: ⌘S (`.sourceFilter`).
+  - Copy Text (wave 1 ticket 06, 2026-11-28): `SearchResultItem` carries `recognizedText`, `textStatus`, `textError`.
+    `SearchWindowState.copyTextOutcome: CopyTextOutcome` (`.copy(text)` for `done`, `.readFirst(id:)` for never read,
+    `.noText`, `.failed(fileMissing:)`, `.wait(id:)` for `pending`, `.notAvailable`; `message` gives the pill text);
+    `copyTextBadge: CopyTextBadge?` (`.copyText`, `.reading`, `.readAgain` with `title`, `shortcut`, `help`,
+    `accessibilityLabel`/`Hint`; nil hides it); late-copy rule: `requestCopyText(pasteboardChangeCount:)` remembers a
+    `.wait` as `waitingTextCopy` (only the last counts; moving the selection, a new query or hiding drops it), then after
+    each refresh `resolveWaitingTextCopy(pasteboardChangeCount:) -> LateTextCopy?` (`.waiting`, `.dropped`,
+    `.perform(outcome)`). `SearchKeyMap`: ⇧⌘C (`.copyText`, trigger `.shiftCommand("c")`).
   - `SearchKeyMap` (added 2026-11-28): the search window's key table. `bindings` (`SearchKeyBinding`: a `SearchKeyTrigger`
     `.plain(keyCode:)` or `.command(Character)` → a `SearchKey`: up, down, open, close, space, copyImage, reveal,
     quickLook, `chip(_)`), `plain(keyCode:modifiers:)` (no ⌘⌥⌃⇧), `command(keyCode:modifiers:characters:)` (typed ASCII

@@ -19,7 +19,9 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
   index migration (3) for the text columns, FTS rebuild and filter indexes, a deviation from the spec's two;
   `ftsColumns` and weights; the conditional text write. Ticket 02's date filter: core `DateFilter`, picker state in
   core, Esc order, newest-taken order with a date, no-match buttons, the `screenshots_taken_at` query plan, one clock
-  and calendar for index and panel, real-Mac checks (2026-11-28).
+  and calendar for index and panel, real-Mac checks (2026-11-28). Ticket 06's Copy Text: the badge on the image
+  (a departure from a button), ⇧⌘C, the late-copy rule, the panel refreshing on index changes, the interim
+  never-read behaviour until 07 (2026-11-28).
 - [subfolders-and-retitle](subfolders-and-retitle.md): wave 2 (subfolders, Edit name, Analyze Again): consent
   generalized as `UserUploadAuthorization`, CODING_STANDARDS #2 reworded; index migration 4 `title_source` with the
   note backfill, `rename(_:to:asSuggestedTitle:)` (2026-11-28).
