@@ -179,13 +179,17 @@ jobs:
             [ -f "$dir/Assets.car" ] && xcrun assetutil --info "$dir/Assets.car" \
               | grep -E '"(AssetType|Name|RenditionName|Appearance|PixelWidth|Idiom)"' | sort | uniq -c | head -60 || true
           }
+          # Absolute paths, as Xcode passes them: actool can hand the call to an ibtoold server that xcodebuild
+          # left running with cwd App/, which resolves relative paths against its own cwd (App/App/...). See
+          # docs/wiki/macos-ci.md, 2026-11-28.
+          ICON="$GITHUB_WORKSPACE/App/Shotkeeper/AppIcon.icon"
+          XCASSETS="$GITHUB_WORKSPACE/App/Shotkeeper/Assets.xcassets"
           # Informational: the .icon alone, and with the (undocumented) flag that stops actool from generating
           # the pre-26 fallback images from the .icon.
-          compile icon-only App/Shotkeeper/AppIcon.icon || true
-          compile no-fallback-generation App/Shotkeeper/AppIcon.icon App/Shotkeeper/Assets.xcassets \
-            --enable-icon-stack-fallback-generation=disabled || true
+          compile icon-only "$ICON" || true
+          compile no-fallback-generation "$ICON" "$XCASSETS" --enable-icon-stack-fallback-generation=disabled || true
           # The app target's inputs, as Xcode passes them. This one must be clean.
-          compile built App/Shotkeeper/AppIcon.icon App/Shotkeeper/Assets.xcassets
+          compile built "$ICON" "$XCASSETS"
           if grep -qiE 'warning|error' "$RUNNER_TEMP/actool-built/actool.log"; then
             echo "::error::actool reported warnings or errors for AppIcon.icon + Assets.xcassets"
             exit 1
