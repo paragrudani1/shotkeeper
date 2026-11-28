@@ -366,3 +366,16 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   refactors `process` into a shared `consentedJob` → `send` path, and the consent time is now the earliest of the file
   dates, the original-name time and `capturedAt`. This touches the privacy choke point, so a full review started
   before the merge. New `TitleKeptReason.renameFailed` needs wording in ticket 08.
+- 2026-11-28: PR #28 `macos-app` failed on the new pill width test: a long name measured 170 pt, not 180. A truncated
+  `Text` lays out to whole glyphs plus "…", and the design rule is "at most 180 pt". The chief of staff relaxed the test
+  to ≤ 180 and > 160 (`6575064`).
+- 2026-11-28: **PR #29** (auto-update 07: Sparkle 2.10.1 and the "Check for Updates…" row) is green but **parked**.
+  Sparkle refuses to start without `SUPublicEDKey` when `SUVerifyUpdateBeforeExtraction` is on
+  (`SPUUpdater.m:340-352` at 2.10.1) and shows an alert at every launch. It merges together with ticket 08 once
+  Parag's public key exists. Confirmed keys: `SUEnableAutomaticChecks` false (no prompt), `SUAllowsAutomaticUpdates`
+  false (hides the auto-install checkbox). The CI flake "Download the app artifact back" got "Artifact not found"
+  10 ms after upload once; it is recorded, not worked around.
+- 2026-11-28: **PR #27 review (reanalyze): fix first**, no blockers. The privacy choke point holds and `process`
+  behaviour is unchanged (`ConsentedJob` has a `fileprivate` init). Should-fix: a hand rename or Undo during the
+  analysis leaves a ghost row, because `save` upserts by path (proven with a probe); and the post-prepare consent date
+  re-read is untested. Also make `UserUploadAuthorization.target` a `let`. A fix agent started.
