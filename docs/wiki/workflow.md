@@ -156,3 +156,15 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   keeping the type and rewording it. **PR #11 review: fix first**: README overstates shortcut-conflict detection;
   the research it cites must reach main first (this docs branch); it lacked a wiki line (added to
   [openrouter-backend](openrouter-backend.md)); `macos-app` failed once in the actool step, probably a flake.
+- 2026-11-28: **Wave 2 spec** ([../specs/subfolders-and-retitle-2026-11.md](../specs/subfolders-and-retitle-2026-11.md),
+  `d82de8d`). Parag **accepted all 15 recommended decisions**: sort modes Off / By type / By app or site / By type then
+  app or site; fixed type folder names; unknown app → "Other" (or the type folder in two-level mode); subfolders only
+  inside the organized folder; "Sort Existing" only touches files still where Shotkeeper put them, asks with counts
+  first and uploads nothing; ⌘E edits the name, ⇧⌘E runs Analyse Again; when the destination isn't allowed, the
+  existing Settings question (a lasting grant); a hand-typed name is kept (the model's title is offered as "Use This
+  Name"); restored-by-undo files keep their name; Analyse Again applies current rename/move/sort settings; undo
+  restores name and place only; exclusions and Pause refuse; Analyse Again jumps the queue; leaving the panel cancels
+  a name edit; a failed Analyse Again leaves the row as it was. Consent: `ProcessExistingAuthorization` becomes
+  `UserUploadAuthorization`, and CODING_STANDARDS #2 is reworded in the same PR.
+- 2026-11-28: **PR #10 re-check: merge once `macos-app` is green.** Every fix was proven with planted files and a
+  simulated "keep both" merge. The chief of staff fixed the remaining doc-comment nit directly (`903b3fc`).
