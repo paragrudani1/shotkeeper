@@ -1,4 +1,5 @@
-// shotkeeper-cli: run one live analyzer call from a terminal (Linux build box or a Mac).
+// shotkeeper-cli: run one live analyzer call from a terminal (Linux build box or a Mac), and release tooling
+// (`release-plan`, run by the release workflow).
 //
 // The image is sent exactly as read from disk: there is no downscaling here (ImageIO is macOS-only and the core stays
 // Foundation-only). The macOS app downscales to `maxImageLongSide` first, so CLI costs are an upper bound; Clairic
@@ -17,6 +18,12 @@ Usage:
   shotkeeper-cli icon-composer --list|<file>
                                         List the files of the macOS 26 AppIcon.icon package, or print one of them
                                         (core IconComposerBundle). scripts/make-icons.sh writes App/Shotkeeper/AppIcon.icon.
+  shotkeeper-cli release-plan --tag vX.Y.Z --previous vX.Y.Z|none --changelog CHANGELOG.md --out <dir>
+                                        Check a release tag against the previous release and CHANGELOG.md (core
+                                        ReleasePlan). Writes notes.md and Shotkeeper-X.Y.Z.html into <dir> and prints
+                                        key=value lines for $GITHUB_OUTPUT. On a bad tag, a version not above the
+                                        previous release or a missing/empty changelog section, prints one line to
+                                        stderr and exits 1.
 
 Backends:
   clairic (default)  Cloudflare Workers AI @cf/cloudflare/clairic.
@@ -206,6 +213,47 @@ func printChatUsage(_ bodies: [Data]) {
     }
     print("Usage total: prompt_tokens=\(prompt) completion_tokens=\(completion) reasoning_tokens=\(reasoning)"
           + (hasCost ? String(format: " cost=$%.8f", cost) : " cost=n/a"))
+}
+
+/// `release-plan`: no network, no credentials. Writes only into `--out`, and never replaces a file there.
+func releasePlan(_ args: [String]) -> Never {
+    var values: [String: String] = [:]
+    var i = 0
+    while i < args.count {
+        let flag = args[i]
+        guard ["--tag", "--previous", "--changelog", "--out"].contains(flag) else { fail("Unknown option \(flag)\n\n\(usage)", code: 2) }
+        guard i + 1 < args.count, values[flag] == nil else { fail("\(flag) needs one value\n\n\(usage)", code: 2) }
+        values[flag] = args[i + 1]
+        i += 2
+    }
+    guard let tag = values["--tag"], let previous = values["--previous"], let changelogPath = values["--changelog"],
+          let out = values["--out"] else {
+        fail("release-plan needs --tag, --previous, --changelog and --out\n\n\(usage)", code: 2)
+    }
+    guard let data = FileManager.default.contents(atPath: changelogPath), let changelog = String(data: data, encoding: .utf8) else {
+        fail("Cannot read the changelog at \(changelogPath)")
+    }
+    let plan: ReleasePlan
+    do {
+        plan = try ReleasePlan.make(tag: tag, previousTag: previous == "none" ? nil : previous, changelog: changelog)
+    } catch {
+        fail(error.message)
+    }
+    let folder = URL(fileURLWithPath: out, isDirectory: true)
+    do {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (name, contents) in plan.outputFiles.sorted(by: { $0.key < $1.key }) {
+            try Data(contents.utf8).write(to: folder.appendingPathComponent(name), options: .withoutOverwriting)
+        }
+    } catch {
+        fail("Cannot write the release notes into \(out): \(error.localizedDescription)")
+    }
+    print(plan.githubOutput(directory: out), terminator: "")
+    exit(0)
+}
+
+if CommandLine.arguments.dropFirst().first == "release-plan" {
+    releasePlan(Array(CommandLine.arguments.dropFirst(2)))
 }
 
 // `icon-svg`: no network, no credentials; stdout only (the script decides where the file goes).

@@ -155,6 +155,10 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `HotKeyRules.problem(with:)` → `HotKeyProblem?` (needs ⌘ or ⌃, plain ⌘ is left to apps, known macOS shortcuts);
     `registrationProblem(status:)` for a `RegisterEventHotKey` failure; `HotKeyProblem.message(for:)`.
   - `CredentialStore`, `CredentialKey.cloudflareAPIToken`, `.customEndpointAPIKey`, `InMemoryCredentialStore`.
+- **Release/** (release job only, not the app; called by `shotkeeper-cli release-plan`)
+  - `ReleasePlan.make(tag:previousTag:changelog:)` → `marketingVersion`, `buildNumber` (MAJOR×10000+MINOR×100+PATCH),
+    `tag`, `archiveName` (`Shotkeeper-<version>.zip`), `title`, `notesMarkdown`, `notesHTML`; `outputFiles` (`notes.md`,
+    `Shotkeeper-<version>.html`), `githubOutput(directory:)`. Throws `ReleasePlanError`, whose `message` is the log line.
 - **Runtime/**
   - `ModelCatalog.all` (4-bit, 3-bit, 2-bit `ModelVariant`s with pinned revisions, sizes, min RAM, warnings).
   - `BackendRecommender.recommend(physicalMemoryBytes:)` (use `ProcessInfo.processInfo.physicalMemory`) →

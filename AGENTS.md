@@ -6,7 +6,7 @@ macOS menu-bar app that renames, tags and indexes new screenshots using a model 
 - `Sources/ShotkeeperCore` — Foundation-only core. MUST build on Linux: no AppKit, SwiftUI, ImageIO, Security, CoreServices imports.
   Use `#if canImport(FoundationNetworking)` for URLSession on Linux; SQLite via `#if canImport(SQLite3) import SQLite3 #else import CSQLite`.
 - `Tests/ShotkeeperCoreTests` — XCTest; fixtures in `Tests/ShotkeeperCoreTests/Fixtures` (load with `Bundle.module`).
-- `Sources/shotkeeper-cli` — CLI for live analyzer calls.
+- `Sources/shotkeeper-cli` — CLI for live analyzer calls and release tooling.
 - `App/` — macOS app (XcodeGen `App/project.yml`), built only in CI.
 - `design/icon/` — app icon and menu bar glyph SVGs, generated from core `IconGeometry` with the AppIcon asset catalog and `App/Shotkeeper/AppIcon.icon` by `scripts/make-icons.sh` (never hand-edit).
 - `docs/wiki/` — dated decision log (read `docs/wiki/index.md` first). `docs/research/` — API facts with sources.
