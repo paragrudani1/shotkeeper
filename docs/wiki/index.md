@@ -18,6 +18,9 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 ## Standards
 - [../../CODING_STANDARDS.md](../../CODING_STANDARDS.md): review checklist (2026-11-21).
 
+## Process
+- [workflow](workflow.md): specs stay in `docs/specs/` (2026-11-28); weekly wiki lint on Gemini 4 Hydrogen (2026-11-28).
+
 ## Environment
 - [environment](environment.md): Linux build box, Docker Swift image, disk limits, credentials (2026-11-21).
 - [macos-ci](macos-ci.md): GitHub Actions for the macOS app: Xcode selection, signing, artifact, UI snapshot PNGs, gotchas (2026-11-21).

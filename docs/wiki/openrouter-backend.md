@@ -179,3 +179,5 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
 - 2026-11-22: does `effort: "none"` really skip reasoning at both providers, and do they return logprobs? (Live test.)
 - 2026-11-22: hold the queue on "out of credits" instead of failing each file? Answered by the review: it holds (S4).
 - 2026-11-22: make OpenRouter the default or recommended backend? (Parag, after the live test.)
+- 2026-11-28: Parag chose to leave the live test for now (no key added). The two open questions above and the price
+  line stay open.
