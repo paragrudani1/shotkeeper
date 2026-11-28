@@ -167,9 +167,11 @@ public final class ScreenshotProcessor: Sendable {
             return .skipped(.alreadyIndexed)
         }
 
+        // A fresh row: also for a path whose content changed, whose title (even one the user typed) described the
+        // old content, so it starts again as the model's (spec "Index schema").
         var entry = IndexedScreenshot(id: rowAtPath?.id ?? 0, path: url.path,
                                       originalFilename: rowAtPath?.originalFilename ?? url.lastPathComponent,
-                                      contentHash: hash, capturedAt: capturedAt, status: .pending)
+                                      contentHash: hash, capturedAt: capturedAt, status: .pending, titleSource: .model)
         func recordFailure(_ error: Error) {
             entry.status = .failed
             entry.lastError = String(describing: error)
@@ -287,16 +289,29 @@ public final class ScreenshotProcessor: Sendable {
     /// Renames `url` to a name the user typed, with the pipeline's rules: `FilenameSanitizer`, the casing from
     /// Settings, the original extension, no-replace "Name 2.png" collisions via `FileOrganizer`. No date is added:
     /// the user's text is kept with or without one (the field starts with the current name, date included). Writes
-    /// an undo record and moves the index row (whose title becomes the new name, so search finds it).
-    public func rename(_ url: URL, to proposedName: String) throws -> ManualRenameResult {
+    /// an undo record and moves the index row, whose title becomes the new name (so search finds it) and is marked
+    /// `.user`, so Analyze Again keeps it. The toast's and the search window's Edit name both come here.
+    /// - Parameter asSuggestedTitle: true only for "Use This Name", which renames to the title the model suggested
+    ///   when Analyze Again kept the user's name. The row's title becomes `proposedName` as given (the model's
+    ///   title, as `process` stores it) and is marked `.model`: the one path that clears the user's mark (spec
+    ///   "Use suggested name"). The suggestion is not stored, so the caller says so. When the file already has that
+    ///   name, nothing moves but the mark is still cleared.
+    public func rename(_ url: URL, to proposedName: String, asSuggestedTitle: Bool = false) throws -> ManualRenameResult {
         let url = url.standardizedFileURL
         let style = snapshot().settings.filenameStyle
         guard let stem = style.stem(from: proposedName, capturedAt: nil, timeZone: timeZone) else {
             throw ManualRenameError.unusableName(proposedName)
         }
-        if stem == url.deletingPathExtension().lastPathComponent { return ManualRenameResult(finalURL: url, undoRecordID: nil) }
+        let unchanged = ManualRenameResult(finalURL: url, undoRecordID: nil)
+        if stem == url.deletingPathExtension().lastPathComponent {
+            if asSuggestedTitle { recordTitle(proposedName, source: .model, note: nil, at: url.path) }
+            return unchanged
+        }
         let finalURL = try organizer.organize(url, stem: stem, into: nil)
-        guard finalURL != url else { return ManualRenameResult(finalURL: url, undoRecordID: nil) }
+        guard finalURL != url else {
+            if asSuggestedTitle { recordTitle(proposedName, source: .model, note: nil, at: url.path) }
+            return unchanged
+        }
         let record: UndoRecord
         do {
             record = try undoLog.append(from: url, to: finalURL, at: now())
@@ -306,12 +321,21 @@ public final class ScreenshotProcessor: Sendable {
             throw error
         }
         _ = try? index.updatePath(from: url.path, to: finalURL.path)
-        if var row = try? index.lookup(byPath: finalURL.path) {
-            row.title = stem
-            row.note = [row.note, "renamed by the user"].compactMap { $0 }.joined(separator: "; ")
-            _ = try? index.save(row)
+        if asSuggestedTitle {
+            recordTitle(proposedName, source: .model, note: nil, at: finalURL.path)
+        } else {
+            recordTitle(stem, source: .user, note: "renamed by the user", at: finalURL.path)
         }
         return ManualRenameResult(finalURL: finalURL, undoRecordID: record.id)
+    }
+
+    /// Sets the title of the row at `path` and whose it is, appending `note` (index only; no row, nothing to do).
+    private func recordTitle(_ title: String, source: TitleSource, note: String?, at path: String) {
+        guard var row = try? index.lookup(byPath: path) else { return }
+        row.title = title
+        row.titleSource = source
+        if let note { row.note = [row.note, note].compactMap { $0 }.joined(separator: "; ") }
+        _ = try? index.save(row)
     }
 
     /// After an undo: the index follows the file back, and the file is flagged so neither the watcher (which sees

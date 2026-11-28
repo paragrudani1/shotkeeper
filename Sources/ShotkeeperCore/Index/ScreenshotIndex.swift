@@ -17,6 +17,14 @@ public enum TextStatus: String, Codable, Sendable, CaseIterable {
     case failed
 }
 
+/// Whose title a row has (`IndexedScreenshot.titleSource`, migration 4; nil reads as `.model`).
+public enum TitleSource: String, Codable, Sendable, CaseIterable {
+    /// The model's title, or the original name when it was kept.
+    case model
+    /// A name the user typed (the toast's or the search window's Edit name). Analyze Again keeps it.
+    case user
+}
+
 /// One row of the index.
 public struct IndexedScreenshot: Equatable, Sendable {
     /// Assigned by the index; 0 for a row not yet saved.
@@ -54,6 +62,9 @@ public struct IndexedScreenshot: Equatable, Sendable {
     public var textRecognizedBy: String?
     /// Short reason for `textStatus == .failed` (e.g. "file missing"). Never contains recognized text.
     public var textError: String?
+    /// Whether `title` is the model's or one the user typed (migration 4). nil = from before migration 4 and not
+    /// renamed by the user then: read it as `.model`.
+    public var titleSource: TitleSource?
 
     public init(id: Int64 = 0, path: String, originalFilename: String, contentHash: String, capturedAt: Date? = nil,
                 processedAt: Date? = nil, title: String? = nil, titleConfidence: Double? = nil, sourceAppOrSite: String? = nil,
@@ -61,7 +72,7 @@ public struct IndexedScreenshot: Equatable, Sendable {
                 dateMentioned: String? = nil, producedBy: String? = nil, billedInputTokens: Int? = nil,
                 status: ProcessingStatus = .pending, lastError: String? = nil, note: String? = nil,
                 restoredByUndo: Bool = false, recognizedText: String? = nil, textStatus: TextStatus? = nil,
-                textRecognizedBy: String? = nil, textError: String? = nil) {
+                textRecognizedBy: String? = nil, textError: String? = nil, titleSource: TitleSource? = nil) {
         self.id = id
         self.path = path
         self.originalFilename = originalFilename
@@ -86,6 +97,7 @@ public struct IndexedScreenshot: Equatable, Sendable {
         self.textStatus = textStatus
         self.textRecognizedBy = textRecognizedBy
         self.textError = textError
+        self.titleSource = titleSource
     }
 
     /// Copies the analysis fields in.
@@ -498,6 +510,10 @@ public final class ScreenshotIndex: @unchecked Sendable {
                     bind: { .optional($0.textRecognizedBy) }, read: { $0.textRecognizedBy = $1.text }),
         IndexColumn("text_error", "TEXT", addedIn: 3,
                     bind: { .optional($0.textError) }, read: { $0.textError = $1.text }),
+        // 2026-11-28 (wave 2, ticket 02): whose title the row has. NULL = the model's (rows from before, see
+        // migration 4's backfill).
+        IndexColumn("title_source", "TEXT", addedIn: 4, bind: { .optional($0.titleSource?.rawValue) },
+                    read: { $0.titleSource = $1.text.flatMap(TitleSource.init(rawValue:)) }),
     ]
 
     /// Applied in order by `SQLiteDatabase.migrate`; `user_version` is the last one applied. Versions are 1, 2, 3, ...
@@ -545,6 +561,12 @@ public final class ScreenshotIndex: @unchecked Sendable {
             "CREATE INDEX screenshots_source_app_or_site ON screenshots(source_app_or_site)",
             // The text runner's queue: only `pending` rows are in it (https://www.sqlite.org/partialindex.html).
             "CREATE INDEX screenshots_text_pending ON screenshots(text_status) WHERE text_status = 'pending'",
+        ]),
+        // Wave 2 (spec "Index schema"): names typed in the toast before this migration count as the user's. They are
+        // found by the note `rename(_:to:)` has appended since `02e6420`; `instr` matches it exactly (case included).
+        // Every other row stays NULL (= the model's). `title_source` is not an FTS column, so FTS is untouched.
+        SQLiteMigration(version: 4, statements: addColumns("title_source") + [
+            "UPDATE screenshots SET title_source = 'user' WHERE instr(note, 'renamed by the user') > 0",
         ]),
     ]
 
