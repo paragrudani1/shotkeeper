@@ -1,0 +1,46 @@
+# THROWAWAY probe (2026-11-28). Never merge to main. Built only by .github/workflows/probe.yml on t3/probe-shortcuts.
+# Question it answers: does Shortcuts → Apps list an ad-hoc signed, LSUIElement, non-sandboxed app's App Intents?
+# Discovery needs the build-time Metadata.appintents, which only Xcode's appintentsmetadataprocessor writes
+# (docs/research/spotlight-shortcuts-ocr.md, "How Shortcuts finds the intents"; docs/wiki/workflow.md 2026-11-28).
+# Generate with: xcodegen generate --spec probe/ShotkeeperProbe/project.yml
+name: ShotkeeperProbe
+options:
+  bundleIdPrefix: dev.shotkeeper
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    # Same signing settings as App/project.yml: no team, ad-hoc. CI also passes CODE_SIGNING_ALLOWED=NO and signs later.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+
+targets:
+  ShotkeeperProbe:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: ShotkeeperProbe
+    info:
+      path: ShotkeeperProbe/Info.plist
+      properties:
+        CFBundleDisplayName: ShotkeeperProbe
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Menu-bar style like Shotkeeper: no Dock icon, no main menu.
+        LSUIElement: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.shotkeeper.probe
+        PRODUCT_NAME: ShotkeeperProbe
+        ENABLE_APP_SANDBOX: NO

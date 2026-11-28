@@ -1,0 +1,89 @@
+name: Probe (Shortcuts discovery)
+
+# THROWAWAY (2026-11-28). Never merge to main. Builds probe/ShotkeeperProbe with Xcode so the bundle gets the
+# build-time Metadata.appintents (Parag's Mac has only Command Line Tools); the Mac agent installs the artifact and
+# Parag checks Shortcuts → Apps by hand. docs/wiki/workflow.md, 2026-11-28 "Mac probe results".
+on:
+  push:
+    branches: ['t3/probe-shortcuts']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe-app:
+    name: probe-app
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
+      APP_PATH: ${{ github.workspace }}/build/DerivedData/Build/Products/Release/ShotkeeperProbe.app
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select newest stable Xcode
+        run: /bin/bash scripts/select-xcode.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec probe/ShotkeeperProbe/project.yml
+
+      - name: xcodebuild build (Release)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project probe/ShotkeeperProbe/ShotkeeperProbe.xcodeproj -scheme ShotkeeperProbe -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Ad-hoc sign
+        run: |
+          set -euo pipefail
+          # No nested frameworks, so no --deep. Not notarized.
+          codesign --force --sign - "$APP_PATH"
+          codesign --verify --strict --verbose=2 "$APP_PATH"
+          codesign -dv "$APP_PATH" 2>&1
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' -c 'Print :LSUIElement' \
+            -c 'Print :LSMinimumSystemVersion' "$APP_PATH/Contents/Info.plist"
+
+      - name: Check Metadata.appintents
+        run: |
+          set -euo pipefail
+          META="$APP_PATH/Contents/Resources/Metadata.appintents"
+          if [ ! -d "$META" ]; then
+            echo "::error::$META is missing"
+            find "$APP_PATH" -iname '*appintents*' -print
+            ls -lR "$APP_PATH/Contents"
+            exit 1
+          fi
+          echo "--- Metadata.appintents file list"
+          (cd "$META" && find . -type f -print0 | xargs -0 ls -l)
+          # Informational: the action identifiers in the extracted metadata.
+          if [ -f "$META/extract.actionsdata" ]; then
+            echo "--- actions in extract.actionsdata"
+            python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join(sorted((d.get("actions") or {}).keys())))' \
+              "$META/extract.actionsdata" || true
+          fi
+
+      - name: Zip the app
+        run: |
+          set -euo pipefail
+          mkdir -p build/artifacts
+          ditto -c -k --keepParent "$APP_PATH" build/artifacts/ShotkeeperProbe.zip
+          ls -lh build/artifacts
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShotkeeperProbe
+          path: build/artifacts/ShotkeeperProbe.zip
+          if-no-files-found: error
+          retention-days: 5
