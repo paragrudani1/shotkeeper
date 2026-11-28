@@ -39,3 +39,9 @@ yet). Sources are summarized with URLs in `docs/research/openrouter.md`.
 Token counts, costs, ids and titles are invented; the costs follow Prime Intellect's listed prices
 ($0.075 / M input, $0.30 / M output). Other error bodies (401, 403, 404, 503) are inline in the tests.
 Live responses, once a key exists, go in `openrouter-live-<date>-<sample>.json`.
+
+## Changelogs (`ReleasePlanTests`)
+
+`changelog-several.md` (four sections, newest first, including `0.2.10` above `0.2.1`) and
+`changelog-empty-section.md` (a `0.2.1` heading whose body is only whitespace) are **invented** samples in the
+`CHANGELOG.md` format of the auto-update spec (`## <version> (<date>)` sections, newest first).
