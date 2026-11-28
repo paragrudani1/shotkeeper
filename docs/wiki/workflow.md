@@ -250,3 +250,6 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   - **Environment idea:** real-Mac checks are piling up across specs (Spotlight with ad-hoc signing, Vision
     settings, Trash on network volumes, Sparkle prompts, date-field Return). Plan: one consolidated Mac checklist
     for Parag per release, built from the specs' real-Mac sections.
+- 2026-11-28: **PR #15 merged into `t3/auto-update`** (`b59226b`, head `089ef62`; auto-update ticket 01). Next for
+  auto-update: ticket 06 (signing scripts, ad-hoc in CI), then 07 (Sparkle + menu row); 08 waits for Parag's
+  public key.
