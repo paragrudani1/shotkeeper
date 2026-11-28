@@ -9,9 +9,7 @@ import XCTest
 @MainActor
 final class SettingsBehaviourTests: TempDirectoryTestCase {
     private func makeCoordinator() -> AppCoordinator {
-        AppCoordinator(supportDirectory: directory.appendingPathComponent("support"), credentials: InMemoryCredentialStore(),
-                       physicalMemoryBytes: 16 * 1_073_741_824,
-                       applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        AppCoordinator.forTesting(in: directory)
     }
 
     private let taken = HotKeyShortcut(keyCode: KeyCode.k, modifiers: [.control, .option])
@@ -125,9 +123,7 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
     /// analyzer rebuild, no readiness change (which would start the watcher and resume a held queue). Commit uses it.
     func testAHalfTypedTokenIsSavedButNotUsedUntilCommitted() throws {
         let credentials = InMemoryCredentialStore()
-        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
-                                         credentials: credentials, physicalMemoryBytes: 16 * 1_073_741_824,
-                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        let coordinator = AppCoordinator.forTesting(in: directory, credentials: credentials)
         coordinator.updateSettings {
             $0.backend = .clairic
             $0.clairicAccountID = "acct"
@@ -162,9 +158,7 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
     /// The B1 rule holds for the OpenRouter key too: a half-typed key is saved but never used until committed.
     func testAHalfTypedOpenRouterKeyIsSavedButNotUsedUntilCommitted() throws {
         let credentials = InMemoryCredentialStore()
-        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
-                                         credentials: credentials, physicalMemoryBytes: 16 * 1_073_741_824,
-                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        let coordinator = AppCoordinator.forTesting(in: directory, credentials: credentials)
         coordinator.updateSettings {
             $0.backend = .openRouter
             $0.uploadGrants = [.init(destination: .openRouter, grantedAt: Date(), openRouterModel: OpenRouterBackend.defaultModel)]
@@ -191,9 +185,7 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
     /// (each one another destination) ever reaches the settings or the consent check.
     func testAModelNameIsUsedOnlyOnCommit() throws {
         let credentials = InMemoryCredentialStore([.openRouterAPIKey: "sk-or-v1-key"])
-        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
-                                         credentials: credentials, physicalMemoryBytes: 16 * 1_073_741_824,
-                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        let coordinator = AppCoordinator.forTesting(in: directory, credentials: credentials)
         coordinator.updateSettings { $0.backend = .openRouter }
         coordinator.allowUploads(to: .openRouter, endpoint: nil, openRouterModel: OpenRouterBackend.defaultModel)
         XCTAssertEqual(coordinator.readiness, .ready)
@@ -230,9 +222,7 @@ final class SettingsBehaviourTests: TempDirectoryTestCase {
     }
 
     func testAFailedKeychainWriteIsReported() {
-        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
-                                         credentials: FailingCredentialStore(), physicalMemoryBytes: 16 * 1_073_741_824,
-                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        let coordinator = AppCoordinator.forTesting(in: directory, credentials: FailingCredentialStore())
         coordinator.updateSecretDraft("token", for: .cloudflareAPIToken)
         XCTAssertThrowsError(try coordinator.persistSecretDraft(for: .cloudflareAPIToken)) { error in
             XCTAssertEqual(StatusText.describe(error), "The Keychain is locked. Unlock the Mac and try again.")

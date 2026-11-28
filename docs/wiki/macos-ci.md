@@ -5,6 +5,8 @@ Workflow: `.github/workflows/ci.yml` (added on branch `app/phase1`, 2026-11-21).
 
 ## Jobs
 - `linux-core`: container `swift:6.4.3-noble` + `libsqlite3-dev`; `swift build`, then `swift test`.
+  2026-11-28 (`3e34e7f`): first step "Lint (scripts/lint.sh)": `--self-test`, then the rules (see
+  [prefactor-app](prefactor-app.md)).
 - `macos-app` (`macos-latest`): newest non-beta `/Applications/Xcode_*.app` via `xcode-select`; package tests;
   `brew install xcodegen`; `xcodegen generate --spec App/project.yml`; `xcodebuild build` (Release) and
   `xcodebuild test` (Debug), both `CODE_SIGNING_ALLOWED=NO`; ad-hoc `codesign --sign -` of the Release app;
@@ -16,6 +18,11 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
 - Where: `App/ShotkeeperAppTests/UISnapshotTests.swift`. `UISnapshotCatalog.all` lists the views; **adding a view is one
   line**: `UISnapshot("search-empty") { SearchView(...) },`. Each entry is rendered in light and dark mode
   (`<name>-light.png`, `<name>-dark.png`) at 2×, on a neutral backdrop with a soft shadow.
+  2026-11-28 (`89a06df`): one file per screen: `ToastSnapshots.swift`, `MenuSnapshots.swift`, `SearchSnapshots.swift`,
+  `SetupSnapshots.swift`, `SettingsSnapshots.swift`, each with its catalog (`<Screen>Snapshots.all`), its fixtures
+  (`extension Fixtures`) and one test (`<Screen>SnapshotsTests`). Add a state with one line in that screen's `all`; a new
+  screen gets a file and one term in `UISnapshotCatalog.all`. Shared code (renderer, `UISnapshotWriter`, `Fixtures.now`)
+  stays in `UISnapshotTests.swift`; `UISnapshotCatalogTests` fails on a repeated name. PNG names are unchanged.
 - How: `NSHostingView` in an offscreen borderless `NSWindow` with the appearance set, then
   `cacheDisplay(in:to:)` into a 2× `NSBitmapImageRep` (`SnapshotRenderer`). This draws AppKit-backed controls
   (TextField, ProgressView, buttons) too, which `ImageRenderer` does not. Behind-window materials cannot be captured
@@ -56,6 +63,11 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
   The Keychain tests ran (not skipped) on `macos-latest`.
 - 2026-11-21: `gh run view` lists ARTIFACTS a few seconds after the run completes; check the job log
   ("Artifact Shotkeeper-unsigned has been successfully uploaded") before concluding the upload failed.
+
+- 2026-11-28 (prefactor-app runs 46127111976 and 46127989839, same app code): `search-results-light.png` drew the results
+  list with a legacy-scroller gutter in one run and without it in the other; the other 169 PNGs were byte-identical to
+  main (run 45052894155). The gutter is render timing, not a code change: when comparing snapshot runs, a width
+  change of the list rows in `search-results-*` alone is this flake.
 
 ## Outages
 - 2026-11-21 ~20:07 UTC: from run 44944596470 on, every job of every run failed in about 2 s with no runner and

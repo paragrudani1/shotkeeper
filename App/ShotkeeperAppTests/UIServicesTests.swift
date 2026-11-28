@@ -17,6 +17,7 @@ final class GlobalHotKeyTests: XCTestCase {
         XCTAssertEqual(KeyCode.f5, kVK_F5)
         XCTAssertEqual(KeyCode.upArrow, kVK_UpArrow)
         XCTAssertEqual(KeyCode.slash, kVK_ANSI_Slash)
+        XCTAssertEqual(KeyCode.keypadEnter, kVK_ANSI_KeypadEnter)
         XCTAssertEqual(HotKeyRules.eventHotKeyExistsErr, Int32(eventHotKeyExistsErr))
         XCTAssertEqual(GlobalHotKey.modifiers(from: [.command, .option, .capsLock]), [.command, .option])
     }

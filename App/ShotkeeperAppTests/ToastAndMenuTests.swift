@@ -162,9 +162,7 @@ final class MenuTests: XCTestCase {
 @MainActor
 final class CoordinatorFeedbackTests: TempDirectoryTestCase {
     private func makeCoordinator() -> AppCoordinator {
-        AppCoordinator(supportDirectory: directory.appendingPathComponent("support"), credentials: InMemoryCredentialStore(),
-                       physicalMemoryBytes: 16 * 1_073_741_824, applicationSupport: directory,
-                       logDirectory: directory.appendingPathComponent("logs"))
+        AppCoordinator.forTesting(in: directory)
     }
 
     private func renamedEvent(_ n: Int) -> ScreenshotEvent {
@@ -215,10 +213,10 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
         let toast = RenamedToast(originalURL: desktop.appendingPathComponent("Screenshot 1.png"), currentURL: file,
                                  undoRecordIDs: [])
 
-        guard case .failure(let problem) = coordinator.renameFromToast(toast, to: "///") else { return XCTFail() }
+        guard case .failure(let problem) = coordinator.fileActions.rename(toast, to: "///") else { return XCTFail() }
         XCTAssertEqual(problem.message, "that name cannot be used as a file name")
 
-        guard case .success(let edited) = coordinator.renameFromToast(toast, to: "Tweet: semiconductor flashcards") else {
+        guard case .success(let edited) = coordinator.fileActions.rename(toast, to: "Tweet: semiconductor flashcards") else {
             return XCTFail()
         }
         XCTAssertEqual(edited.currentURL.lastPathComponent, "Tweet - semiconductor flashcards.png")
@@ -226,12 +224,12 @@ final class CoordinatorFeedbackTests: TempDirectoryTestCase {
         XCTAssertEqual(coordinator.undoCandidate?.id, edited.undoRecordIDs.first)
         XCTAssertEqual(MenuText.undoItem(for: coordinator.undoCandidate), "Undo: Tweet - semiconductor flashcards")
 
-        guard case .restored(let restored) = coordinator.undoFromToast(ids: edited.undoRecordIDs) else { return XCTFail() }
+        guard case .restored(let restored) = coordinator.fileActions.undo(ids: edited.undoRecordIDs) else { return XCTFail() }
         XCTAssertEqual(restored.title, "Tweet")
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         XCTAssertNil(coordinator.undoCandidate)
 
-        guard case .error(let error) = coordinator.undoFromToast(ids: edited.undoRecordIDs) else { return XCTFail() }
+        guard case .error(let error) = coordinator.fileActions.undo(ids: edited.undoRecordIDs) else { return XCTFail() }
         XCTAssertEqual(error.title, "Could not undo: that rename was already undone")
     }
 

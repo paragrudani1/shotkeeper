@@ -54,3 +54,42 @@ enum ConnectionTestImage {
         return text
     }
 }
+
+/// Settings' and setup's "Test Connection": sends `ConnectionTestImage`, never a user file, so it calls `analyze`
+/// outside `ScreenshotProcessor` (marked `lint-allow: analyze` for `scripts/lint.sh`).
+extension AppCoordinator {
+    /// Runs one analysis of a generated image with the given (unsaved) settings and secrets.
+    func testConnection(settings candidate: AppSettings, secrets: [CredentialKey: String]) async -> Result<String, AnalyzerFailure> {
+        let store = InMemoryCredentialStore()
+        for key in [CredentialKey.cloudflareAPIToken, .customEndpointAPIKey, .openRouterAPIKey] {
+            let override = secrets[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let override, !override.isEmpty {
+                try? store.setSecret(override, for: key)
+            } else if let saved = (try? credentials.secret(for: key)) ?? nil {
+                try? store.setSecret(saved, for: key)
+            }
+        }
+        // Only a generated image is sent here, never a user file, so the consent gate does not apply. The grants
+        // live on this copy only; nothing is saved.
+        var candidate = candidate
+        candidate = BackendGate.granting(.cloudflare, in: candidate, at: .distantPast)
+        candidate = BackendGate.granting(.openRouter,
+                                         expectedOpenRouterModel: OpenRouterBackend.effectiveModel(candidate.openRouterModel),
+                                         in: candidate, at: .distantPast)
+        candidate = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: candidate.customEndpointURL),
+                                         in: candidate, at: .distantPast)
+        let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,
+                                            physicalMemoryBytes: physicalMemoryBytes)
+        do {
+            let payload = try ConnectionTestImage.payload()
+            let analysis = try await analyzer.analyze(payload, context: ConnectionTestImage.context)  // lint-allow: analyze (generated image only)
+            return .success(ConnectionTestImage.summary(analysis))
+        } catch {
+            return .failure(AnalyzerFailure(message: ConnectionTestText.failure(error, backend: candidate.backend)))
+        }
+    }
+}
+
+struct AnalyzerFailure: Error, Equatable {
+    var message: String
+}

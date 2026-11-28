@@ -24,7 +24,7 @@ struct ServerPIDFile: Sendable {
     }
 
     func remove() {
-        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(at: url)  // lint-allow: file-op (our PID file)
     }
 
     /// Kills the recorded process if it is still the same process (same start time), then removes the file.

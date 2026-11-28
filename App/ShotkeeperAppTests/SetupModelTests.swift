@@ -12,9 +12,7 @@ final class SetupModelTests: TempDirectoryTestCase {
 
     private func makeCoordinator(memoryGB: UInt64 = 16) -> AppCoordinator {
         credentials = InMemoryCredentialStore()
-        let coordinator = AppCoordinator(supportDirectory: directory.appendingPathComponent("support"),
-                                         credentials: credentials, physicalMemoryBytes: memoryGB * 1_073_741_824,
-                                         applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
+        let coordinator = AppCoordinator.forTesting(in: directory, credentials: credentials, memoryGB: memoryGB)
         // Watch a temp folder, never the user's screenshot location.
         let watched = directory.appendingPathComponent("watched", isDirectory: true)
         try? FileManager.default.createDirectory(at: watched, withIntermediateDirectories: true)
@@ -101,7 +99,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         XCTAssertEqual(grant.openRouterModel, OpenRouterBackend.defaultModel, "for the model the section named")
         XCTAssertNil(coordinator.settings.grant(for: .cloudflare), "OpenRouter's Continue does not allow Cloudflare")
         XCTAssertEqual(coordinator.readiness, .ready)
-        XCTAssertTrue(coordinator.isWatching)
+        XCTAssertTrue(coordinator.capture.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is OpenAICompatibleAnalyzer)
         let json = String(decoding: try Data(contentsOf: AppPaths.settingsFile(in: directory.appendingPathComponent("support"))),
                           as: UTF8.self)
@@ -183,11 +181,11 @@ final class SetupModelTests: TempDirectoryTestCase {
         coordinator.startServices()
         defer { coordinator.stopServices() }
         let model = makeModel(coordinator)
-        XCTAssertFalse(coordinator.isWatching, "nothing is watched before setup")
+        XCTAssertFalse(coordinator.capture.isWatching, "nothing is watched before setup")
         model.pressPrimary()
         model.flow.consentChecked = true
         model.pressPrimary()
-        XCTAssertFalse(coordinator.isWatching, "consent alone: no backend yet")
+        XCTAssertFalse(coordinator.capture.isWatching, "consent alone: no backend yet")
         XCTAssertEqual(coordinator.notWatchingReason, "Cloudflare account ID is not set")
 
         model.accountID = " acct "
@@ -201,7 +199,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         XCTAssertEqual(coordinator.settings.clairicAccountID, "acct")
         XCTAssertEqual(coordinator.settings.backend, .clairic)
         XCTAssertEqual(model.tokenDraft, "", "the typed token is not kept in the window")
-        XCTAssertTrue(coordinator.isWatching)
+        XCTAssertTrue(coordinator.capture.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is CloudflareClairicAnalyzer)
         XCTAssertEqual(model.flow.step, .tryIt)
         XCTAssertEqual(model.current.tryIt, .waiting(note: nil))
@@ -220,12 +218,12 @@ final class SetupModelTests: TempDirectoryTestCase {
         configureClairicInSettings(coordinator)
         XCTAssertFalse(coordinator.settings.hasSeenPrivacyNotice)
         XCTAssertEqual(coordinator.readiness, .needsConsent)
-        XCTAssertFalse(coordinator.isWatching)
+        XCTAssertFalse(coordinator.capture.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is UnconfiguredAnalyzer)
         XCTAssertEqual(coordinator.notWatchingReason, "Not allowed to send screenshots yet")
 
         coordinator.allowUploads(to: .cloudflare, endpoint: nil) // the Settings confirmation
-        XCTAssertTrue(coordinator.isWatching)
+        XCTAssertTrue(coordinator.capture.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is CloudflareClairicAnalyzer)
     }
 
@@ -240,7 +238,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         coordinator.startServices()
         defer { coordinator.stopServices() }
         coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
-        XCTAssertTrue(coordinator.isWatching)
+        XCTAssertTrue(coordinator.capture.isWatching)
         configureClairicInSettings(coordinator)
         XCTAssertEqual(coordinator.readiness, .needsConsent)
         XCTAssertTrue(coordinator.isSkippingForConsent)
@@ -342,7 +340,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         defer { coordinator.stopServices() }
         coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
         XCTAssertEqual(coordinator.readiness, .ready, "Local is ready even when not installed")
-        let queued = await coordinator.processExistingScreenshots()
+        let queued = await coordinator.capture.processExistingScreenshots()
         XCTAssertEqual(queued, 1)
         try await wait {
             if case .error = coordinator.queueStatus { return true }
@@ -385,7 +383,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         defer { coordinator.stopServices() }
         coordinator.pauseIndefinitely()
         try await wait { coordinator.isPaused }
-        let queued = await coordinator.processExistingScreenshots()
+        let queued = await coordinator.capture.processExistingScreenshots()
         XCTAssertEqual(queued, 1)
         let queue = try XCTUnwrap(coordinator.queue)
         let carried = await queue.carriedRequestCount
@@ -422,7 +420,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         coordinator.pauseIndefinitely()
         try await wait { coordinator.isPaused }
         let clicked = coordinator.processExistingRequests.generation
-        _ = await coordinator.processExistingScreenshots()
+        _ = await coordinator.capture.processExistingScreenshots()
         let queue = try XCTUnwrap(coordinator.queue)
         let carried = await queue.carriedRequestCount
         XCTAssertEqual(carried, 1)
@@ -441,8 +439,8 @@ final class SetupModelTests: TempDirectoryTestCase {
         coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
         coordinator.pauseIndefinitely()
         try await wait { coordinator.isPaused }
-        coordinator.afterProcessExistingScan = { coordinator.updateSettings { $0.backend = .clairic } }
-        let queued = await coordinator.processExistingScreenshots()
+        coordinator.capture.afterProcessExistingScan = { coordinator.updateSettings { $0.backend = .clairic } }
+        let queued = await coordinator.capture.processExistingScreenshots()
         XCTAssertEqual(queued, 0)
         XCTAssertEqual(coordinator.lastMessage, "The destination changed. Run Process Existing again.")
         let queue = try XCTUnwrap(coordinator.queue)
@@ -469,7 +467,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         coordinator.chooseLocalBackend(ModelCatalog.inkling2bit)
         XCTAssertFalse(coordinator.settings.hasSeenPrivacyNotice)
         XCTAssertEqual(coordinator.readiness, .ready)
-        XCTAssertTrue(coordinator.isWatching)
+        XCTAssertTrue(coordinator.capture.isWatching)
         XCTAssertTrue(coordinator.currentAnalyzer is ManagedLocalAnalyzer)
         XCTAssertEqual(coordinator.settings.localModelVariantID, ModelCatalog.inkling2bit.id)
     }
@@ -661,7 +659,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         let coordinator = makeCoordinator()
         let watched = try XCTUnwrap(coordinator.settings.watchedFolderOverride)
         try Data("png".utf8).write(to: watched.appendingPathComponent("Screenshot 2026-11-21 at 10.00.00.png"))
-        let queued = await coordinator.processExistingScreenshots()
+        let queued = await coordinator.capture.processExistingScreenshots()
         XCTAssertEqual(queued, 0, "nothing is queued for a later upload before setup")
         XCTAssertEqual(coordinator.lastMessage, "Finish setup first: Cloudflare account ID is not set")
     }

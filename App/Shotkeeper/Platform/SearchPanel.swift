@@ -2,7 +2,6 @@ import AppKit
 import Quartz
 import ShotkeeperCore
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Floating Raycast-style panel: borderless (no traffic lights), `.nonactivatingPanel` so the frontmost app stays
 /// active (the menu-bar app never steals activation), while `canBecomeKey` lets the search field take the keyboard.
@@ -116,75 +115,26 @@ final class SearchPanel: NSPanel {
     }
 }
 
-/// Keys the panel handles itself. Pure mapping, unit-tested.
-enum SearchKey: Equatable {
-    case up, down, open, close, space, copyImage, reveal, quickLook, chip(SearchChip)
-
-    /// Unmodified keys, seen in `sendEvent` (↑/↓/Return/Esc/Space).
-    static func plain(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> SearchKey? {
-        guard modifiers.intersection([.command, .option, .control, .shift]).isEmpty else { return nil }
-        switch keyCode {
-        case 126: return .up            // ↑
-        case 125: return .down          // ↓
-        case 36, 76: return .open       // Return, keypad Enter
-        case 53: return .close          // Esc
-        case 49: return .space          // Space (Quick Look or a typed space, see SearchWindowState)
-        default: return nil
-        }
+/// AppKit → core key translation. The table and its rules are core's `SearchKeyMap` (tested on Linux); this only reads
+/// the event's key code, modifiers and characters.
+extension SearchKeyMap {
+    /// Unmodified keys, seen in `sendEvent` (↑/↓/Return/Esc/Space). `.function`/`.numericPad` (arrow keys carry them)
+    /// do not count as modifiers.
+    static func plain(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> SearchKey? {
+        plain(keyCode: Int(keyCode), modifiers: GlobalHotKey.modifiers(from: flags))
     }
 
-    /// ⌘ shortcuts, seen in `performKeyEquivalent`. The key is the typed character when it is an ASCII letter or
-    /// digit (QWERTY, Dvorak, …), else the physical key (Cyrillic or Greek layouts type other letters; AZERTY types
-    /// "&" for 1).
-    static func command(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, characters: String?) -> SearchKey? {
-        guard modifiers.intersection([.command, .option, .control, .shift]) == [.command] else { return nil }
-        let typed = characters?.lowercased()
-        let key = typed.flatMap { $0.count == 1 && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) } ? $0 : nil }
-            ?? physicalKeys[keyCode]
-        switch key ?? "" {
-        case "c": return .copyImage
-        case "r": return .reveal
-        case "y": return .quickLook           // ⌘Y, the Finder shortcut
-        case let digit:
-            return Int(digit).flatMap(SearchChip.forShortcut).map { .chip($0) }
-        }
+    /// ⌘ shortcuts, seen in `performKeyEquivalent`.
+    static func command(keyCode: UInt16, flags: NSEvent.ModifierFlags, characters: String?) -> SearchKey? {
+        command(keyCode: Int(keyCode), modifiers: GlobalHotKey.modifiers(from: flags), characters: characters)
     }
 
-    /// ANSI virtual key codes (Carbon `kVK_ANSI_*`) for the shortcut keys.
-    private static let physicalKeys: [UInt16: String] = [
-        8: "c", 15: "r", 16: "y", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7",
-    ]
-}
-
-/// Open / copy / reveal for a result.
-@MainActor
-enum SearchActions {
-    static func open(_ url: URL) {
-        NSWorkspace.shared.open(url)
+    static func plain(_ event: NSEvent) -> SearchKey? {
+        plain(keyCode: event.keyCode, flags: event.modifierFlags)
     }
 
-    static func reveal(_ url: URL) {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    /// One pasteboard item with the image as PNG (the file's own bytes when it is a PNG) and its file URL, so image
-    /// editors and chat apps paste the picture and Finder/Mail paste the file. False when the file cannot be read.
-    @discardableResult
-    static func copyImage(_ url: URL, to pasteboard: NSPasteboard = .general) -> Bool {
-        guard let data = try? Data(contentsOf: url) else { return false }
-        let png: Data
-        if UTType(filenameExtension: url.pathExtension)?.conforms(to: .png) == true {
-            png = data
-        } else if let rep = NSBitmapImageRep(data: data), let converted = rep.representation(using: .png, properties: [:]) {
-            png = converted  // JPEG/HEIC/TIFF screenshots (a `defaults write com.apple.screencapture type` choice)
-        } else {
-            return false
-        }
-        let item = NSPasteboardItem()
-        item.setData(png, forType: .png)
-        item.setString(url.absoluteString, forType: .fileURL)
-        pasteboard.clearContents()
-        return pasteboard.writeObjects([item])
+    static func command(_ event: NSEvent) -> SearchKey? {
+        command(keyCode: event.keyCode, flags: event.modifierFlags, characters: event.charactersIgnoringModifiers)
     }
 }
 
@@ -246,8 +196,14 @@ final class SearchPanelController {
         selectedURL: { [weak self] in self?.model.selectedURL },
         keyHandler: { [weak self] event in self?.handleQuickLookKey(event) ?? false })
 
+    /// Open / copy / reveal on the selected result (the search-panel action set; features add theirs there).
+    let resultActions: SearchResultActions
+
     init(model: SearchViewModel = SearchViewModel(search: { _, _ in ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0) })) {
         self.model = model
+        self.resultActions = SearchResultActions(model: model)
+        resultActions.hidePanel = { [weak self] in self?.hide() }
+        resultActions.announce = { [weak self] text in self?.announce(text) }
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -299,14 +255,14 @@ final class SearchPanelController {
             }
         case .open:
             guard panel.fieldHasFocus, let url = model.selectedURL else { return false }
-            open(url)
+            resultActions.open(url)
         case .copyImage:
             // Selected text in the field: let ⌘C copy the text.
             guard !panel.fieldHasSelectedText, let url = model.selectedURL else { return false }
-            copy(url)
+            resultActions.copy(url)
         case .reveal:
             guard let url = model.selectedURL else { return false }
-            reveal(url)
+            resultActions.reveal(url)
         case .space:
             guard panel.fieldHasFocus else { return false }
             if isQuickLookVisible {
@@ -328,50 +284,14 @@ final class SearchPanelController {
     // MARK: Actions
 
     var actions: SearchViewActions {
-        SearchViewActions(open: { [weak self] in self?.open($0) },
-                          copy: { [weak self] in self?.copy($0) },
-                          reveal: { [weak self] in self?.reveal($0) },
+        SearchViewActions(open: { [weak self] in self?.resultActions.open($0) },
+                          copy: { [weak self] in self?.resultActions.copy($0) },
+                          reveal: { [weak self] in self?.resultActions.reveal($0) },
                           quickLook: { [weak self] in self?.toggleQuickLook() },
                           processExisting: { [weak self] in
                               self?.hide()
                               self?.onProcessExisting()
                           })
-    }
-
-    private func open(_ url: URL) {
-        guard fileStillExists(url) else { return }
-        SearchActions.open(url)
-        hide()
-    }
-
-    private func reveal(_ url: URL) {
-        guard fileStillExists(url) else { return }
-        SearchActions.reveal(url)
-        hide()
-    }
-
-    private func copy(_ url: URL) {
-        guard fileStillExists(url) else { return }
-        guard SearchActions.copyImage(url) else {
-            report(SearchWindowState.copyFailedMessage)
-            return
-        }
-        model.showCopied()
-        announce("Copied")
-    }
-
-    /// A file moved or deleted after it was indexed: say so instead of failing silently; the panel stays open.
-    private func fileStillExists(_ url: URL) -> Bool {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            report(SearchWindowState.missingFileMessage)
-            return false
-        }
-        return true
-    }
-
-    private func report(_ message: String) {
-        model.showProblem(message)
-        announce(message)
     }
 
     private func announce(_ text: String) {
@@ -426,22 +346,20 @@ final class SearchPanelController {
 
     /// Keys while Quick Look's own panel is key (the user clicked into it).
     private func handleQuickLookKey(_ event: NSEvent) -> Bool {
-        guard let key = SearchKey.plain(keyCode: event.keyCode, modifiers: event.modifierFlags)
-                ?? SearchKey.command(keyCode: event.keyCode, modifiers: event.modifierFlags,
-                                     characters: event.charactersIgnoringModifiers) else { return false }
+        guard let key = SearchKeyMap.plain(event) ?? SearchKeyMap.command(event) else { return false }
         switch key {
         case .up, .down:
             return handle(key)
         case .open:
             guard let url = model.selectedURL else { return false }
-            open(url)
+            resultActions.open(url)
             return true
         case .close, .space, .quickLook:
             closeQuickLook()
             return true
         case .copyImage:
             guard let url = model.selectedURL else { return false }
-            copy(url)
+            resultActions.copy(url)
             return true
         case .reveal, .chip:
             return handle(key)
@@ -469,16 +387,11 @@ final class SearchPanelController {
             self.previousApp = nil
         }
         panel.keyHandler = { [weak self] event in
-            guard let self, let key = SearchKey.plain(keyCode: event.keyCode, modifiers: event.modifierFlags) else {
-                return false
-            }
+            guard let self, let key = SearchKeyMap.plain(event) else { return false }
             return MainActor.assumeIsolated { self.handle(key) }
         }
         panel.commandKeyHandler = { [weak self] event in
-            guard let self, let key = SearchKey.command(keyCode: event.keyCode, modifiers: event.modifierFlags,
-                                                        characters: event.charactersIgnoringModifiers) else {
-                return false
-            }
+            guard let self, let key = SearchKeyMap.command(event) else { return false }
             return MainActor.assumeIsolated { self.handle(key) }
         }
         return panel

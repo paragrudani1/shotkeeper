@@ -22,6 +22,9 @@ Code: `App/Shotkeeper/{Coordinator,Runtime,UI,Platform}`. Core API: [../core-api
 - 2026-11-21 (UI polish PR 1, `83ba0ee`): `MenuBarExtra` was replaced by an `NSStatusItem` + `MenuPanel` (SwiftUI in a
   non-activating panel), and the coordinator now feeds pipeline events to the rename toast. Details:
   [ui-polish](ui-polish.md).
+- 2026-11-28 (`e164967`): the coordinator's folder watcher / Process Existing moved to `CaptureSources` and its undo /
+  rename to `FileActions`, each behind a host protocol; the coordinator still wires everything. Why and where features
+  go: [prefactor-app](prefactor-app.md).
 
 ## Backends
 - 2026-11-21: `AnalyzerFactory` (pure, unit-tested) maps settings to an analyzer. Missing account/token/URL/model gives an

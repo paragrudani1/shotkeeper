@@ -97,7 +97,7 @@ struct GeneralSettingsTab: View {
                 Form {
                     Section("Folders") {
                         FolderRow(title: "Watched folder", url: draft.wrappedValue.watchedFolderOverride,
-                                  fallback: coordinator.watchedFolder ?? ScreenshotLocation.current().folder,
+                                  fallback: coordinator.capture.watchedFolder ?? ScreenshotLocation.current().folder,
                                   fallbackNote: "the macOS screenshot location",
                                   set: { draft.wrappedValue.watchedFolderOverride = $0 })
                         FolderRow(title: "Organized folder", url: draft.wrappedValue.organizedFolder, fallback: nil,
@@ -151,7 +151,7 @@ struct GeneralSettingsTab: View {
                         if LaunchAtLogin.status == .requiresApproval {
                             Button("Approve in System Settings…") { LaunchAtLogin.openSystemSettings() }
                         }
-                        if coordinator.isWatching || coordinator.isPaused {
+                        if coordinator.capture.isWatching || coordinator.isPaused {
                             LabeledContent {
                                 HStack {
                                     if coordinator.isPaused {

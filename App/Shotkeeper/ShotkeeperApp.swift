@@ -47,9 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Unit tests run inside this app (TEST_HOST); do not grab the hotkey or watch folders then.
         guard !RuntimeEnvironment.isRunningUnitTests else { return }
         let coordinator = self.coordinator
-        let undo: ([UUID]) -> ToastContent = { ids in coordinator.undoFromToast(ids: ids) }
+        let undo: ([UUID]) -> ToastContent = { ids in coordinator.fileActions.undo(ids: ids) }
         let rename: (RenamedToast, String) -> Result<RenamedToast, UserFacingProblem> = { toast, name in
-            coordinator.renameFromToast(toast, to: name)
+            coordinator.fileActions.rename(toast, to: name)
         }
         let viewInSearch: ([String]) -> Void = { [weak self] paths in self?.searchPanel.showBatch(paths) }
         // Problems with "Fix Settings…" are missing or rejected credentials or endpoints: the Model tab.
@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController(coordinator: coordinator) { [weak self] row, reveal in
             self?.perform(row, reveal: reveal)
         }
-        searchPanel.onProcessExisting = { Task { _ = await coordinator.processExistingScreenshots() } }
+        searchPanel.onProcessExisting = { Task { _ = await coordinator.capture.processExistingScreenshots() } }
         settingsOpener.prepare()
         // Closing Settings commits tokens being typed (the field's onDisappear may not run before the window goes).
         _ = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
@@ -100,11 +100,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .recent(let id):
             guard let item = coordinator.recentItems.first(where: { $0.id == id }) else { return }
             let url = URL(fileURLWithPath: item.path)
-            if reveal { SearchActions.reveal(url) } else { SearchActions.open(url) }
-        case .undo: coordinator.undoLastRename()
+            if reveal { WorkspaceActions.reveal(url) } else { WorkspaceActions.open(url) }
+        case .undo: coordinator.fileActions.undoLast()
         case .pause: coordinator.pause(minutes: 10)
         case .resume: coordinator.resume()
-        case .processExisting: Task { _ = await coordinator.processExistingScreenshots() }
+        case .processExisting: Task { _ = await coordinator.capture.processExistingScreenshots() }
         case .search: showSearch()
         case .about:
             NSApp.activate()
