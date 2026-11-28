@@ -423,11 +423,12 @@ final class ProcessingQueueTests: XCTestCase {
                         clock: clock, random: { 0.5 }, jobHandler: recorder.handler)
     }
 
-    private func waitUntil(_ condition: () async -> Bool) async {
+    private func waitUntil(_ condition: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         for _ in 0..<2_000 {
             if await condition() { return }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
+        XCTFail("waitUntil: the condition did not become true within about 2 s", file: file, line: line)
     }
 
     func testAProcessJobAndAReanalyzeJobOfTheRowAtThatURLAreDifferentJobs() async {
@@ -625,6 +626,21 @@ final class ProcessingQueueTests: XCTestCase {
         let states = await queue.jobStates
         XCTAssertEqual(states, [.reanalyze(rowID: 7): .running, .process(a): .held(.paused(until: nil))])
         recorder.release()
+        await queue.resume()
+        await queue.waitUntilIdle()
+    }
+
+    func testAnAttemptThatFailsAfterAPauseShowsAsHeldNotRunning() async {
+        let recorder = JobRecorder(errors: [AnalyzerError.rateLimited(retryAfter: nil)], blocking: .reanalyze(rowID: 7))
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        await waitUntil { recorder.isBlocked }
+        await queue.pause()
+        recorder.release()
+        await waitUntil { await queue.jobStates[.reanalyze(rowID: 7)] != .running }
+        let states = await queue.jobStates
+        XCTAssertEqual(states, [.reanalyze(rowID: 7): .held(.paused(until: nil))],
+                       "the attempt ended with a 429 while paused: the job waits at the gate, so it is held")
         await queue.resume()
         await queue.waitUntilIdle()
     }

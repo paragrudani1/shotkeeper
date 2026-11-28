@@ -267,7 +267,9 @@ public actor ProcessingQueue {
     private func attempt(_ job: QueueJob) async throws {
         attempting.insert(job)
         publish()
-        defer { attempting.remove(job) }
+        // Publish on the way out too: a pause or hold set during the attempt must show as soon as it ends (review of
+        // PR #25: a paused job that then got a 429 kept reporting `.running` until resume).
+        defer { attempting.remove(job); publish() }
         try await handler(job, carried[job])
     }
 

@@ -81,3 +81,8 @@ not created twice.
   `scripts/lint.sh` ok.
 - 2026-11-28 (ticket 03): `SCRATCH=.build/linux-w2-03 scripts/test-linux.sh` green after merging ticket 02, `scripts/lint.sh` ok;
   `ProcessingQueueTests` passed 15 runs in a row.
+- 2026-11-28 (review of PR #25): `attempt` publishes job states when the attempt ends too, so a pause or hold set
+  during an attempt that then fails (429/5xx) shows `.held` at once, not `.running` until resume
+  (`testAnAttemptThatFailsAfterAPauseShowsAsHeldNotRunning`). `waitUntil` in the queue tests now fails loudly on
+  timeout. For ticket 08: always pass `atFront: true` (a job already waiting at the back is not promoted), and look
+  up `.process` jobs by standardized URL.
