@@ -318,3 +318,6 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
     then failed. Fix briefs now say waiting for CI is part of the task.
 - 2026-11-28: PRs **#24** (lint on macOS, against main), **#25** (wave 2 03, queue job kinds; under review) and
   **#26** (auto-update 06 follow-ups) opened.
+- 2026-11-28: **PR #24 merged** (`f19156b`): lint runs in `macos-app` under `/bin/bash`. Job 140968794035 printed
+  "GNU bash, version 3.2.57(1)-release", "lint self-test: ok" and "lint: ok". `main` still needs merging into the
+  integration branches. For `t3/auto-update`, #26 also edits the `lint.sh` header, so merge #26 first, then main.
