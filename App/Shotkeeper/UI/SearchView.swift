@@ -47,30 +47,43 @@ struct SearchView: View {
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
-        .onAppear { fieldFocused = model.state.datePicker == nil }
-        .onChange(of: model.focusRequest) { _, _ in fieldFocused = model.state.datePicker == nil }
+        .onAppear { fieldFocused = !model.state.isPickerOpen }
+        .onChange(of: model.focusRequest) { _, _ in fieldFocused = !model.state.isPickerOpen }
         // A picker takes the focus while it is open and gives it back to the field when it closes (design §6).
-        .onChange(of: model.state.datePicker == nil) { _, closed in fieldFocused = closed }
+        .onChange(of: model.state.isPickerOpen) { _, open in fieldFocused = !open }
     }
 
     // MARK: Picker
 
-    /// The open picker, hung under its pill, over the list and preview. A click anywhere else closes it.
+    /// The open picker, hung under its pill (right edges aligned), over the list and preview. A click anywhere else
+    /// closes it.
     @ViewBuilder
     private func pickerOverlay(_ anchors: [SearchFilterKind: Anchor<CGRect>]) -> some View {
         if let picker = model.state.datePicker, let anchor = anchors[.date] {
-            GeometryReader { proxy in
-                let pill = proxy[anchor]
-                ZStack(alignment: .topLeading) {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture { model.closeDatePicker() }
-                        .accessibilityHidden(true)
-                    DatePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
-                        .fixedSize(horizontal: false, vertical: true)
-                        // 6 pt under row 2 (design): the pill's bottom, row 2's 8 pt bottom padding, then the gap.
-                        .offset(x: pill.maxX - DatePickerPanel.width, y: pill.maxY + 8 + 6)
-                }
+            hung(under: anchor, width: DatePickerPanel.width) {
+                DatePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
+            }
+        } else if let picker = model.state.sourcePicker, let anchor = anchors[.source] {
+            hung(under: anchor, width: SourcePickerPanel.width) {
+                SourcePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
+            }
+        }
+    }
+
+    private func hung<Content: View>(under anchor: Anchor<CGRect>, width: CGFloat,
+                                    @ViewBuilder picker: () -> Content) -> some View {
+        let content = picker()
+        return GeometryReader { proxy in
+            let pill = proxy[anchor]
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.closePickers() }
+                    .accessibilityHidden(true)
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                    // 6 pt under row 2 (design): the pill's bottom, row 2's 8 pt bottom padding, then the gap.
+                    .offset(x: pill.maxX - width, y: pill.maxY + 8 + 6)
             }
         }
     }
@@ -121,7 +134,8 @@ struct SearchView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Type")
             Spacer(minLength: 0)
-            DateFilterPill(model: model)  // ticket 03 adds the Source pill after it, 6 pt apart
+            DateFilterPill(model: model)
+            SourceFilterPill(model: model)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)

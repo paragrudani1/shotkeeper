@@ -106,6 +106,20 @@ final class SearchKeyMapTests: XCTestCase {
         XCTAssertTrue(SearchWindowState().datePillHelp.hasSuffix("(⌘D)"), "the pill's tooltip names the key")
     }
 
+    // MARK: Source filter (wave 1 ticket 03)
+
+    func testCommandSOpensTheSourcePickerOnEveryLayout() {
+        XCTAssertEqual(SearchKeyMap.command(keyCode: 1, modifiers: [.command], characters: "s"), .sourceFilter)
+        // Russian: the S key types "ы"; the physical key decides.
+        XCTAssertEqual(SearchKeyMap.command(keyCode: 1, modifiers: [.command], characters: "ы"), .sourceFilter)
+        // Dvorak: S is on the QWERTY ; key; the typed letter decides.
+        XCTAssertEqual(SearchKeyMap.command(keyCode: 41, modifiers: [.command], characters: "s"), .sourceFilter)
+        XCTAssertNil(SearchKeyMap.command(keyCode: 1, modifiers: [.command, .option], characters: "s"),
+                     "⌥⌘S is the global search shortcut")
+        XCTAssertEqual(SearchKeyMap.commandShortcutText(for: .sourceFilter), "⌘S")
+        XCTAssertTrue(SearchWindowState().sourcePillHelp.hasSuffix("(⌘S)"), "the pill's tooltip names the key")
+    }
+
     func testDeleteIsAPlainKey() {
         XCTAssertEqual(SearchKeyMap.plain(keyCode: 51, modifiers: []), .deleteBackward)
         XCTAssertNil(SearchKeyMap.plain(keyCode: 51, modifiers: [.option]), "⌥⌫ deletes a word in the field")

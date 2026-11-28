@@ -125,12 +125,16 @@ public struct ScreenshotQuery: Equatable, Sendable {
     public var paths: [String]?
     /// Only screenshots taken on these days (`COALESCE(captured_at, processed_at)`); nil = any time.
     public var date: DateFilter?
+    /// Only screenshots from this app or site, in any spelling with the same `SourceKey`; nil = every source.
+    public var source: SourceKey?
 
-    public init(text: String = "", contentType: ContentType? = nil, paths: [String]? = nil, date: DateFilter? = nil) {
+    public init(text: String = "", contentType: ContentType? = nil, paths: [String]? = nil, date: DateFilter? = nil,
+                source: SourceKey? = nil) {
         self.text = text
         self.contentType = contentType
         self.paths = paths
         self.date = date
+        self.source = source
     }
 }
 
@@ -371,16 +375,18 @@ public final class ScreenshotIndex: @unchecked Sendable {
     }
 
     /// The search window's query: free text (same rules as `search(_:limit:)`), an optional content-type chip, an
-    /// optional set of paths (a batch from the toast's "View in Search") and an optional date filter, all combined
-    /// with AND. Only `done` rows (analyzed screenshots) are considered, so `totalCount` matches the menu's
+    /// optional set of paths (a batch from the toast's "View in Search"), an optional date filter and an optional
+    /// source, all combined with AND. Only `done` rows (analyzed screenshots) are considered, so `totalCount` matches the menu's
     /// "214 screenshots in the index". The date filter is resolved here, against `now` and `calendar`, so "today" is
     /// today on every call (spec story 5).
-    /// Text → bm25 rank; no text → most recently processed first, or with a date filter newest taken first (the
-    /// date the rows show, so the list and its labels agree).
+    /// The source is resolved to the raw spellings in the index with that key; a key with no rows left finds nothing.
+    /// Text → bm25 rank; no text → most recently processed first, or with a date or source filter newest taken first
+    /// (the date the rows show, so the list and its labels agree).
     public func search(_ query: ScreenshotQuery, limit: Int = 50, now: Date = Date(),
                        calendar: Calendar = .current) throws -> ScreenshotSearchResult {
-        let sql = Self.searchSQL(query, now: now, calendar: calendar)
-        return try lock.withLock {
+        try lock.withLock {
+            let spellings = try query.source.map(sourceSpellings) ?? []
+            let sql = Self.searchSQL(query, sourceSpellings: spellings, now: now, calendar: calendar)
             var result = ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0)
             try db.query(sql.select, sql.bindings + [.int(Int64(max(0, limit)))]) { result.rows.append(Self.row($0)) }
             try db.query(sql.count, sql.bindings) { result.matchCount = Int($0.int64(0)) }
@@ -389,9 +395,20 @@ public final class ScreenshotIndex: @unchecked Sendable {
         }
     }
 
+    /// The raw `source_app_or_site` values whose `SourceKey` is `key` (any status, so a row analyzed later still
+    /// matches). Reads only the `screenshots_source_app_or_site` index. Call with the lock held.
+    private func sourceSpellings(_ key: SourceKey) throws -> [String] {
+        var spellings: [String] = []
+        try db.query("SELECT DISTINCT source_app_or_site FROM screenshots WHERE source_app_or_site IS NOT NULL") {
+            if let raw = $0.text(0), SourceKey(raw) == key { spellings.append(raw) }
+        }
+        return spellings
+    }
+
     /// The statements `search(_:limit:now:calendar:)` runs: `select` ends in `LIMIT ?` (bind the limit after
-    /// `bindings`), `count` takes `bindings` alone. Internal so a test can check their query plan.
-    static func searchSQL(_ query: ScreenshotQuery, now: Date,
+    /// `bindings`), `count` takes `bindings` alone. `sourceSpellings` are the raw values `query.source` stands for.
+    /// Internal so a test can check their query plan.
+    static func searchSQL(_ query: ScreenshotQuery, sourceSpellings: [String] = [], now: Date,
                           calendar: Calendar) -> (select: String, count: String, bindings: [SQLiteValue]) {
         var conditions = ["s.status = 'done'"]
         var bindings: [SQLiteValue] = []
@@ -407,9 +424,13 @@ public final class ScreenshotIndex: @unchecked Sendable {
         if let paths = query.paths {
             // One JSON-array binding instead of one `?` per path: a batch can hold hundreds of files.
             // json_each: https://www.sqlite.org/json1.html#jeach (built into SQLite since 3.38).
-            let json = (try? JSONEncoder().encode(paths)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
             conditions.append("s.path IN (SELECT value FROM json_each(?))")
-            bindings.append(.text(json))
+            bindings.append(.text(jsonArray(paths)))
+        }
+        if query.source != nil {
+            // The spellings of the chosen source, the same pattern as the batch paths (spec "Filtering by source").
+            conditions.append("s.source_app_or_site IN (SELECT value FROM json_each(?))")
+            bindings.append(.text(jsonArray(sourceSpellings)))
         }
         if let date = query.date {
             // The date the result row and the preview's "Taken" show (`SearchResultItem.date`). The same expression
@@ -423,14 +444,32 @@ public final class ScreenshotIndex: @unchecked Sendable {
             : "FROM screenshots_fts JOIN screenshots s ON s.id = screenshots_fts.rowid"
         let whereClause = "WHERE " + conditions.joined(separator: " AND ")
         let order = match != nil ? "ORDER BY bm25(screenshots_fts, \(bm25Weights)), s.id DESC"
-            : query.date != nil ? "ORDER BY \(takenAt) DESC, s.id DESC"
+            : query.date != nil || query.source != nil ? "ORDER BY \(takenAt) DESC, s.id DESC"
             : "ORDER BY COALESCE(s.processed_at, s.captured_at, 0) DESC, s.id DESC"
         return ("SELECT \(selectColumns("s")) \(from) \(whereClause) \(order) LIMIT ?",
                 "SELECT COUNT(*) \(from) \(whereClause)", bindings)
     }
 
+    private static func jsonArray(_ values: [String]) -> String {
+        (try? JSONEncoder().encode(values)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+    }
+
     /// When a screenshot was taken, else when it was processed: what the date filter and the result rows use.
     private static let takenAt = "COALESCE(s.captured_at, s.processed_at)"
+
+    /// The source list for the source filter: one `SourceFacet` per `SourceKey` over all analyzed (`done`) rows,
+    /// highest count first, then by name. Rows without a source are left out. Counts cover the whole index, not a query
+    /// (wave 1 spec, "Filter model"). Groups by raw value in SQL, then merges the groups by key in Swift.
+    public func sources() throws -> [SourceFacet] {
+        try lock.withLock {
+            var spellings: [(raw: String, count: Int)] = []
+            try db.query("""
+                SELECT source_app_or_site, COUNT(*) FROM screenshots
+                WHERE status = 'done' AND source_app_or_site IS NOT NULL GROUP BY source_app_or_site
+                """) { spellings.append(($0.text(0) ?? "", Int($0.int64(1)))) }
+            return SourceFacet.merge(spellings)
+        }
+    }
 
     public func stats() throws -> IndexStats {
         try lock.withLock {
