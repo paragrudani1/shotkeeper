@@ -198,3 +198,7 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   CHANGELOG and 06 signing scripts have no blockers; 02–05 are Parag's P1–P4; 07 Sparkle + menu row; 08 public key;
   09 release workflow; 10 README; 11 publish 0.2.0; 12 the P5 test with 0.2.1; 13 record the results. Ticket 05 asks
   Parag for a tag ruleset, which replaces the dropped reviewer as the guard against a wrong tag.
+- 2026-11-28: **PR #12 merged** (`74a641f`, head `5eaac60`; docs), then **PR #11 merged** (`0e755e8`, head `92aa001`;
+  OpenRouter `service_tier: "default"` + README). PR #13 conflicted with `t3/wave1-search` after the fast-forward to
+  #10 (`shippedColumns` changed to pairs). The chief of staff resolved it (`49aef72`: pairs plus `(3, […])`; lint ok,
+  429 Linux tests pass). Docs commits made after `5eaac60` stay on `t3/roadmap-2026-11` for the next docs PR.
