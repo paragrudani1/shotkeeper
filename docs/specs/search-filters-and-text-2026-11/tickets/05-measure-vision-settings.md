@@ -19,7 +19,7 @@ configuration per pass over a folder) and `docs/research/vision-ocr-settings.md`
       `.fast`, language correction on/off, automatic language detection on. It uses the same request setup that 04
       uses (same revision and flags), so the results apply.
 - [ ] Parag's test set (~20 images): Retina full screen, non-Retina external display, a window, a small region, dark
-      mode, code, a chat, a receipt, non-English text. Images stay on his Mac; nothing is committed or uploaded.
+      mode, code, a chat, a receipt, non-English text. Images stay on their Mac; nothing is committed or uploaded.
 - [ ] Per combination: median and slowest time per image, peak memory, known small strings found (title-bar filename,
       chat timestamp), code verbatim. The note never quotes private screenshot text.
 - [ ] Decision per the spec's rule, confirmed by Parag: lowest height with `.accurate` unless the slowest image takes

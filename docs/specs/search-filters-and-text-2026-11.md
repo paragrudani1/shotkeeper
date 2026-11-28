@@ -320,7 +320,7 @@ Text in screenshots
 
 ### Vision settings to measure on a real Mac
 
-These are starting values, held as core constants, so `text_recognized_by` records them. Parag measures on his Mac;
+These are starting values, held as core constants, so `text_recognized_by` records them. Parag measures on their Mac;
 the results go into a dated note in `docs/research/` and set the constants before the OCR PR merges.
 
 - **Minimum text height** (`minimumTextHeight`, a fraction of the image height; the default is 1/32 [V1]).
