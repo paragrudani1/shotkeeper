@@ -92,3 +92,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   decision (above), so it went back to Parag.
   - Side finding: OpenRouter's endpoint list for Inkling 2 Mini changed after 2026-11-22: six endpoints and $0.06/M
     input. `../research/openrouter.md`, the `provider.only` pin and the ZDR checks need re-checking.
+- 2026-11-28: **Feature 7 dropped.** After the capture research, Parag dropped **both clipboard capture and screen
+  recordings**: "Drop clipboard capture", "drop screen recording feature too". This supersedes the clipboard
+  "on by default" decision above. `../research/capture-types.md` stays as the record of why. With only #5 left
+  needing the consent change, it moves into the #5 (fix or re-run a title) work instead of a separate prefactor PR.
+  The remaining roadmap is features 1–6 and 8 (auto-update only).
