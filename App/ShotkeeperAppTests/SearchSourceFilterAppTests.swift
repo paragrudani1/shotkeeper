@@ -40,8 +40,11 @@ final class SearchSourceFilterAppTests: XCTestCase {
         XCTAssertGreaterThan(short, 40)
         XCTAssertLessThan(pillWidth("Source", isOn: false), 100, "off: name and chevron only")
         XCTAssertGreaterThan(pillWidth("GitHub Desktop"), short, "a longer name is wider")
-        XCTAssertEqual(pillWidth("Microsoft Remote Desktop Connection Client for Mac"), SourceFilterPill.maxWidth,
-                       accuracy: 0.5, "a long name stops at 180 pt")
+        // A truncated title is laid out to whole glyphs plus "…", so it can end a few points short of the cap (CI:
+        // 170 pt). The rule is "at most 180 pt", and it must be clearly wider than a mid-length name.
+        let long = pillWidth("Microsoft Remote Desktop Connection Client for Mac")
+        XCTAssertLessThanOrEqual(long, SourceFilterPill.maxWidth + 0.5, "a long name stops at 180 pt")
+        XCTAssertGreaterThan(long, SourceFilterPill.maxWidth - 20, "a long name uses (nearly) all of the 180 pt")
     }
 
     func testTheListLoadsEachTimeThePanelOpens() async {
