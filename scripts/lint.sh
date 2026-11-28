@@ -18,6 +18,9 @@
 #                 with the deep option must be a `--verify` call: signing is inside-out, one item at a time
 #                 (scripts/sign-app.sh; Sparkle "Sandboxing" > "Code Signing", Apple "Creating distribution-signed
 #                 code for macOS"). Lines that are only a `#` comment are ignored; no allow marker.
+#                 Also (build settings) an `OTHER_CODE_SIGN_FLAGS` line with the deep option in App/project.yml or in
+#                 any `*.xcconfig` (outside .git, .build, build, DerivedData): Sparkle's "Sandboxing" page names that
+#                 setting. Lines that are only a `#` or `//` comment are ignored.
 #
 # Allow markers must be the trailing comment of the line and give a non-empty reason in parentheses:
 #   `// lint-allow: <rule> (<why>)`. A marker inside a string literal or without a reason does not count.
@@ -26,7 +29,9 @@
 # closing `*/` on a `/* ... */ code` line is not checked; method references without a call
 # (`let op = FileManager.default.trashItem`) are not caught; a call split so the name and `(` are on different
 # lines is not caught. deep-sign sees one line at a time: a codesign call continued with `\` onto the next line,
-# or codesign reached through a variable, is not caught.
+# or codesign reached through a variable, is not caught; a line that holds both a deep signing call and a `--verify`
+# call (`codesign --deep -s - A && codesign --verify A`) passes; scripts outside scripts/*.sh (subfolders, no `.sh`)
+# are not checked; an `OTHER_CODE_SIGN_FLAGS` value on a later line (a YAML list under the key) is not caught.
 set -euo pipefail
 
 ROOT="${LINT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -99,12 +104,23 @@ EOF
       - run: codesign $deep -s - build/App.app
       - run: codesign --verify $deep --strict build/App.app
 EOF
+  mkdir -p "$tmp/App/Config"
+  cat > "$tmp/App/project.yml" <<EOF
+    OTHER_CODE_SIGN_FLAGS: "--timestamp $deep"
+    OTHER_CODE_SIGN_FLAGS: "--timestamp"
+    # OTHER_CODE_SIGN_FLAGS: "$deep" is only a comment here
+EOF
+  cat > "$tmp/App/Config/Release.xcconfig" <<EOF
+OTHER_CODE_SIGN_FLAGS[config=Release] = \$(inherited) $deep
+// OTHER_CODE_SIGN_FLAGS = $deep is only a comment here
+OTHER_CODE_SIGN_FLAGS = ${deep}-not-an-option
+EOF
   output="$(LINT_ROOT="$tmp" "$0" 2>&1 || true)"
   # core: 7 imports (AppKit, Security, SwiftUI.Color, public AppKit, package SwiftUI, internal CoreGraphics,
   # `; import Security`) + trashItem + analyze = 9; app: removeItem + unlink + recycle + unlinkat + rmdir +
   # 3 qualified remove + spaced removeItem + 4 bad file-op markers + 1 bad analyze marker = 14;
-  # deep-sign: 2 in scripts/sign.sh + 1 in the workflow = 3
-  expected=26
+  # deep-sign: 2 in scripts/sign.sh + 1 in the workflow + 1 in App/project.yml + 1 in the xcconfig = 5
+  expected=28
   found="$(printf '%s\n' "$output" | grep -c '^  ' || true)"
   if [ "$found" != "$expected" ]; then
     echo "self-test: expected $expected violations, got $found:"; printf '%s\n' "$output"; exit 1
@@ -182,6 +198,17 @@ if [ ${#deep_files[@]} -gt 0 ]; then
     | grep -vE -- '--verify([^A-Za-z0-9_-]|$)' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
 fi
 report deep-sign "never sign with the deep option; sign inside-out with scripts/sign-app.sh (verifying may use it)" "$hits"
+
+flag_files=()
+[ -f App/project.yml ] && flag_files+=("App/project.yml")
+while IFS= read -r f; do flag_files+=("${f#./}"); done < <(find . \( -name .git -o -name .build -o -name build \
+  -o -name DerivedData \) -prune -o -type f -name '*.xcconfig' -print | sort)
+hits=""
+if [ ${#flag_files[@]} -gt 0 ]; then
+  hits="$(grep -nE -- 'OTHER_CODE_SIGN_FLAGS' "${flag_files[@]}" /dev/null | grep -E -- "$deep_option" \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)"
+fi
+report deep-sign "OTHER_CODE_SIGN_FLAGS must not hold the deep option (Xcode would sign with it)" "$hits"
 
 if [ "$failures" -gt 0 ]; then
   echo "lint: $failures violation(s). Rules and allow markers: scripts/lint.sh header."

@@ -12,8 +12,26 @@ if [ "$#" -ne 0 ]; then
   exit 2
 fi
 
-ls -d /Applications/Xcode*.app
-XCODE="$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|_RC|Release_Candidate' | sort -V | tail -1)"
+# A glob loop, not `ls | grep`: with pipefail, a grep that matches nothing (or an ls that finds nothing) ended the
+# script inside the command substitution, so the message below never printed.
+stable=""
+for app in /Applications/Xcode*.app; do
+  [ -d "$app" ] || continue
+  echo "$app"
+  case "$app" in
+    /Applications/Xcode_*.app) ;;
+    *) continue ;;
+  esac
+  case "$(printf '%s' "$app" | tr '[:upper:]' '[:lower:]')" in
+    *beta* | *_rc* | *release_candidate*) continue ;;
+  esac
+  stable="$stable$app
+"
+done
+XCODE=""
+if [ -n "$stable" ]; then
+  XCODE="$(printf '%s' "$stable" | sort -V | tail -1)"
+fi
 if [ -z "$XCODE" ]; then
   echo "select-xcode: no stable /Applications/Xcode_*.app found" >&2
   exit 1
