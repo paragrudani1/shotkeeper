@@ -198,6 +198,11 @@ final class SearchPanelController {
 
     /// Open / copy / reveal on the selected result (the search-panel action set; features add theirs there).
     let resultActions: SearchResultActions
+    /// The index's change feed (`ScreenshotIndex.changes()`); nil when the index never opened. While the panel is
+    /// shown, an `.updated` change of a listed row refreshes the search, so the Copy Text badge follows the row's
+    /// text status and a waiting Copy Text resolves.
+    var indexChanges: (() -> AsyncStream<IndexChange>)?
+    private var changesTask: Task<Void, Never>?
 
     init(model: SearchViewModel = SearchViewModel(search: { _, _, _, _ in ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0) })) {
         self.model = model
@@ -220,6 +225,7 @@ final class SearchPanelController {
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         model.requestFocus()
+        watchIndexChanges()
     }
 
     /// The batch toast's "View in Search": that batch's files, newest first.
@@ -230,6 +236,20 @@ final class SearchPanelController {
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         model.requestFocus()
+        watchIndexChanges()
+    }
+
+    /// Subscribes while the panel is shown (cancelled on dismiss, which ends the subscription).
+    private func watchIndexChanges() {
+        guard changesTask == nil, let changes = indexChanges?() else { return }
+        changesTask = Task { [weak self] in
+            for await change in changes {
+                guard let self else { return }
+                if change.kind == .updated, self.model.state.items.contains(where: { $0.id == change.id }) {
+                    self.model.refresh()
+                }
+            }
+        }
     }
 
     func hide() {
@@ -283,6 +303,8 @@ final class SearchPanelController {
             model.toggleDatePicker()
         case .deleteBackward:
             return false  // deletes in the field
+        case .copyText:
+            return resultActions.copyText()
         }
         return true
     }
@@ -307,7 +329,7 @@ final class SearchPanelController {
             return picker.takesArrowKeys  // nothing to type into in the list
         case .copyImage:
             return false  // ⌘C copies a date field's selected text, never the image behind the picker
-        case .reveal, .quickLook, .chip:
+        case .reveal, .quickLook, .chip, .copyText:
             break  // ignored while a picker is open
         }
         return true
@@ -318,6 +340,7 @@ final class SearchPanelController {
     var actions: SearchViewActions {
         SearchViewActions(open: { [weak self] in self?.resultActions.open($0) },
                           copy: { [weak self] in self?.resultActions.copy($0) },
+                          copyText: { [weak self] in self?.resultActions.copyText() },
                           reveal: { [weak self] in self?.resultActions.reveal($0) },
                           quickLook: { [weak self] in self?.toggleQuickLook() },
                           processExisting: { [weak self] in
@@ -393,7 +416,7 @@ final class SearchPanelController {
             guard let url = model.selectedURL else { return false }
             resultActions.copy(url)
             return true
-        case .reveal, .chip:
+        case .reveal, .chip, .copyText:
             return handle(key)
         case .dateFilter, .deleteBackward:
             return false
@@ -413,6 +436,8 @@ final class SearchPanelController {
         panel.onDismiss = { [weak self] in
             guard let self else { return }
             if self.isQuickLookVisible { QLPreviewPanel.shared().orderOut(nil) }
+            self.changesTask?.cancel()
+            self.changesTask = nil
             self.model.windowHidden()
             // Only when Shotkeeper became active (a click into Quick Look); otherwise the front app still has focus.
             if NSApp.isActive, let previous = self.previousApp, !previous.isTerminated {

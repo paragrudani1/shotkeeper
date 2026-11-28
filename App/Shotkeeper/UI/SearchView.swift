@@ -6,12 +6,14 @@ import SwiftUI
 struct SearchViewActions {
     var open: (URL) -> Void
     var copy: (URL) -> Void
+    /// The Copy Text badge (the same as ⇧⌘C).
+    var copyText: () -> Void
     var reveal: (URL) -> Void
     var quickLook: () -> Void
     var processExisting: () -> Void
 
-    @MainActor static let none = SearchViewActions(open: { _ in }, copy: { _ in }, reveal: { _ in }, quickLook: {},
-                                                   processExisting: {})
+    @MainActor static let none = SearchViewActions(open: { _ in }, copy: { _ in }, copyText: {}, reveal: { _ in },
+                                                   quickLook: {}, processExisting: {})
 }
 
 /// The search window (spec PR 2): 880×540, radius 16. Row 1 field, row 2 type chips and filter pills
@@ -354,6 +356,7 @@ struct SearchPreview: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     PreviewImageView(path: item.path, title: item.title, pill: model.pill,
+                                     badge: model.state.copyTextBadge, onCopyText: actions.copyText,
                                      onDoubleClick: { actions.open(url) })
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.title)
@@ -437,7 +440,8 @@ struct TagChipStyle: ButtonStyle {
     }
 }
 
-/// The large preview: 220 pt tall, aspect fit, radius 12, thin border, and the "✓ Copied" pill.
+/// The large preview: 220 pt tall, aspect fit, radius 12, thin border, the "✓ Copied" pill, and the Copy Text badge
+/// (`CopyTextBadgeView`) in its bottom-right corner.
 struct PreviewImageView: View {
     static let height: CGFloat = 220
     /// Longest side requested from QuickLook (points); the image is scaled to fit.
@@ -446,6 +450,9 @@ struct PreviewImageView: View {
     let path: String
     let title: String
     let pill: SearchPill?
+    /// nil hides the badge (no text, never read, no selection).
+    var badge: CopyTextBadge?
+    var onCopyText: () -> Void = {}
     var onDoubleClick: () -> Void = {}
     @Environment(\.thumbnailSource) private var source
     @Environment(\.displayScale) private var displayScale
@@ -463,14 +470,15 @@ struct PreviewImageView: View {
             switch pill {
             case .copied?:
                 pillLabel("Copied", symbol: "checkmark")
+            case .textCopied?:
+                pillLabel("Text copied", symbol: "checkmark")
+            case .noText?:
+                pillLabel(SearchWindowState.noTextMessage, symbol: "text.viewfinder")
             case .problem(let message)?:
                 pillLabel(message, symbol: "exclamationmark.triangle.fill")
             case nil:
                 EmptyView()
             }
-        }
-        .overlay {
-            FileDragArea(path: path, dragImage: { loadedImage }, onMouseDown: { if $0 >= 2 { onDoubleClick() } })
         }
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
@@ -481,6 +489,19 @@ struct PreviewImageView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Preview of \(title)")
         .accessibilityAddTraits(.isImage)
+        .overlay(alignment: .bottomTrailing) {
+            // Its own VoiceOver element, outside the image's ignored children.
+            if let badge {
+                CopyTextBadgeView(badge: badge, action: onCopyText).padding(CopyTextBadgeView.inset)
+            }
+        }
+        .overlayPreferenceValue(CopyTextBadgeFrameKey.self) { badgeAnchor in
+            // Topmost, so every click on the image reaches the drag view; it hands a press on the badge to the badge.
+            GeometryReader { proxy in
+                FileDragArea(path: path, dragImage: { loadedImage }, onMouseDown: { if $0 >= 2 { onDoubleClick() } },
+                             badgeFrame: badgeAnchor.map { proxy[$0] }, onBadgeClick: onCopyText)
+            }
+        }
         .task(id: path) {
             guard source.cached(path, Self.requestSide) == nil else { return }
             if let image = await source.load(path, Self.requestSide, displayScale) { loaded = (path, image) }
@@ -515,6 +536,9 @@ struct FileDragArea: NSViewRepresentable {
     let path: String
     var dragImage: () -> NSImage?
     var onMouseDown: (Int) -> Void
+    /// The Copy Text badge's frame in this view (SwiftUI coordinates, origin top-left); nil when there is none.
+    var badgeFrame: CGRect?
+    var onBadgeClick: () -> Void = {}
 
     func makeNSView(context: Context) -> FileDragView {
         let view = FileDragView()
@@ -526,6 +550,8 @@ struct FileDragArea: NSViewRepresentable {
         view.path = path
         view.dragImage = dragImage
         view.onMouseDown = onMouseDown
+        view.badgeFrame = badgeFrame
+        view.onBadgeClick = onBadgeClick
     }
 }
 
@@ -533,7 +559,13 @@ final class FileDragView: NSView, NSDraggingSource {
     var path = ""
     var dragImage: () -> NSImage? = { nil }
     var onMouseDown: (Int) -> Void = { _ in }
+    /// The Copy Text badge's frame (SwiftUI coordinates, origin top-left). A press there belongs to the badge: it
+    /// never starts a drag, never reports a click, and the next press elsewhere is not its double-click.
+    var badgeFrame: CGRect?
+    var onBadgeClick: () -> Void = {}
     private var mouseDownLocation: NSPoint?
+    private var pressIsOnBadge = false
+    private var lastPressWasOnBadge = false
     /// Points the mouse must move with the button down before a drag starts.
     static let dragThreshold: CGFloat = 4
 
@@ -541,16 +573,30 @@ final class FileDragView: NSView, NSDraggingSource {
     override var mouseDownCanMoveWindow: Bool { false }
 
     override func mouseDown(with event: NSEvent) {
+        pressIsOnBadge = isOnBadge(event)
+        defer { lastPressWasOnBadge = pressIsOnBadge }
+        guard !pressIsOnBadge else {
+            mouseDownLocation = nil
+            return
+        }
         mouseDownLocation = event.locationInWindow
-        onMouseDown(event.clickCount)
+        onMouseDown(lastPressWasOnBadge ? 1 : event.clickCount)
     }
 
     override func mouseUp(with event: NSEvent) {
         mouseDownLocation = nil
+        if pressIsOnBadge, isOnBadge(event) { onBadgeClick() }  // like a button: released on it
+        pressIsOnBadge = false
+    }
+
+    private func isOnBadge(_ event: NSEvent) -> Bool {
+        guard let badgeFrame else { return false }
+        let point = convert(event.locationInWindow, from: nil)
+        return badgeFrame.contains(CGPoint(x: point.x, y: isFlipped ? point.y : bounds.height - point.y))
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let start = mouseDownLocation else { return }
+        guard !pressIsOnBadge, let start = mouseDownLocation else { return }
         let location = event.locationInWindow
         guard hypot(location.x - start.x, location.y - start.y) >= Self.dragThreshold else { return }
         mouseDownLocation = nil

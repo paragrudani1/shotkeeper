@@ -21,6 +21,10 @@ enum SearchSnapshots {
             UISnapshot("search-date-custom") { Fixtures.search(rows: Array(Fixtures.searchRows.prefix(5)), date: .novemberWeek, datePicker: true) },
             UISnapshot("search-no-match-filters-only") { Fixtures.search(chip: .receipt, rows: [], date: .yesterday) },
             UISnapshot("search-no-match-filters") { Fixtures.search(text: "stripe", chip: .receipt, rows: [], date: .last30Days) },
+            UISnapshot("search-text-copied") { Fixtures.searchText(.done, pill: .textCopied) },
+            UISnapshot("search-text-reading") { Fixtures.searchText(.pending) },
+            UISnapshot("search-text-failed") { Fixtures.searchText(.failed, pill: .problem(SearchWindowState.textFailedMessage)) },
+            UISnapshot("search-text-none") { Fixtures.searchText(.noText, pill: .noText) },
         ]
     }
 }
@@ -83,6 +87,18 @@ extension Fixtures {
         return searchView(state, copied: copied, problem: problem)
     }
 
+    /// Copy Text states (ticket 06): the selected first row has `status` (with its text when `done`), and `pill` is
+    /// what ⇧⌘C just showed. The badge follows the status: Copy Text, Reading text…, Read text again, or none.
+    static func searchText(_ status: TextStatus, pill: SearchPill? = nil) -> some View {
+        var state = SearchWindowState(now: now, time: time)
+        var rows = searchRows
+        rows[0].textStatus = status
+        rows[0].recognizedText = status == .done ? "Semiconductor flashcards\n1. Wafer: a thin slice of silicon" : nil
+        rows[0].textError = status == .failed ? "VNErrorDomain 9" : nil
+        state.apply(ScreenshotSearchResult(rows: rows, matchCount: rows.count, totalCount: 214), for: state.query)
+        return searchView(state, copied: false, problem: nil, pill: pill)
+    }
+
     static func searchIndexError() -> some View {
         var state = SearchWindowState()
         let problem = UserFacingProblem(message: "the index file is damaged")  // core maps SQLITE_NOTADB to this
@@ -90,10 +106,18 @@ extension Fixtures {
         return searchView(state, copied: false, problem: nil)
     }
 
-    private static func searchView(_ state: SearchWindowState, copied: Bool, problem: String?) -> some View {
+    private static func searchView(_ state: SearchWindowState, copied: Bool, problem: String?,
+                                   pill: SearchPill? = nil) -> some View {
         let model = SearchViewModel(state: state, now: { now }, time: time) { _, _, _, _ in throw CancellationError() }
         if copied { model.showCopied() }
         if let problem { model.showProblem(problem) }
+        switch pill {
+        case .copied?: model.showCopied()
+        case .textCopied?: model.showTextCopied()
+        case .noText?: model.showNoText()
+        case .problem(let message)?: model.showProblem(message)
+        case nil: break
+        }
         return SearchView(model: model, actions: .none, opaqueBackground: true)
     }
 }

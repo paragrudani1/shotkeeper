@@ -13,7 +13,8 @@ final class SearchViewModel {
     typealias SearchFunction = @Sendable (ScreenshotQuery, Int, Date, Calendar) throws -> ScreenshotSearchResult
 
     private(set) var state: SearchWindowState
-    /// A short message on the preview image: "✓ Copied" after ⌘C / Copy Image, or a problem (file gone).
+    /// A short message on the preview image: "✓ Copied" after ⌘C / Copy Image, "✓ Text copied" after ⇧⌘C, or a
+    /// problem (file gone, no text, text not read).
     private(set) var pill: SearchPill?
     /// Bumped when the panel is shown; the view focuses the search field.
     private(set) var focusRequest = 0
@@ -22,6 +23,9 @@ final class SearchViewModel {
 
     /// Posts a VoiceOver announcement from the panel ("Date cleared", "Search cleared"). Set by the controller.
     @ObservationIgnored var announce: @MainActor (String) -> Void = { _ in }
+    /// Called after a search's answer was applied (a refresh after a row's `.updated` change resolves a waiting
+    /// Copy Text there). Set by `SearchResultActions`.
+    @ObservationIgnored var resultsApplied: @MainActor () -> Void = {}
     @ObservationIgnored let debounce: Duration
     @ObservationIgnored let now: () -> Date
     @ObservationIgnored let time: TimeLabel
@@ -163,10 +167,30 @@ final class SearchViewModel {
         state.select(index)
     }
 
+    // MARK: Copy Text (core decides; `SearchResultActions` performs)
+
+    func requestCopyText(pasteboardChangeCount: Int) -> CopyTextOutcome {
+        state.requestCopyText(pasteboardChangeCount: pasteboardChangeCount)
+    }
+
+    func resolveWaitingTextCopy(pasteboardChangeCount: Int) -> LateTextCopy? {
+        state.resolveWaitingTextCopy(pasteboardChangeCount: pasteboardChangeCount)
+    }
+
     // MARK: Feedback
 
     func showCopied() {
         showPill(.copied, for: SearchWindowState.copiedPillDuration)
+    }
+
+    /// "✓ Text copied", with the "✓ Copied" timing.
+    func showTextCopied() {
+        showPill(.textCopied, for: SearchWindowState.copiedPillDuration)
+    }
+
+    /// "No text found in this screenshot.": not a failure, so it has its own symbol.
+    func showNoText() {
+        showPill(.noText, for: SearchWindowState.problemPillDuration)
     }
 
     func showProblem(_ message: String) {
@@ -211,7 +235,10 @@ final class SearchViewModel {
             case .found(let result): applied = self.state.apply(result, for: query)
             case .failed(let error): applied = self.state.fail(error, for: query)
             }
-            if applied { self.searchesRun += 1 }
+            if applied {
+                self.searchesRun += 1
+                self.resultsApplied()
+            }
         }
     }
 
@@ -224,5 +251,9 @@ final class SearchViewModel {
 /// The message shown on the preview image.
 enum SearchPill: Equatable {
     case copied
+    /// "✓ Text copied" (Copy Text).
+    case textCopied
+    /// "No text found in this screenshot." (`text.viewfinder`, not the warning symbol: nothing went wrong).
+    case noText
     case problem(String)
 }

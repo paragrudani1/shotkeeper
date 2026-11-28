@@ -130,3 +130,69 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   the typed one, not the field's previous value.
 - VoiceOver reads the pill as "Date, any time" / "Date, last 7 days", the ✕ as "Clear date", and announces "Date
   cleared", "Filters cleared" and "Search cleared".
+
+## Ticket 06: Copy Text (⇧⌘C and the badge) (2026-11-28, branch `t3/w1-06-copy-text`)
+
+### What was built
+- Core: `SearchResultItem` carries `recognizedText`, `textStatus` and `textError`. `SearchWindowState.copyTextOutcome`
+  (`CopyTextOutcome`: copy / read first / no text / failed with "file missing" told apart / wait / not available),
+  `copyTextBadge` (`CopyTextBadge`: Copy Text, Reading text…, Read text again, with their tooltips and VoiceOver
+  wording), and the late-copy rule (`requestCopyText(pasteboardChangeCount:)`, `waitingTextCopy`,
+  `resolveWaitingTextCopy(pasteboardChangeCount:)`). Tests: `SearchCopyTextTests` (rows saved to an in-memory index,
+  late copies through the index's conditional write).
+- `SearchKeyMap`: ⇧⌘C → `.copyText`, a new trigger `.shiftCommand(Character)`, matched like ⌘ keys on the lowercased
+  ASCII character, else key code 8. Shift is accepted for C only. ⌘C is unchanged.
+- App: `WorkspaceActions.copyText` (one `NSPasteboardItem`, `.string` only), `SearchResultActions.copyText()` and
+  `resolveWaitingTextCopy()`, the pills `.textCopied` ("✓ Text copied", the "✓ Copied" 1.4 s) and `.noText` (3 s,
+  `text.viewfinder`), `CopyTextBadgeView.swift` (the badge), and four snapshots: `search-text-copied`,
+  `search-text-reading`, `search-text-failed` and `search-text-none`.
+
+### Decisions and departures
+- 2026-11-28: **departure from the spec: Copy Text is a badge on the preview image, not a button in the button row**
+  (design §2 "The one bold choice", approved by Parag). It sits bottom-right of the 220 pt image frame, inset 10 pt:
+  a 26 pt capsule, black 72%, with the "⇧⌘C" keycap. The button row keeps its four buttons and the footer keeps its
+  five hints. The keycap is shown only on "Copy Text": on a failed row ⇧⌘C shows the error rather than re-reading,
+  and the mockup shows no keycap on the reading or failed badges.
+- 2026-11-28: **interim until ticket 07: a never-read row (`textStatus` NULL) shows no badge, and ⇧⌘C beeps.** Core
+  already returns `.readFirst(id:)` for it. Ticket 07 performs the read and changes `copyTextBadge` for NULL from
+  hidden to `.copyText`, as design §5 asks (one line and its test in `SearchCopyTextTests`).
+- 2026-11-28: **until ticket 07, a click on "Read text again" does what ⇧⌘C does**: it shows "The text could not be
+  read." (or the missing-file sentence). The re-read itself is 07's.
+- 2026-11-28: "file missing" is recognised by `textError == "file missing"` (`SearchWindowState.fileMissingReason`).
+  That is the spec's reason and the value of PR #18's `TextRecognitionRunner.fileMissingReason`. Core can't reference
+  that constant until #18 merges; whoever merges second should make one of them use the other.
+- 2026-11-28: **the open panel refreshes on index changes.** While the panel is shown, `SearchPanelController`
+  subscribes to `ScreenshotIndex.changes()` (cancelled on hide). An `.updated` change of a listed row runs the search
+  again, so the badge goes from "Reading text…" to "Copy Text" without reopening. That refresh is also the moment a
+  waiting copy is resolved (`SearchViewModel.resultsApplied`). The spec assumed "an open search refreshes" on the
+  `.updated` change, but no ticket built it.
+- 2026-11-28: **late copy.** ⇧⌘C on a `pending` row records the pasteboard's `changeCount`. The copy is performed
+  after a refresh only if the panel still shows that row and the `changeCount` is unchanged. Moving the selection, a
+  query that selects another row, or hiding the panel drops the request at once, and coming back to the row does not
+  revive it. Pressing ⇧⌘C again replaces the request (only the last one counts).
+- 2026-11-28: a waiting copy whose row ends `none` or `failed` shows that state's pill: the user asked to copy, so
+  they learn why nothing was copied. A dropped copy shows nothing (design §5).
+- 2026-11-28: a `done` row without text (empty or whitespace only) counts as "no text". The runner never stores one,
+  but the badge and the pasteboard should not offer an empty copy.
+- 2026-11-28: **badge clicks are handled by `FileDragView`.** The drag view lies over the whole image and is told the
+  badge's frame (anchor preference `CopyTextBadgeFrameKey`). A press on the badge never starts a drag and is never
+  reported as an image click. The next press on the image counts as a single click, so badge then image is not a
+  double-click that opens the file. A release on the badge runs Copy Text. The SwiftUI `Button` underneath gives
+  VoiceOver and Full Keyboard Access the same action. This works whichever of the two SwiftUI's hit testing picks
+  (`testAClickOnTheBadgeIsNotAClickOnTheImage`).
+- 2026-11-28: ⇧⌘C is ignored while the date picker is open (design §6). In Quick Look's panel it does what it does in
+  the search panel.
+- 2026-11-28: **privacy.** The recognized text reaches only the pasteboard, through the user's ⇧⌘C or badge click.
+  `SearchResultActions` logs nothing. The announcement is "Text copied" and the pills never contain the text.
+
+### Real-Mac checks (CI can't see these)
+- ⇧⌘C on QWERTY, Dvorak and Russian layouts copies the text; ⌘C still copies the image, or the field's selected text.
+- The copy pastes as plain text only into TextEdit (rich text mode) and Slack, with line breaks kept.
+- Late copy: press ⇧⌘C on a row still being read, then copy something else in another app before it finishes. The
+  clipboard keeps the other copy, and the badge turns to "Copy Text".
+- The badge over a light and over a dark screenshot. A click on it doesn't start a drag; a click on it and then on the
+  image doesn't open the file.
+- VoiceOver reads the badge as "Copy Text" / "Reading text" / "Read text again" (with its hint), and announces "Text
+  copied", "No text found in this screenshot." and "The text could not be read.".
+- Quick Look (Space): does macOS Live Text let the user select part of the text? Record the result here (spec
+  "Which key copies the text"; design §9).

@@ -225,6 +225,18 @@ final class WorkspaceCopyTests: XCTestCase {
         XCTAssertEqual(item.string(forType: .fileURL), file.absoluteString)
         XCTAssertFalse(WorkspaceActions.copyImage(directory.appendingPathComponent("gone.png"), to: pasteboard))
     }
+
+    /// Copy Text: one item with only plain text, so TextEdit (rich mode) and Slack paste no styling.
+    @MainActor
+    func testCopyTextWritesOneItemWithOnlyAString() throws {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("shotkeeper-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        XCTAssertTrue(WorkspaceActions.copyText("Order #A-20417\nTotal $248.12", to: pasteboard))
+        XCTAssertEqual(pasteboard.pasteboardItems?.count, 1)
+        let item = try XCTUnwrap(pasteboard.pasteboardItems?.first)
+        XCTAssertEqual(item.types, [.string])
+        XCTAssertEqual(item.string(forType: .string), "Order #A-20417\nTotal $248.12", "line breaks kept")
+    }
 }
 
 @MainActor
