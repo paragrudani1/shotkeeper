@@ -4,6 +4,11 @@
   - `ShotkeeperCore`: Foundation-only, builds on Linux. Clairic + local analyzers, filename sanitizer, file organizer, undo log,
     SQLite FTS5 index, processing queue, pipeline, settings model, model-runtime planning logic (quant picker, command lines).
   - `CSQLite`: system module for Linux only; Apple platforms `import SQLite3`. No third-party dependencies (decided to cut CI risk).
+    - 2026-11-28 (auto-update ticket 07): **the only exception is Sparkle 2.10.1**, approved by Parag 2026-11-28
+      ([workflow](workflow.md)). Pinned with `exactVersion: 2.10.1` in `App/project.yml`, linked by the app target only
+      (the root `Package.swift`, core, CLI and Linux build never depend on it), imported only in
+      `App/Shotkeeper/Coordinator/UpdateChecks.swift` (lint rule `sparkle-import`). Upgrading Sparkle is its own PR
+      that re-runs the real-Mac checks ([auto-update](auto-update.md)).
   - `shotkeeper-cli`: Linux-capable CLI used to run live analyzer calls from this box.
   - macOS app (XcodeGen `project.yml`): AppKit/SwiftUI, FSEvents watcher, ImageIO downscale, xattrs, Keychain, SMAppService,
     hotkey, process management for `mlx_lm.server`. Depends on the local package.

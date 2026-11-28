@@ -147,6 +147,27 @@ final class MenuTests: XCTestCase {
         XCTAssertEqual(state.rows, [.fixSettings, .recent(9), .undo, .search, .settings, .about, .quit])
     }
 
+    func testCheckForUpdatesSitsBetweenAboutAndQuitAndIsSkippedWhileDisabled() {
+        var state = MenuViewState(status: MenuStatusSummary(dot: .green, headline: "", detail: ""), now: Date(),
+                                  undoTitle: "Undo", canUndo: false, isPaused: false, searchShortcut: "⌥⌘S", version: "1",
+                                  canCheckForUpdates: true)
+        XCTAssertEqual(state.rows, [.pause, .processExisting, .search, .settings, .about, .checkForUpdates, .quit])
+        // Before setup it is still there: updating doesn't depend on a backend.
+        state.showsFinishSetup = true
+        state.showsPauseResume = false
+        state.showsProcessExisting = false
+        XCTAssertEqual(state.rows, [.finishSetup, .search, .settings, .about, .checkForUpdates, .quit])
+        // While a check or an install runs, the row is disabled and ↑/↓ goes from About straight to Quit.
+        state.canCheckForUpdates = false
+        XCTAssertEqual(state.rows, [.finishSetup, .search, .settings, .about, .quit])
+        let highlight = MenuHighlight()
+        highlight.row = .about
+        highlight.move(1, in: state.rows)
+        XCTAssertEqual(highlight.row, .quit)
+        highlight.move(-1, in: state.rows)
+        XCTAssertEqual(highlight.row, .about)
+    }
+
     func testStatusIconsAreTemplates() {
         for status: QueueStatus in [.idle, .processing(current: URL(fileURLWithPath: "/a"), remaining: 0),
                                     .paused(until: nil), .offline, .error("x")] {

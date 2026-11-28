@@ -7,7 +7,7 @@ macOS menu-bar app that renames, tags and indexes new screenshots using a model 
   Use `#if canImport(FoundationNetworking)` for URLSession on Linux; SQLite via `#if canImport(SQLite3) import SQLite3 #else import CSQLite`.
 - `Tests/ShotkeeperCoreTests` — XCTest; fixtures in `Tests/ShotkeeperCoreTests/Fixtures` (load with `Bundle.module`).
 - `Sources/shotkeeper-cli` — CLI for live analyzer calls and release tooling.
-- `App/` — macOS app (XcodeGen `App/project.yml`), built only in CI.
+- `App/` — macOS app (XcodeGen `App/project.yml`), built only in CI. Its one third-party dependency is Sparkle, pinned `exactVersion: 2.10.1`, app target only, imported only in `App/Shotkeeper/Coordinator/UpdateChecks.swift` (approved by Parag 2026-11-28; upgrades are their own PR with the real-Mac checks).
 - `design/icon/` — app icon and menu bar glyph SVGs, generated from core `IconGeometry` with the AppIcon asset catalog and `App/Shotkeeper/AppIcon.icon` by `scripts/make-icons.sh` (never hand-edit).
 - `docs/wiki/` — dated decision log (read `docs/wiki/index.md` first). `docs/research/` — API facts with sources.
 - `docs/specs/` — approved product specs (verbatim from Parag; never edit the requirements).
