@@ -221,3 +221,6 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   files are never listed and are the copy kept; a trashed row stays marked trashed until the Trash is emptied;
   menu Undo takes back the whole last batch (also wave 2's Sort Existing); the Trash call follows the research;
   a separate Clean Up window from the menu bar.
+- 2026-11-28: **PR #14 merged into `t3/wave1-search`** (`e25049c`; wave 1 ticket 05, the Vision measurement tool).
+  `macos-app` type-checked it and ran it on two generated images, both green. Handed to Parag to run (instructions:
+  `docs/research/vision-ocr-settings.md` "How to run (Parag)"). Ticket 04 waits for the results.
