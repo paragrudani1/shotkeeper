@@ -348,3 +348,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   - **Process correction:** delegated agents refuse to wait on CI (T3 rule: children never watch or poll), so the
   "waiting for CI is part of the task" line in briefs does nothing. The chief of staff watches each PR's checks,
   and a red `macos-app` gets its own fix delegate.
+- 2026-11-28: **PR #28 review (Copy Text): fix first**, no blockers. Privacy, the pasteboard (one `.string` item,
+  `changeCount` compared in the same main-actor step), keys and badge clicks are all clean. Should-fix: the panel's
+  change-feed refresh runs one search per change, which ticket 07's bulk reads would turn into a storm; missing tests
+  that hiding unsubscribes and that unlisted rows don't refresh; scroll doesn't follow a re-sort; the badge tooltip is
+  likely hidden under `FileDragView`. A fix agent took these plus the Source pill width polish from #23.
