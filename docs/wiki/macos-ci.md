@@ -7,10 +7,21 @@ Workflow: `.github/workflows/ci.yml` (added on branch `app/phase1`, 2026-11-21).
 - `linux-core`: container `swift:6.4.3-noble` + `libsqlite3-dev`; `swift build`, then `swift test`.
   2026-11-28 (`3e34e7f`): first step "Lint (scripts/lint.sh)": `--self-test`, then the rules (see
   [prefactor-app](prefactor-app.md)).
+  2026-11-28 (ticket 06): lint rule `deep-sign` (a `codesign` line in `scripts/*.sh` or a workflow that has `--deep`
+  must be a `--verify` call), and the step "Signing script self-test (fake codesign)" runs
+  `scripts/sign-app.sh --self-test` with a fake `codesign` on `PATH` (order, flags, usage errors, nothing echoed).
 - `macos-app` (`macos-latest`): newest non-beta `/Applications/Xcode_*.app` via `xcode-select`; package tests;
   `brew install xcodegen`; `xcodegen generate --spec App/project.yml`; `xcodebuild build` (Release) and
   `xcodebuild test` (Debug), both `CODE_SIGNING_ALLOWED=NO`; ad-hoc `codesign --sign -` of the Release app;
   `ditto -c -k --keepParent` → artifact `Shotkeeper-unsigned`.
+  2026-11-28 (ticket 06, auto-update): Xcode selection is `scripts/select-xcode.sh` (same rule as before, now also logs
+  "Selected Xcode: <path>" and `xcode-select -p`; the release workflow calls it too). `codesign --force --deep --sign -`
+  is gone: "Sign the app inside-out (ad-hoc) and verify" runs `scripts/sign-app.sh - <app>` (Sparkle items first when
+  present, then the app; verify `--deep --strict`; Hardened Runtime check per item; DR printed). "Signing script
+  self-test (bash 3.2, throwaway bundle)" runs right after Xcode selection under `/bin/bash` (3.2) and, on macOS, also
+  signs a throwaway app with a Sparkle-shaped framework built from tiny `cc` binaries with the real `codesign`.
+  After the upload, the job downloads `Shotkeeper-unsigned` back, unzips it and runs
+  `codesign --verify --deep --strict --verbose=2` on what a user gets. Details: [auto-update](auto-update.md).
 - Caches: SwiftPM `.build` only (keyed by Xcode version and source hashes). DerivedData is not cached.
 
 ## UI snapshots (added 2026-11-21, UI polish PR 1)

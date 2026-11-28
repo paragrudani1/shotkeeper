@@ -67,3 +67,51 @@ Recorded in [workflow](workflow.md) ("Auto-update spec", 2026-11-28); copied her
   `<`/`>`/`&` followed by a ZWJ or combining mark slipped through, and an unescaped `]]>` would end the appcast's
   CDATA (`generate_appcast` 2.10.1 `ArchiveItem.swift:475-477`). A duplicate `## <version>` section now fails the
   release ("CHANGELOG.md has more than one section for …") instead of silently using the first.
+
+## Ticket 06: shared Xcode and inside-out signing scripts, ad-hoc in `macos-app` (2026-11-28)
+
+- **Scripts**: `scripts/select-xcode.sh` (no arguments; the old "Select newest stable Xcode" step body, plus a
+  "Selected Xcode: <path>" line; appends `version=` to `$GITHUB_OUTPUT` when set) and `scripts/sign-app.sh
+  [--keychain <file>] <identity> <app>`. Both are `#!/bin/bash`, use only BSD-compatible `grep`/`sed`, and CI runs
+  them with `/bin/bash` (3.2) on macOS. Ticket 09's release job calls both: `scripts/sign-app.sh --keychain
+  "$KEYCHAIN" "Shotkeeper Release" <app>` after it has created and unlocked the temp keychain.
+- **Identity**: only `-` or `Shotkeeper Release` is accepted (anything else exits 2 without echoing it). `--keychain`
+  is refused with `-` (exit 2); a missing keychain file or a path that is not an app exits 1. The script never
+  echoes the identity, the keychain path or the app path ("identity: ad-hoc" / "identity: release certificate");
+  `codesign`'s own output names the app path, which is not secret. It never takes a password.
+- **Order and flags** (from Sparkle's "Sandboxing" > "Code Signing" example,
+  https://sparkle-project.org/documentation/sandboxing/ , cited in the script): `Installer.xpc` `-f -s ID -o runtime`,
+  `Downloader.xpc` `-f -s ID -o runtime --preserve-metadata=entitlements` ("For Sparkle versions >= 2.6"),
+  `Autoupdate`, `Updater.app`, `Sparkle.framework` each `-f -s ID -o runtime`, then the app with `-f -s ID` only
+  (Hardened Runtime off, [S1] Library Validation; `ENABLE_HARDENED_RUNTIME: NO`). `--keychain <file>` goes right after
+  the identity (codesign(1): "During signing, only search for the signing identity in the keychain file
+  specified"). Inside-out and no `--deep` for signing: Sparkle's page ("please do not add --deep … when signing your
+  application") and Apple's "Creating distribution-signed code for macOS"
+  (https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac: "Sign code from the
+  inside out", "Don't pass the --deep option to codesign when you sign code", which it calls helpful "in verifying a
+  code signature").
+- **Skips and failures**: no `Contents/Frameworks/Sparkle.framework` → "skip: Sparkle.framework is not in the
+  bundle", only the app is signed (today, until ticket 07). An XPC service that is missing is skipped with a line
+  (Sparkle allows removing them). Sparkle present without `Versions/B`, `Autoupdate` or `Updater.app` fails before
+  anything is signed: a new Sparkle layout must be a reviewed script change, not a silent skip.
+- **Verification**: `codesign --verify --deep --strict --verbose=2`, then for each signed Sparkle item "Hardened
+  Runtime on" and for the app "off" (from the `CodeDirectory … flags=…(…)` line of `codesign --display
+  --verbose=1`; only the flags are printed), then `codesign --display -r -` to the log. With `-` the script prints
+  "DR shape check skipped: an ad-hoc signature's DR is a cdhash by nature"; with the release identity the DR must
+  contain `certificate leaf` and must not contain `cdhash` ("DR shape: ok"), else exit 1.
+- **Self-test** (`scripts/sign-app.sh --self-test`, seam 3): everywhere, a fake `codesign` on `PATH` logs calls and
+  the test compares the exact call list (order, flags, `--keychain` placement), the skip/fail layouts, the DR rules,
+  the Hardened Runtime check (fake drops the flag / adds it to the app), a failing verify, usage errors and that
+  neither the identity nor the keychain path is echoed. On macOS it then builds `Throwaway.app` with a Sparkle-shaped
+  framework (`Versions/B` with `Sparkle` dylib, `Autoupdate`, `Updater.app`, `XPCServices/{Installer,Downloader}.xpc`,
+  top-level symlinks) from tiny `cc` binaries, pre-signs `Downloader.xpc` with an entitlement, runs the script with
+  `-` and the real `codesign`, and checks the entitlement survived `--preserve-metadata=entitlements`. Also passes
+  under `bash:3.2` (Docker, busybox tools) on the Linux box.
+- **Guard**: `scripts/lint.sh` rule `deep-sign` (see its header) fails on a `codesign` line in `scripts/*.sh` or
+  `.github/workflows/*.y*ml` that has `--deep` and no `--verify`. One line at a time: continuation lines and
+  `codesign` through a variable are blind spots. On adding it, it flagged the old `ci.yml` line, as intended.
+- **Artifact**: still `Shotkeeper-unsigned`, ad-hoc, build 1 (the zip step now also prints `CFBundleVersion`). After
+  the upload, `macos-app` downloads the artifact back, unzips it with `ditto -x -k` and verifies it with
+  `codesign --verify --deep --strict --verbose=2`.
+- **Not done here**: the Info.plist key check (feed URL, public key, automatic checks off) needs Sparkle's keys, so it
+  lands with ticket 07/08, as the spec's seam 3 lists it next to the signing script.

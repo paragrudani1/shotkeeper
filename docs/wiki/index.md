@@ -21,7 +21,8 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 
 - [auto-update](auto-update.md): auto-update spec deviations and implementation notes; Parag's decisions (no
   approval per release, the N → N+1 test on real releases); ticket 01 `ReleasePlan` seam, error lines, file names
-  (`notes.md`, `Shotkeeper-<version>.html` from Sparkle's `generate_appcast` source) (2026-11-28).
+  (`notes.md`, `Shotkeeper-<version>.html` from Sparkle's `generate_appcast` source) (2026-11-28); ticket 06 shared
+  `scripts/select-xcode.sh` and inside-out `scripts/sign-app.sh` (ad-hoc on every push), `deep-sign` lint (2026-11-28).
 
 ## Standards
 - [../../CODING_STANDARDS.md](../../CODING_STANDARDS.md): review checklist (2026-11-21).
