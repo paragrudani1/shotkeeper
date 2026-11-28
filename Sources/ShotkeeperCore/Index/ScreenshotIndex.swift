@@ -4,6 +4,19 @@ public enum ProcessingStatus: String, Codable, Sendable, CaseIterable {
     case pending, done, failed, skipped
 }
 
+/// Where a row's on-device text recognition stands (`IndexedScreenshot.textStatus`; nil = never requested).
+public enum TextStatus: String, Codable, Sendable, CaseIterable {
+    /// Queued: the runner reads it (newest first, `ScreenshotIndex.newestPendingTextRow()`).
+    case pending
+    /// Read; the text is in `recognizedText`.
+    case done
+    /// Read, and the image has no text (`recognizedText` nil). Stored as `none`; not named `.none` in Swift, where
+    /// `textStatus == .none` would compare against Optional's nil.
+    case noText = "none"
+    /// The read failed; `textError` says why.
+    case failed
+}
+
 /// One row of the index.
 public struct IndexedScreenshot: Equatable, Sendable {
     /// Assigned by the index; 0 for a row not yet saved.
@@ -31,13 +44,24 @@ public struct IndexedScreenshot: Equatable, Sendable {
     public var note: String?
     /// The user put this file back to its original name with Undo: never process it again (migration 2).
     public var restoredByUndo: Bool
+    /// The screenshot's text, read on the Mac (lines joined with "\n"); nil until read, or when it has none
+    /// (migration 3). Never sent anywhere; never put in `textError`, `lastError`, `note` or a log.
+    public var recognizedText: String?
+    /// nil = never requested (rows indexed before migration 3 stay nil until the user asks).
+    public var textStatus: TextStatus?
+    /// The recognizer id plus its settings (e.g. `vision-r3-accurate-h1/96-lc0`), so a settings change can find
+    /// rows to re-read.
+    public var textRecognizedBy: String?
+    /// Short reason for `textStatus == .failed` (e.g. "file missing"). Never contains recognized text.
+    public var textError: String?
 
     public init(id: Int64 = 0, path: String, originalFilename: String, contentHash: String, capturedAt: Date? = nil,
                 processedAt: Date? = nil, title: String? = nil, titleConfidence: Double? = nil, sourceAppOrSite: String? = nil,
                 contentType: ContentType? = nil, description: String? = nil, tags: [String] = [], keyText: String? = nil,
                 dateMentioned: String? = nil, producedBy: String? = nil, billedInputTokens: Int? = nil,
                 status: ProcessingStatus = .pending, lastError: String? = nil, note: String? = nil,
-                restoredByUndo: Bool = false) {
+                restoredByUndo: Bool = false, recognizedText: String? = nil, textStatus: TextStatus? = nil,
+                textRecognizedBy: String? = nil, textError: String? = nil) {
         self.id = id
         self.path = path
         self.originalFilename = originalFilename
@@ -58,6 +82,10 @@ public struct IndexedScreenshot: Equatable, Sendable {
         self.lastError = lastError
         self.note = note
         self.restoredByUndo = restoredByUndo
+        self.recognizedText = recognizedText
+        self.textStatus = textStatus
+        self.textRecognizedBy = textRecognizedBy
+        self.textError = textError
     }
 
     /// Copies the analysis fields in.
@@ -73,6 +101,18 @@ public struct IndexedScreenshot: Equatable, Sendable {
         producedBy = analysis.producedBy
         billedInputTokens = analysis.billedInputTokens
     }
+}
+
+/// What one text recognition of a row found; written by
+/// `ScreenshotIndex.setRecognizedText(_:recognizedBy:id:ifContentHash:)`.
+public enum TextRecognitionResult: Equatable, Sendable {
+    /// The joined lines → `.done`.
+    case text(String)
+    /// The image has no text → `.noText`, `recognizedText` nil.
+    case noText
+    /// The read failed → `.failed`, `reason` in `textError`. A short reason ("file missing", an error code), never
+    /// recognized text.
+    case failed(reason: String)
 }
 
 /// What the search window asks the index for (see `ScreenshotIndex.search(_:limit:)`).
@@ -269,13 +309,52 @@ public final class ScreenshotIndex: @unchecked Sendable {
         }
     }
 
+    /// The conditional text write (spec "Text recognition: when it runs"): sets the text columns of row `id` only if
+    /// its `content_hash` still equals `contentHash` (the one read before recognizing) and its `textStatus` is still
+    /// `.pending`. Returns whether it applied; publishes `.updated` only then. A stale hash means the file changed
+    /// during the read and the processor saved the row again, so the late result is dropped (story 45).
+    ///
+    /// Sets `textStatus` from `result` (`.done`, `.noText`, `.failed`), `recognizedText` (nil unless `.text`),
+    /// `textError` (nil unless `.failed`) and `textRecognizedBy`; nothing else, so the analysis and `status` stay.
+    /// Privacy: the recognized text goes only into `recognized_text`. A failure reason must never contain it, and
+    /// nothing here logs it.
+    @discardableResult
+    public func setRecognizedText(_ result: TextRecognitionResult, recognizedBy: String, id: Int64,
+                                  ifContentHash contentHash: String) throws -> Bool {
+        let (status, text, error): (TextStatus, String?, String?) = switch result {
+        case .text(let text): (.done, text, nil)
+        case .noText: (.noText, nil, nil)
+        case .failed(let reason): (.failed, nil, reason)
+        }
+        return try lock.withLock {
+            var changes: [IndexChange] = []
+            try db.query("""
+                UPDATE screenshots SET text_status = ?, recognized_text = ?, text_error = ?, text_recognized_by = ?
+                WHERE id = ? AND content_hash = ? AND text_status = ? RETURNING path
+                """, [.text(status.rawValue), .optional(text), .optional(error), .text(recognizedBy), .int(id),
+                      .text(contentHash), .text(TextStatus.pending.rawValue)]) {
+                changes.append(IndexChange(.updated, id: id, path: $0.text(0) ?? ""))
+            }
+            publish(changes)
+            return !changes.isEmpty
+        }
+    }
+
+    /// The text runner's next row: the newest with `textStatus == .pending`, by `COALESCE(captured_at, processed_at)`
+    /// (when it was taken, else when it was processed), then newest id. Nil when nothing waits.
+    public func newestPendingTextRow() throws -> IndexedScreenshot? {
+        try select("WHERE text_status = ? ORDER BY COALESCE(captured_at, processed_at) DESC, id DESC LIMIT 1",
+                   [.text(TextStatus.pending.rawValue)]).first
+    }
+
     /// E.g. pending/failed rows to re-enqueue at launch.
     public func entries(withStatus status: ProcessingStatus, limit: Int = 500) throws -> [IndexedScreenshot] {
         try select("WHERE status = ? ORDER BY id LIMIT ?", [.text(status.rawValue), .int(Int64(limit))])
     }
 
-    /// Free-text search. Each term is prefix-matched and all terms must match (AND). Ranked by bm25 with
-    /// title > tags > description > source > key text. An empty (or punctuation-only) query returns `recent(limit:)`.
+    /// Free-text search. Each term is prefix-matched and all terms must match (AND), each in any FTS column, the
+    /// recognized text included. Ranked by bm25 with title > tags > description > source > key text > recognized text
+    /// (`ftsColumns`). An empty (or punctuation-only) query returns `recent(limit:)`.
     public func search(_ text: String, limit: Int = 50) throws -> [IndexedScreenshot] {
         guard let match = Self.ftsQuery(text) else { return try recent(limit: limit) }
         return try lock.withLock {
@@ -300,9 +379,23 @@ public final class ScreenshotIndex: @unchecked Sendable {
     /// date the rows show, so the list and its labels agree).
     public func search(_ query: ScreenshotQuery, limit: Int = 50, now: Date = Date(),
                        calendar: Calendar = .current) throws -> ScreenshotSearchResult {
+        let sql = Self.searchSQL(query, now: now, calendar: calendar)
+        return try lock.withLock {
+            var result = ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0)
+            try db.query(sql.select, sql.bindings + [.int(Int64(max(0, limit)))]) { result.rows.append(Self.row($0)) }
+            try db.query(sql.count, sql.bindings) { result.matchCount = Int($0.int64(0)) }
+            try db.query("SELECT COUNT(*) FROM screenshots WHERE status = 'done'") { result.totalCount = Int($0.int64(0)) }
+            return result
+        }
+    }
+
+    /// The statements `search(_:limit:now:calendar:)` runs: `select` ends in `LIMIT ?` (bind the limit after
+    /// `bindings`), `count` takes `bindings` alone. Internal so a test can check their query plan.
+    static func searchSQL(_ query: ScreenshotQuery, now: Date,
+                          calendar: Calendar) -> (select: String, count: String, bindings: [SQLiteValue]) {
         var conditions = ["s.status = 'done'"]
         var bindings: [SQLiteValue] = []
-        let match = Self.ftsQuery(query.text)
+        let match = ftsQuery(query.text)
         if let match {
             conditions.append("screenshots_fts MATCH ?")
             bindings.append(.text(match))
@@ -319,26 +412,21 @@ public final class ScreenshotIndex: @unchecked Sendable {
             bindings.append(.text(json))
         }
         if let date = query.date {
-            // The date the result row and the preview's "Taken" show (`SearchResultItem.date`).
+            // The date the result row and the preview's "Taken" show (`SearchResultItem.date`). The same expression
+            // as the `screenshots_taken_at` index (migration 3), so SQLite can use it.
             let days = date.interval(now: now, calendar: calendar)
-            conditions.append("\(Self.takenAt) >= ? AND \(Self.takenAt) < ?")
+            conditions.append("\(takenAt) >= ? AND \(takenAt) < ?")
             bindings += [.optional(days.lowerBound), .optional(days.upperBound)]
         }
         let from = match == nil
             ? "FROM screenshots s"
             : "FROM screenshots_fts JOIN screenshots s ON s.id = screenshots_fts.rowid"
         let whereClause = "WHERE " + conditions.joined(separator: " AND ")
-        let order = match != nil ? "ORDER BY bm25(screenshots_fts, \(Self.bm25Weights)), s.id DESC"
-            : query.date != nil ? "ORDER BY \(Self.takenAt) DESC, s.id DESC"
+        let order = match != nil ? "ORDER BY bm25(screenshots_fts, \(bm25Weights)), s.id DESC"
+            : query.date != nil ? "ORDER BY \(takenAt) DESC, s.id DESC"
             : "ORDER BY COALESCE(s.processed_at, s.captured_at, 0) DESC, s.id DESC"
-        return try lock.withLock {
-            var result = ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0)
-            try db.query("SELECT \(Self.selectColumns("s")) \(from) \(whereClause) \(order) LIMIT ?",
-                         bindings + [.int(Int64(max(0, limit)))]) { result.rows.append(Self.row($0)) }
-            try db.query("SELECT COUNT(*) \(from) \(whereClause)", bindings) { result.matchCount = Int($0.int64(0)) }
-            try db.query("SELECT COUNT(*) FROM screenshots WHERE status = 'done'") { result.totalCount = Int($0.int64(0)) }
-            return result
-        }
+        return ("SELECT \(selectColumns("s")) \(from) \(whereClause) \(order) LIMIT ?",
+                "SELECT COUNT(*) \(from) \(whereClause)", bindings)
     }
 
     /// When a screenshot was taken, else when it was processed: what the date filter and the result rows use.
@@ -371,8 +459,20 @@ public final class ScreenshotIndex: @unchecked Sendable {
 
     // MARK: - Schema
 
-    /// FTS column order: title, tags, description, key_text, source_app_or_site.
-    static let bm25Weights = "10.0, 6.0, 3.0, 1.0, 2.0"
+    /// The `screenshots_fts` columns in FTS order, each with its bm25 weight: the one list the FTS table, its triggers
+    /// (migration 3 on) and `bm25Weights` come from, so they cannot drift apart. Kept apart from `columns` because
+    /// FTS order and weights are not column properties.
+    ///
+    /// 2026-11-28 (wave 1, ticket 01): recognized text joins the match at the lowest weight, so a title hit counts 20x
+    /// a hit only in the text (spec "FTS match and ranking"). Changing this list needs a new migration that rebuilds
+    /// FTS with it; migration 3 must then get its own frozen copy of today's list (shipped steps never change).
+    static let ftsColumns: [(name: String, weight: Double)] = [
+        ("title", 10), ("tags", 6), ("description", 3), ("key_text", 1), ("source_app_or_site", 2),
+        ("recognized_text", 0.5),
+    ]
+
+    /// `bm25()` weights in `ftsColumns` order: "10.0, 6.0, 3.0, 1.0, 2.0, 0.5".
+    static let bm25Weights = ftsColumns.map { String($0.weight) }.joined(separator: ", ")
 
     /// Every column except `id`, in table order. The one place a column is declared: `CREATE TABLE` (migration 1),
     /// `ALTER TABLE ... ADD COLUMN` (later migrations), the upsert, its bindings and the row read all come from here.
@@ -414,6 +514,15 @@ public final class ScreenshotIndex: @unchecked Sendable {
         // restart or when its content fingerprint changes.
         IndexColumn("restored_by_undo", "INTEGER NOT NULL DEFAULT 0", addedIn: 2,
                     bind: { .int($0.restoredByUndo ? 1 : 0) }, read: { $0.restoredByUndo = ($1.int ?? 0) != 0 }),
+        // 2026-11-28 (wave 1, ticket 01): on-device text recognition. Rows from before get NULLs (not requested).
+        IndexColumn("recognized_text", "TEXT", addedIn: 3,
+                    bind: { .optional($0.recognizedText) }, read: { $0.recognizedText = $1.text }),
+        IndexColumn("text_status", "TEXT", addedIn: 3, bind: { .optional($0.textStatus?.rawValue) },
+                    read: { $0.textStatus = $1.text.flatMap(TextStatus.init(rawValue:)) }),
+        IndexColumn("text_recognized_by", "TEXT", addedIn: 3,
+                    bind: { .optional($0.textRecognizedBy) }, read: { $0.textRecognizedBy = $1.text }),
+        IndexColumn("text_error", "TEXT", addedIn: 3,
+                    bind: { .optional($0.textError) }, read: { $0.textError = $1.text }),
     ]
 
     /// Applied in order by `SQLiteDatabase.migrate`; `user_version` is the last one applied. Versions are 1, 2, 3, ...
@@ -452,6 +561,16 @@ public final class ScreenshotIndex: @unchecked Sendable {
             """,
         ]),
         SQLiteMigration(version: 2, statements: addColumns("restored_by_undo")),
+        SQLiteMigration(version: 3, statements:
+            addColumns("recognized_text", "text_status", "text_recognized_by", "text_error")
+                + rebuildFTS(ftsColumns.map(\.name)) + [
+            // Story 23: the date filter's condition, matched exactly by the expression (SQLite uses an expression index
+            // only for the identical expression: https://www.sqlite.org/expridx.html).
+            "CREATE INDEX screenshots_taken_at ON screenshots(COALESCE(captured_at, processed_at))",
+            "CREATE INDEX screenshots_source_app_or_site ON screenshots(source_app_or_site)",
+            // The text runner's queue: only `pending` rows are in it (https://www.sqlite.org/partialindex.html).
+            "CREATE INDEX screenshots_text_pending ON screenshots(text_status) WHERE text_status = 'pending'",
+        ]),
     ]
 
     /// Upsert by path; returns the row id.
@@ -473,6 +592,46 @@ public final class ScreenshotIndex: @unchecked Sendable {
             }
             return "ALTER TABLE screenshots ADD COLUMN \(column.name) \(column.definition)"
         }
+    }
+
+    /// Replaces `screenshots_fts` and its three triggers with ones over `ftsColumns`, then refills it from
+    /// `screenshots`. An FTS5 table cannot gain a column, so it is dropped and created again. The `'rebuild'` command
+    /// discards the full-text index and rebuilds it from the external content table (https://www.sqlite.org/fts5.html,
+    /// "The 'rebuild' Command"). The triggers follow
+    /// "External Content Tables" on the same page (an update deletes the old values, then inserts the new ones).
+    static func rebuildFTS(_ ftsColumns: [String]) -> [String] {
+        let list = ftsColumns.joined(separator: ", ")
+        let old = ftsColumns.map { "old.\($0)" }.joined(separator: ", ")
+        let new = ftsColumns.map { "new.\($0)" }.joined(separator: ", ")
+        return [
+            "DROP TRIGGER screenshots_ai",
+            "DROP TRIGGER screenshots_ad",
+            "DROP TRIGGER screenshots_au",
+            "DROP TABLE screenshots_fts",
+            """
+            CREATE VIRTUAL TABLE screenshots_fts USING fts5(
+                \(list),
+                content='screenshots', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+            )
+            """,
+            """
+            CREATE TRIGGER screenshots_ai AFTER INSERT ON screenshots BEGIN
+                INSERT INTO screenshots_fts(rowid, \(list)) VALUES (new.id, \(new));
+            END
+            """,
+            """
+            CREATE TRIGGER screenshots_ad AFTER DELETE ON screenshots BEGIN
+                INSERT INTO screenshots_fts(screenshots_fts, rowid, \(list)) VALUES ('delete', old.id, \(old));
+            END
+            """,
+            """
+            CREATE TRIGGER screenshots_au AFTER UPDATE OF \(list) ON screenshots BEGIN
+                INSERT INTO screenshots_fts(screenshots_fts, rowid, \(list)) VALUES ('delete', old.id, \(old));
+                INSERT INTO screenshots_fts(rowid, \(list)) VALUES (new.id, \(new));
+            END
+            """,
+            "INSERT INTO screenshots_fts(screenshots_fts) VALUES ('rebuild')",
+        ]
     }
 
     private static func tagsJSON(_ tags: [String]) -> String {

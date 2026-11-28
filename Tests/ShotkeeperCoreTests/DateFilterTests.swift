@@ -190,6 +190,46 @@ final class DateFilterIndexTests: XCTestCase {
     }
 }
 
+/// The date filter's SQL uses migration 3's `screenshots_taken_at` expression index (ticket 01), read from
+/// `EXPLAIN QUERY PLAN` (https://www.sqlite.org/eqp.html) on the statements `search` runs.
+final class DateFilterQueryPlanTests: XCTestCase {
+    private let utc = calendar("UTC")
+
+    private func plan(_ query: ScreenshotQuery) throws -> (select: [String], count: [String]) {
+        let dir = try TempDir()
+        let file = dir.url.appendingPathComponent("index.sqlite")
+        let index = try ScreenshotIndex(fileURL: file) // migrates the file to version 3
+        for day in 1...30 {
+            try index.save(.testRow("/shot-\(day).png") {
+                $0.title = "Invoice \(day)"
+                $0.capturedAt = at("2026-11-\(String(format: "%02d", day))T09:00:00Z")
+                $0.processedAt = at("2026-11-21T10:00:00Z")
+            })
+        }
+        let sql = ScreenshotIndex.searchSQL(query, now: at("2026-11-21T16:24:00Z"), calendar: utc)
+        let db = try SQLiteDatabase(path: file.path)
+        func explain(_ statement: String, _ bindings: [SQLiteValue]) throws -> [String] {
+            var details: [String] = []
+            // Columns: id, parent, notused, detail.
+            try db.query("EXPLAIN QUERY PLAN " + statement, bindings) { details.append($0.text(3) ?? "") }
+            return details
+        }
+        return (try explain(sql.select, sql.bindings + [.int(50)]), try explain(sql.count, sql.bindings))
+    }
+
+    func testDateFilteredSearchUsesTheTakenAtIndex() throws {
+        let dateOnly = try plan(ScreenshotQuery(date: .last7Days))
+        for details in [dateOnly.select, dateOnly.count] {
+            XCTAssertTrue(details.contains { $0.contains("USING INDEX screenshots_taken_at") }, "\(details)")
+            XCTAssertFalse(details.contains { $0.hasPrefix("SCAN s") && !$0.contains("INDEX") }, "\(details)")
+        }
+        XCTAssertFalse(dateOnly.select.contains { $0.contains("TEMP B-TREE") },
+                       "newest taken first is read from the index, not sorted: \(dateOnly.select)")
+        let withType = try plan(ScreenshotQuery(contentType: .receipt, date: .today))
+        XCTAssertTrue(withType.select.contains { $0.contains("USING INDEX screenshots_taken_at") }, "\(withType.select)")
+    }
+}
+
 /// Wording of the date filter (design §5, "Filter pills" and "No-match states").
 final class DateFilterLabelTests: XCTestCase {
     private let time = TimeLabel(calendar: calendar("UTC"), locale: Locale(identifier: "en_US"))

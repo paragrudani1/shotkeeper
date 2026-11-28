@@ -66,19 +66,37 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
 - **Index/**
   - `ScreenshotIndex`: `save(_:) -> id` (upsert by path), `updatePath(from:to:)`, `lookup(byPath:)`, `lookup(byHash:)`,
     `recent(limit:)`, `recentProcessed(limit:)` (`done` only), `entries(withStatus:limit:)`, `search(_:limit:)` (empty → recent),
-    `stats()`, `markRestoredByUndo(path:)`. Thread-safe. Schema version 2 (adds `restored_by_undo`).
+    `stats()`, `markRestoredByUndo(path:)`. Thread-safe. Schema version 3 (2 added `restored_by_undo`; 3 adds the
+    recognized-text columns, rebuilds FTS with `recognized_text`, and adds the filter and pending-text indexes).
   - `changes() -> AsyncStream<IndexChange>`: every committed row change from the call on, in commit order (unbounded
     buffer, also for a stream held but not iterated; one subscription per call, ended by dropping the stream or
     cancelling its iteration; finishes when the index is freed). `IndexChange`: `kind` (`.inserted` / `.updated`
     / `.removed`), `id` (stable across path changes) and `path` (after the change; for `.removed`, the path it had).
     `save` → inserted or updated (also for an identical row); `updatePath` → updated, plus removed for a stale row it replaced; `markRestoredByUndo`
-    → updated. For Spotlight, search refresh and clean-up.
+    → updated; `setRecognizedText` → updated, only when it applied. For Spotlight, search refresh and clean-up.
+  - Recognized text (wave 1): `setRecognizedText(_ result: TextRecognitionResult, recognizedBy:id:ifContentHash:) -> Bool`
+    is the conditional write: it applies only while the row's `content_hash` equals `ifContentHash` and its
+    `textStatus` is `.pending`, and sets `.text(s)` → `.done`, `.noText` → `.noText` (text nil), `.failed(reason:)` →
+    `.failed` (reason in `textError`, never recognized text), plus `textRecognizedBy`. Nothing else in the row changes.
+    `newestPendingTextRow()`: the runner's next row (newest `COALESCE(captured_at, processed_at)`, then id).
+    Search matches recognized text too (AND over all FTS columns) at the lowest weight: `ScreenshotIndex.ftsColumns`
+    holds the FTS columns and their bm25 weights (title 10, tags 6, description 3, key_text 1, source 2,
+    recognized_text 0.5); the FTS table, triggers and `bm25Weights` come from it.
+  - SQL indexes (migration 3): `screenshots_taken_at` on `COALESCE(captured_at, processed_at)` (date filter: use that
+    exact expression), `screenshots_source_app_or_site`, and `screenshots_text_pending` (partial, `text_status = 'pending'`).
   - Columns (internal): `ScreenshotIndex.columns` declares each column once (SQL, migration, bind, read). Adding one:
     an entry with the next `addedIn`, `SQLiteMigration(version: n, statements: addColumns("new_column"))`, and
     `n: ["new_column"]` in the test-side `shippedColumns`.
-  - `search(_ query: ScreenshotQuery, limit:) -> ScreenshotSearchResult` (search window): text + `contentType` chip +
-    optional batch `paths`, AND-combined, `done` rows only; returns `rows`, `matchCount` and `totalCount` for the footer.
+  - `search(_ query: ScreenshotQuery, limit:now:calendar:) -> ScreenshotSearchResult` (search window): text +
+    `contentType` chip + optional batch `paths` + optional `date: DateFilter`, AND-combined, `done` rows only; returns
+    `rows`, `matchCount` and `totalCount` for the footer. The date filter compares
+    `COALESCE(captured_at, processed_at)` (the `screenshots_taken_at` index) with `date.interval(now:calendar:)`, resolved
+    on each call. With a date and no text: newest taken
+    first. `searchSQL(_:now:calendar:)` (internal) builds the statements, for query-plan tests.
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
+    Text fields: `recognizedText`, `textStatus: TextStatus?` (nil = never requested; `.pending` / `.done` /
+    `.noText` (stored `none`) / `.failed`), `textRecognizedBy`, `textError`. `save` writes them like every column, so a
+    fresh entry without them clears old text.
   - `ContentFingerprint.compute(for:)`: size + mtime + first 64 KiB (not a security hash).
 - **Queue/**
   - `ProcessingQueue` (actor): `enqueue`, `pause(until:)`, `resume()`, `setRequestsPerMinute(_:)`, `statusUpdates()`, `status`, `waitUntilIdle()`,
@@ -114,7 +132,13 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     true when `query` changed: run it with `resultLimit`, then `apply(_:for:)` or `fail(_:for:)` (stale answers are ignored).
   - `SearchResultItem`: title (file stem), `subtitle(now:time:)` ("x.com · 5 min ago"), `accessibilityLabel(now:time:)`,
     `hashtags`, `metadata(time:)` (Source / Type / Taken / Folder). `IndexUnavailableError` → the error state.
-  - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`.
+  - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`; date filter
+    wording `days(_:_:now:)` ("Oct 3 – 17", "Dec 28, 2025 – Jan 4, 2026") and `day(_:now:alongside:spelled:)`.
+  - Date filter (wave 1, 2026-11-28): `DateFilter` (`.today`, `.yesterday`, `.last7Days`, `.last30Days`,
+    `.days(from:through:)` over `CalendarDay`); `interval(now:calendar:)` = whole local days `[start, end)`;
+    `label`, `spokenValue`, `takenPhrase(now:time:)`. `SearchWindowState`: `date`, `setDateFilter(_:)`,
+    `clearFilters()`, `datePicker: DatePickerState?` (highlight, custom range, From/To; `DatePickerState(today:current:calendar:)`),
+    `noMatchButtons`, `now`/`time` for the wording. `SearchKeyMap`: ⌘D (`.dateFilter`) and ⌫ (`.deleteBackward`).
   - `SearchKeyMap` (added 2026-11-28): the search window's key table. `bindings` (`SearchKeyBinding`: a `SearchKeyTrigger`
     `.plain(keyCode:)` or `.command(Character)` → a `SearchKey`: up, down, open, close, space, copyImage, reveal,
     quickLook, `chip(_)`), `plain(keyCode:modifiers:)` (no ⌘⌥⌃⇧), `command(keyCode:modifiers:characters:)` (typed ASCII

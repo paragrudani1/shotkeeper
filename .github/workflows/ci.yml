@@ -77,6 +77,16 @@ jobs:
       - name: swift test (package)
         run: swift test
 
+      - name: Vision measurement tool (type-check and sample run)
+        run: |
+          set -euo pipefail
+          # Ticket 05: scripts/measure-vision.swift is macOS only and outside the package and the app.
+          # docs/research/vision-ocr-settings.md. Type-check it, then run it the way Parag will, on generated images.
+          xcrun swiftc -typecheck scripts/measure-vision.swift
+          SAMPLE="$RUNNER_TEMP/vision-sample"
+          xcrun swift scripts/measure-vision.swift --make-sample "$SAMPLE"
+          xcrun swift scripts/measure-vision.swift "$SAMPLE" --check
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
