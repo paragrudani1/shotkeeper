@@ -126,6 +126,50 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(AppSettings.decode(Data("not json".utf8)), AppSettings())
     }
 
+    /// Fails when a property is missing from `CodingKeys` (it is not encoded) or from `init(from:)` (it decodes as
+    /// the default). A new property must get a non-default value in `everyPropertySet`; the first check says so.
+    func testEveryPropertyRoundTrips() throws {
+        var s = AppSettings()
+        s.backend = .openRouter
+        s.clairicAccountID = "acct"
+        s.localModelVariantID = "mlx-community/Inkling-2-Mini-4bit"
+        s.customEndpointURL = URL(string: "http://127.0.0.1:8080/v1")
+        s.customModelName = "inkling"
+        s.openRouterModel = "thinkingmachines/inkling-2-mini-20261120"
+        s.idleTimeoutMinutes = 25
+        s.watchedFolderOverride = URL(fileURLWithPath: "/Users/me/Shots", isDirectory: true)
+        s.organizedFolder = URL(fileURLWithPath: "/Users/me/Organized", isDirectory: true)
+        s.renameEnabled = false
+        s.moveEnabled = true
+        s.launchAtLogin = true
+        s.minTitleConfidence = 0.7
+        s.requestsPerMinute = 12
+        s.maxImageLongSide = 1024
+        s.writeFinderMetadata = false
+        s.excludeRules = ExcludeRules(rules: [.init(.filenameContains, "bank")])
+        s.hasSeenPrivacyNotice = true
+        s.uploadGrants = [.init(destination: .cloudflare, grantedAt: Date(timeIntervalSince1970: 1_800_000_000))]
+        s.showRenameToast = false
+        s.playRenameSound = true
+        s.filenameCasing = .kebab
+        s.filenameDatePrefix = true
+        s.searchShortcut = HotKeyShortcut(keyCode: KeyCode.k, modifiers: [.control, .option])
+        let everyPropertySet = s
+
+        let properties = Mirror(reflecting: everyPropertySet).children.compactMap(\.label)
+        let defaults = Dictionary(uniqueKeysWithValues: Mirror(reflecting: AppSettings()).children.map {
+            ($0.label ?? "", String(describing: $0.value))
+        })
+        for child in Mirror(reflecting: everyPropertySet).children {
+            XCTAssertNotEqual(String(describing: child.value), defaults[child.label ?? ""],
+                              "give \(child.label ?? "") a non-default value in this test")
+        }
+        let data = try everyPropertySet.encoded()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), Set(properties), "every property has a CodingKeys case")
+        XCTAssertEqual(AppSettings.decode(data), everyPropertySet, "every property is read in init(from:)")
+    }
+
     func testRoundTrip() throws {
         var s = AppSettings()
         s.backend = .customEndpoint
