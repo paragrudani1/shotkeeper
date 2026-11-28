@@ -25,6 +25,12 @@ packages:
   # The Swift package at the repository root (path is relative to this spec).
   Shotkeeper:
     path: ..
+  # The one third-party dependency (Parag, 2026-11-28; docs/wiki/architecture.md). App target only: the root
+  # Package.swift (core, CLI, Linux) never depends on it. Pinned exactly; upgrading is its own PR with the real-Mac
+  # checks (auto-update spec, "Dependency"). Only Coordinator/UpdateChecks.swift imports it (lint rule sparkle-import).
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 
 targets:
   Shotkeeper:
@@ -36,6 +42,7 @@ targets:
     dependencies:
       - package: Shotkeeper
         product: ShotkeeperCore
+      - package: Sparkle
     info:
       path: Shotkeeper/Info.plist
       properties:
@@ -47,6 +54,21 @@ targets:
         # Menu-bar only: no Dock icon, no main menu.
         LSUIElement: true
         NSHumanReadableCopyright: ""
+        # Sparkle (auto-update spec, "Info.plist keys"; Sparkle "Customizing Sparkle",
+        # https://sparkle-project.org/documentation/customization/ ). Checks are manual only (Parag, 2026-11-28).
+        # scripts/check-app-plist.sh checks the built app in CI. SUPublicEDKey comes with ticket 08 (Parag's key).
+        SUFeedURL: https://github.com/paragrudani1/shotkeeper/releases/latest/download/appcast.xml
+        # NO: no automatic checks by default, and no "check automatically?" question (asked only while unset).
+        SUEnableAutomaticChecks: false
+        # Default NO already; explicit.
+        SUAutomaticallyUpdate: false
+        # NO: "disallow automatic updates and require manual installation every time"; the update window then
+        # hides its "Automatically download and install updates" checkbox (Sparkle 2.10.1 SUUpdateAlert.m).
+        SUAllowsAutomaticUpdates: false
+        # Check the EdDSA signature before extracting the update ("EdDSA signing is required to use this setting").
+        # With it on and no SUPublicEDKey, Sparkle 2.10.1 refuses to start (SPUUpdater.m, startUpdater:), so this
+        # branch is not released before ticket 08 adds the key.
+        SUVerifyUpdateBeforeExtraction: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.shotkeeper.Shotkeeper

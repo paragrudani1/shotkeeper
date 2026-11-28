@@ -3,7 +3,7 @@
 #   scripts/lint.sh               # check the repository; prints file:line per violation, exits 1 if any
 #   scripts/lint.sh --self-test   # check that each rule catches a planted violation
 #
-# Rules (Swift sources only; tests are not checked; lines that are only a comment are ignored):
+# Rules (Swift sources only; tests only where a rule says so; lines that are only a comment are ignored):
 #   core-imports  Sources/ShotkeeperCore imports only Foundation, FoundationNetworking, Dispatch, Darwin, Glibc,
 #                 SQLite3 and CSQLite: no AppKit, SwiftUI, ImageIO, Security, CoreServices (core builds on Linux).
 #   file-op       FileManager removeItem/trashItem/moveItem/replaceItem, NSWorkspace recycle and POSIX
@@ -21,6 +21,9 @@
 #                 Also (build settings) an `OTHER_CODE_SIGN_FLAGS` line with the deep option in App/project.yml or in
 #                 any `*.xcconfig` (outside .git, .build, build, DerivedData): Sparkle's "Sandboxing" page names that
 #                 setting. Lines that are only a `#` or `//` comment are ignored.
+#   sparkle-import  `import Sparkle` (any form: attributes, access level, `import class Sparkle.X`, after a `;`)
+#                 only in App/Shotkeeper/Coordinator/UpdateChecks.swift, the one file that talks to Sparkle
+#                 (auto-update spec, "Dependency"). Checks Sources, App and Tests, tests included. No allow marker.
 #
 # Allow markers must be the trailing comment of the line and give a non-empty reason in parentheses:
 #   `// lint-allow: <rule> (<why>)`. A marker inside a string literal or without a reason does not count.
@@ -58,6 +61,15 @@ func clean() { try? FileManager.default.removeItem(at: log) } // lint-allow: fil
 // try FileManager.default.removeItem(at: userFile) is only a comment here
 func test() async throws { _ = try await analyzer.analyze(image, context: c) } // lint-allow: analyze (generated image)
 EOF
+  mkdir -p "$tmp/App/Shotkeeper/Coordinator"
+  cat > "$tmp/App/Shotkeeper/Coordinator/UpdateChecks.swift" <<'EOF'
+import AppKit
+import Sparkle
+EOF
+  cat > "$tmp/App/Shotkeeper/NotSparkle.swift" <<'EOF'
+import SparkleLike
+// import Sparkle is only a comment here
+EOF
   if ! LINT_ROOT="$tmp" "$0" >/dev/null; then
     echo "self-test: a clean tree failed"; LINT_ROOT="$tmp" "$0" || true; exit 1
   fi
@@ -87,6 +99,19 @@ func emptyReason() { try? fm.removeItem(at: url) } // lint-allow: file-op ()
 func inString() { log("// lint-allow: file-op (x)"); try? fm.removeItem(at: url) }
 func notTrailing() { try? fm.removeItem(at: url) /* lint-allow: file-op (x) */ ; f() }
 func ask() async throws { _ = try await analyzer.analyze(p, context: c) } // lint-allow: analyze
+EOF
+  mkdir -p "$tmp/App/ShotkeeperAppTests" "$tmp/Sources/shotkeeper-cli"
+  cat > "$tmp/App/Shotkeeper/Sparkle.swift" <<'EOF'
+import Sparkle
+@preconcurrency import Sparkle
+import class Sparkle.SPUStandardUpdaterController
+import Foundation; import Sparkle
+EOF
+  cat > "$tmp/App/ShotkeeperAppTests/UpdateTests.swift" <<'EOF'
+@testable import Sparkle
+EOF
+  cat > "$tmp/Sources/shotkeeper-cli/main.swift" <<'EOF'
+internal import Sparkle
 EOF
   cat > "$tmp/App/Shotkeeper/NotFileOps.swift" <<'EOF'
 func fine() { items.remove(at: 0); _ = list.removeAll(); set.remove(x) }
@@ -119,8 +144,9 @@ EOF
   # core: 7 imports (AppKit, Security, SwiftUI.Color, public AppKit, package SwiftUI, internal CoreGraphics,
   # `; import Security`) + trashItem + analyze = 9; app: removeItem + unlink + recycle + unlinkat + rmdir +
   # 3 qualified remove + spaced removeItem + 4 bad file-op markers + 1 bad analyze marker = 14;
-  # deep-sign: 2 in scripts/sign.sh + 1 in the workflow + 1 in App/project.yml + 1 in the xcconfig = 5
-  expected=28
+  # deep-sign: 2 in scripts/sign.sh + 1 in the workflow + 1 in App/project.yml + 1 in the xcconfig = 5;
+  # sparkle-import: 4 in App/Shotkeeper/Sparkle.swift + 1 in a test + 1 in the CLI = 6
+  expected=34
   found="$(printf '%s\n' "$output" | grep -c '^  ' || true)"
   if [ "$found" != "$expected" ]; then
     echo "self-test: expected $expected violations, got $found:"; printf '%s\n' "$output"; exit 1
@@ -198,6 +224,12 @@ if [ ${#deep_files[@]} -gt 0 ]; then
     | grep -vE -- '--verify([^A-Za-z0-9_-]|$)' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
 fi
 report deep-sign "never sign with the deep option; sign inside-out with scripts/sign-app.sh (verifying may use it)" "$hits"
+
+# sparkle-import
+sparkle_home='^App/Shotkeeper/Coordinator/UpdateChecks\.swift:'
+sparkle_regex="${import_regex}((struct|class|enum|protocol|typealias|func|var|let)[[:space:]]+)?Sparkle([^A-Za-z0-9_]|\$)"
+hits="$(code_matches "$sparkle_regex" Sources App Tests | grep -vE "$sparkle_home" || true)"
+report sparkle-import "Sparkle is imported only in App/Shotkeeper/Coordinator/UpdateChecks.swift (auto-update spec, Dependency)" "$hits"
 
 flag_files=()
 [ -f App/project.yml ] && flag_files+=("App/project.yml")

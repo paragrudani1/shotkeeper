@@ -125,6 +125,55 @@ Recorded in [workflow](workflow.md) ("Auto-update spec", 2026-11-28); copied her
   "valid on disk" after `ditto -x -k`. Note: the Release app arrives already linker-signed (codesign prints
   "replacing existing signature"), as it did before this ticket.
 
+## Ticket 07: Sparkle 2.10.1 and "Check for Updates…" (2026-11-28, branch `t3/au-07-sparkle`)
+
+- **Blocker: 07 merges together with 08, not before.** Sparkle 2.10.1 does **not** start without `SUPublicEDKey`
+  while `SUVerifyUpdateBeforeExtraction` is true, which this ticket requires. In `Sparkle/SPUUpdater.m` (tag
+  `2.10.1`, commit `ab7d712`), `startUpdater:` calls `checkIfConfiguredProperlyAndRequireFeedURL:` and returns NO when
+  it fails. With no public key (`!hasAnyPublicKey`), that check fails with "For security reasons, updates need to be
+  signed with an EdDSA key because SUVerifyUpdateBeforeExtraction is specified for Shotkeeper" (lines 340-352;
+  without that key, an unsigned app fails at line 341 too). `SPUStandardUpdaterController.m` `startUpdater` (lines
+  78-101) then logs "Fatal updater error" and, 1 s later, shows a modal alert "Unable to Check For Updates … The
+  updater failed to start". `canCheckForUpdates` stays NO, so the row stays disabled. So a build from this branch
+  shows that alert at every launch until 08 adds the key. Docs agree: `SUVerifyUpdateBeforeExtraction` "EdDSA
+  signing is required to use this setting" ([S3]). No placeholder key was added. Per the ticket, 07 waits for Parag's
+  key (ticket 03) and merges with 08.
+- **Plist keys confirmed** in [S3] (Sparkle "Customizing Sparkle", read from `sparkle-project.github.io` at
+  `597facd`, 2026-11-17) and the 2.10.1 source:
+  - `SUEnableAutomaticChecks` NO: "disables automatic checking for updates by default, also without asking your users
+    for permission". In source, `SPUUpdater.m:405-409` skips the permission prompt whenever the key has a value.
+  - `SUAllowsAutomaticUpdates` NO: "disallow automatic updates and require manual installation every time". In
+    source, `SPUUpdaterSettings.m:301-317` reads the Info.plist key, and `SUUpdateAlert.m:385` hides the
+    "automatically download and install" checkbox when `allowsAutomaticUpdates` is NO.
+    `currentAutomaticallyDownloadsUpdates` (line 327) is also NO then.
+  - `SUAutomaticallyUpdate` NO (already the default), `SUVerifyUpdateBeforeExtraction` YES, `SUFeedURL` as in the
+    spec.
+- **Code**: `App/Shotkeeper/Coordinator/UpdateChecks.swift` (the only `import Sparkle`). `start()` creates one
+  `SPUStandardUpdaterController(startingUpdater: false, …)`, observes `updater.canCheckForUpdates` (KVO, `.initial`),
+  then calls `startUpdater()`. It returns at once under `RuntimeEnvironment.isRunningUnitTests`, because
+  `SetupModelTests` calls `startServices()` on test coordinators. The KVO handler hops to the main actor with a
+  `Task` instead of `assumeIsolated` (both Sparkle classes are `NS_SWIFT_UI_ACTOR`). `checkForUpdates()` calls
+  `controller.checkForUpdates(nil)`. The coordinator owns it as `updates` and starts it first in `startServices()`.
+- **Menu**: `MenuRowID.checkForUpdates`. The row "Check for Updates…" comes after the divider, between About and
+  Quit, with no shortcut. It is always shown (also before setup) and disabled while
+  `MenuViewState.canCheckForUpdates` is false (default false, the state before the updater starts). A disabled row
+  is not in `rows`, so ↑/↓ and Return skip it. `AppDelegate.perform(.checkForUpdates)` runs after
+  `StatusItemController.run` has closed the panel, calls `NSApp.activate()` as `.about` does, then
+  `coordinator.updates.checkForUpdates()`.
+- **Snapshots**: `menu-check-for-updates-enabled`, `-highlighted` and `-disabled` (light and dark). All other menu
+  snapshots now show the row enabled, so they are one row taller.
+- **Plist check**: `scripts/check-app-plist.sh [--version v] [--build n] [--require-public-key] <app>` reads values
+  with `plutil -extract` (`xml1` for the boolean, so the string "false" fails). It checks `SUEnableAutomaticChecks`
+  is the boolean false, `SUFeedURL` is a non-empty string, the versions if given, and `SUPublicEDKey` only with
+  `--require-public-key` (ticket 08 adds that flag in `ci.yml`; ticket 09's build job passes the plan's versions).
+  It lists every failure and exits 1, or 2 on a usage error. `--self-test` uses a fake `plutil` everywhere and, on
+  macOS, the real one on the same generated plists. CI runs it in `linux-core`, in `macos-app` (bash 3.2), and on
+  the signed Release app ("Check the update keys in Info.plist", `--version 0.1.0 --build 1`, which also logs the
+  embedded Sparkle version).
+- **Lint**: rule `sparkle-import` covers every form of `import Sparkle` outside `UpdateChecks.swift`, in Sources,
+  App and Tests (tests included). The self-test has 6 planted cases plus `import SparkleLike` and a comment as
+  non-matches.
+
 ## Ticket 09: notes from earlier tickets (not started)
 
 - 2026-11-28 (PR #19 review): before the first release, the release job must run `scripts/sign-app.sh --keychain

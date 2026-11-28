@@ -23,6 +23,14 @@ enum MenuSnapshots {
             UISnapshot("menu-error") { Fixtures.menu(.idle, failure: "Could not open the index: disk I/O error.") },
             UISnapshot("menu-downloading") { Fixtures.menu(.idle, recents: false, download: 0.45) },
             UISnapshot("menu-setup-unfinished") { Fixtures.menu(.idle, recents: false, setup: true) },
+            // "Check for Updates…" (auto-update ticket 07): enabled, highlighted, and disabled while a check runs.
+            UISnapshot("menu-check-for-updates-enabled") { Fixtures.menu(.idle, recents: false) },
+            UISnapshot("menu-check-for-updates-highlighted") {
+                Fixtures.menu(.idle, recents: false, highlighted: .checkForUpdates)
+            },
+            UISnapshot("menu-check-for-updates-disabled") {
+                Fixtures.menu(.idle, recents: false, canCheckForUpdates: false, highlighted: .checkForUpdates)
+            },
             // Menu bar glyph (template): normal and pulse frame, at menu bar size and enlarged.
             UISnapshot("menubar-glyph") { Fixtures.glyphs() },
         ]
@@ -52,7 +60,7 @@ extension Fixtures {
 
     static func menu(_ status: QueueStatus, recents: Bool = true, count: Int = 214, failure: String? = nil,
                      message: String? = nil, download: Double? = nil, setup: Bool = false, canUndo: Bool = true,
-                     highlighted: MenuRowID? = nil) -> some View {
+                     canCheckForUpdates: Bool = true, highlighted: MenuRowID? = nil) -> some View {
         let isPaused: Bool = { if case .paused = status { return true } else { return false } }()
         let isError: Bool = { if case .error = status { return true } else { return false } }()
         let state = MenuViewState(
@@ -70,7 +78,8 @@ extension Fixtures {
             canUndo: canUndo,
             isPaused: isPaused,
             searchShortcut: "⌥⌘S",
-            version: "0.1.0")
+            version: "0.1.0",
+            canCheckForUpdates: canCheckForUpdates)
         let highlight = MenuHighlight()
         highlight.row = highlighted
         return MenuContentView(state: state, actions: .none, highlight: highlight, opaqueBackground: true)

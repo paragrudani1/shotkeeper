@@ -109,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .about:
             NSApp.activate()
             NSApp.orderFrontStandardAboutPanel(nil)
+        case .checkForUpdates:
+            // The menu panel is already closed (StatusItemController.run). Dock-less app: activate so Sparkle's
+            // window comes to the front, as About does (auto-update spec, story 7).
+            NSApp.activate()
+            coordinator.updates.checkForUpdates()
         case .quit: NSApplication.shared.terminate(nil)
         }
     }

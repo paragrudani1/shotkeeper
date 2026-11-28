@@ -8,6 +8,7 @@ import ShotkeeperCore
 /// The coordinator is the wiring point; behaviour that grows with features lives in its parts:
 /// - `capture` (`FolderCapture`): the watched folder and Process Existing.
 /// - `fileActions` (`FileActions`): undo and rename of processed files; re-sort, Bin and re-analyse go there.
+/// - `updates` (`UpdateChecks`): "Check for Updates…" through Sparkle; started with the services.
 /// - Test Connection is in `ConnectionTest.swift`.
 /// New parts follow the same shape: their own file, a small host protocol the coordinator implements.
 ///
@@ -86,6 +87,8 @@ final class AppCoordinator {
     let capture: FolderCapture
     /// Undo and rename of processed files.
     @ObservationIgnored let fileActions: FileActions
+    /// "Check for Updates…" (observable: the menu reads `canCheckForUpdates`).
+    let updates: UpdateChecks
     /// Extra listeners for pipeline events (setup's "Try it now" step), keyed by the id `addEventObserver` returned.
     @ObservationIgnored private var eventObservers: [UUID: @MainActor (ScreenshotEvent) -> Void] = [:]
     /// Shows a toast (set by the app delegate; nil in unit tests unless a test sets it).
@@ -108,6 +111,7 @@ final class AppCoordinator {
                                                         settings: store.current))
         self.capture = FolderCapture()
         self.fileActions = FileActions()
+        self.updates = UpdateChecks()
 
         let phaseSink = LockedValue<(@MainActor @Sendable (RuntimePhase) -> Void)?>(nil)
         let bytesSink = LockedValue<(@MainActor @Sendable (Int64) -> Void)?>(nil)
@@ -222,10 +226,12 @@ final class AppCoordinator {
         }
     }
 
-    /// Watching, login item, leftover-server cleanup, and re-queueing interrupted work. Not called by unit tests.
+    /// Watching, login item, leftover-server cleanup, re-queueing interrupted work, and the updater (which does not
+    /// start under unit tests, some of which call this).
     func startServices() {
         guard !servicesStarted else { return }
         servicesStarted = true
+        updates.start()
         Task { await localRuntime.cleanUpAfterPreviousRun() }
         startWatchingIfReady()
     }

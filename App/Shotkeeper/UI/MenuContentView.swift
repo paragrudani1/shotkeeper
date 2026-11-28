@@ -28,6 +28,9 @@ struct MenuViewState {
     var showsPauseResume = true
     /// "Process Existing Screenshots…" only once a backend is usable (it refuses before setup).
     var showsProcessExisting = true
+    /// "Check for Updates…" is enabled (Sparkle's `canCheckForUpdates`): false until the updater started and while a
+    /// check or an install runs. The row is always shown, also before setup.
+    var canCheckForUpdates = false
 
     /// Selectable rows in display order (keyboard ↑/↓ walks these).
     var rows: [MenuRowID] {
@@ -38,7 +41,9 @@ struct MenuViewState {
         if canUndo { rows.append(.undo) }
         if showsPauseResume { rows.append(isPaused ? .resume : .pause) }
         if showsProcessExisting { rows.append(.processExisting) }
-        rows += [.search, .settings, .about, .quit]
+        rows += [.search, .settings, .about]
+        if canCheckForUpdates { rows.append(.checkForUpdates) }
+        rows.append(.quit)
         return rows
     }
 
@@ -72,7 +77,8 @@ struct MenuViewState {
             searchShortcut: coordinator.activeSearchShortcut?.display,
             version: version,
             showsPauseResume: coordinator.capture.isWatching || coordinator.isPaused,
-            showsProcessExisting: coordinator.readiness == .ready)
+            showsProcessExisting: coordinator.readiness == .ready,
+            canCheckForUpdates: coordinator.updates.canCheckForUpdates)
     }
 
     static var appVersion: String {
@@ -81,7 +87,8 @@ struct MenuViewState {
 }
 
 enum MenuRowID: Hashable {
-    case fixSettings, finishSetup, recent(Int64), undo, pause, resume, processExisting, search, settings, about, quit
+    case fixSettings, finishSetup, recent(Int64), undo, pause, resume, processExisting, search, settings, about,
+         checkForUpdates, quit
 }
 
 /// What the rows do. `reveal` is true for ⌥-click / ⌥-Return on a recent row.
@@ -159,6 +166,7 @@ struct MenuContentView: View {
             row(.settings, "Settings…", shortcut: "⌘,")
             MenuDivider()
             row(.about, "About Shotkeeper", shortcut: state.version)
+            row(.checkForUpdates, "Check for Updates…", enabled: state.canCheckForUpdates)
             row(.quit, "Quit Shotkeeper", shortcut: "⌘Q")
         }
         .padding(5)

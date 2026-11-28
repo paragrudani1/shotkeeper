@@ -40,6 +40,9 @@ jobs:
       - name: Signing script self-test (fake codesign)
         run: scripts/sign-app.sh --self-test
 
+      - name: Info.plist check self-test (fake plutil)
+        run: scripts/check-app-plist.sh --self-test
+
       - name: Cache SwiftPM build
         uses: actions/cache@v4
         with:
@@ -75,6 +78,10 @@ jobs:
         run: |
           /bin/bash --version | head -1
           /bin/bash scripts/sign-app.sh --self-test
+
+      # Fake plutil, then the real one on generated plists (ticket 07).
+      - name: Info.plist check self-test (bash 3.2, real plutil)
+        run: /bin/bash scripts/check-app-plist.sh --self-test
 
       - name: Cache SwiftPM build
         uses: actions/cache@v4
@@ -203,6 +210,16 @@ jobs:
       # release identity instead of `-` (auto-update spec, "The existing CI job uses the same signing script").
       - name: Sign the app inside-out (ad-hoc) and verify
         run: /bin/bash scripts/sign-app.sh - "$DERIVED_DATA/Build/Products/Release/Shotkeeper.app"
+
+      # Same check as the release build job, which passes the planned versions (auto-update spec, release flow job 1
+      # step 4). The CI build is always 0.1.0 (1). Ticket 08 adds --require-public-key.
+      - name: Check the update keys in Info.plist
+        run: |
+          set -euo pipefail
+          APP="$DERIVED_DATA/Build/Products/Release/Shotkeeper.app"
+          echo "Sparkle.framework version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            "$APP/Contents/Frameworks/Sparkle.framework/Resources/Info.plist")"
+          /bin/bash scripts/check-app-plist.sh --version 0.1.0 --build 1 "$APP"
 
       - name: Zip the app
         run: |
