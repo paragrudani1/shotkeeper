@@ -339,3 +339,6 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   (`.frame(maxWidth:)` at `SearchFilterViews.swift:82`) instead of fitting its text, against the design. It is queued
   as a small polish fix before wave 1 merges to main. `t3/wave1-search` was then merged into `t3/wave2`
   (510 Linux tests pass; the wiki index conflict was combined), so wave 2 ticket 04 can use `SourceKey`.
+- 2026-11-28: **PR #25 merged into `t3/wave2`** (`2c691eb`, head `45f55b1`; wave 2 03, queue job kinds with the
+  pause/429 state fix). Wave 2 tickets 08–09 (panel) still wait for wave 1's panel tickets; 05 (Sort Existing)
+  waits for 04.
