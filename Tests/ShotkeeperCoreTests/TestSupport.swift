@@ -109,3 +109,13 @@ extension AppSettings {
     /// Test shorthand: Cloudflare allowed since `.distantPast` (an upgraded or long-configured user).
     static let cloudflareSinceEver = UploadGrant(destination: .cloudflare, grantedAt: .distantPast)
 }
+
+extension IndexedScreenshot {
+    /// Test row builder: a `done` row at `path` with placeholder file fields (`Screenshot.png`, hash `h-<path>`).
+    /// Set anything else in `configure`, so a new column never needs a new parameter here.
+    static func testRow(_ path: String, _ configure: (inout IndexedScreenshot) -> Void = { _ in }) -> IndexedScreenshot {
+        var row = IndexedScreenshot(path: path, originalFilename: "Screenshot.png", contentHash: "h-\(path)", status: .done)
+        configure(&row)
+        return row
+    }
+}

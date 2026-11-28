@@ -113,12 +113,34 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public static let defaults = AppSettings()
 
+    /// Adding a setting (2026-11-28): one `case` line here and one `value(...)` line in `init(from:)`, each
+    /// on its own line so parallel changes merge without conflicts. `SettingsTests.testEveryPropertyRoundTrips`
+    /// fails until both exist.
     private enum CodingKeys: String, CodingKey {
-        case backend, clairicAccountID, localModelVariantID, customEndpointURL, customModelName, openRouterModel,
-             idleTimeoutMinutes,
-             watchedFolderOverride, organizedFolder, renameEnabled, moveEnabled, launchAtLogin, minTitleConfidence,
-             requestsPerMinute, maxImageLongSide, writeFinderMetadata, excludeRules, hasSeenPrivacyNotice,
-             uploadGrants, showRenameToast, playRenameSound, filenameCasing, filenameDatePrefix, searchShortcut
+        case backend
+        case clairicAccountID
+        case localModelVariantID
+        case customEndpointURL
+        case customModelName
+        case openRouterModel
+        case idleTimeoutMinutes
+        case watchedFolderOverride
+        case organizedFolder
+        case renameEnabled
+        case moveEnabled
+        case launchAtLogin
+        case minTitleConfidence
+        case requestsPerMinute
+        case maxImageLongSide
+        case writeFinderMetadata
+        case excludeRules
+        case hasSeenPrivacyNotice
+        case uploadGrants
+        case showRenameToast
+        case playRenameSound
+        case filenameCasing
+        case filenameDatePrefix
+        case searchShortcut
     }
 
     public init(from decoder: Decoder) throws {

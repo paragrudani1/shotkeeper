@@ -166,3 +166,14 @@ final class SQLiteStatement {
     func optionalInt(_ column: Int32) -> Int? { isNull(column) ? nil : Int(int64(column)) }
     func optionalDate(_ column: Int32) -> Date? { optionalDouble(column).map(Date.init(timeIntervalSince1970:)) }
 }
+
+/// One value of the current row: what a column reader sees (`IndexColumn.read`). Nil for SQL NULL.
+struct SQLiteColumnValue {
+    let statement: SQLiteStatement
+    let index: Int32
+
+    var text: String? { statement.text(index) }
+    var double: Double? { statement.optionalDouble(index) }
+    var int: Int? { statement.optionalInt(index) }
+    var date: Date? { statement.optionalDate(index) }
+}
