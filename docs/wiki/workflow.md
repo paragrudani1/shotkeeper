@@ -276,3 +276,9 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   network-volume check must pass before clean-up ships.
 - 2026-11-28: **PR #20** (wave 2 02, `title_source`, migration 4) opened; review started. **PR #21** (CI triggers:
   one run per PR push, docs-only changes skipped) opened; it carries out the macOS-bottleneck improvement noted above.
+- 2026-11-28: **PR #17 merged into `t3/wave2`** (`0139f02`, head `d6ceef4`). **Mistake:** one of its four check runs
+  had failed (`macos-app`, pull_request run 46139322159, the actool step), and the merge went ahead on T3's "all
+  checks passed" without reading the `gh pr checks` output that was already printed. The same commit passed in
+  push run 46139318397, and it is the same actool exception seen on PR #11, with a doubled path `App/App/Shotkeeper`.
+  So the merged code is the tested code, but the rule was broken. **Rule:** before every merge, refuse if any line of
+  `gh pr checks` is not `pass`. A diagnosis agent was started for the actool step (no retries, root cause only).
