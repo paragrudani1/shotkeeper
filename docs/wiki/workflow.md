@@ -305,3 +305,5 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   review also found that the "Lint on macOS" step actually runs in the Linux job (from PR #10's fixes), so the bash
   3.2 claim was never true. Follow-ups: PR A (lint on macOS, against main) and PR B (`OTHER_CODE_SIGN_FLAGS --deep`
   check, `select-xcode.sh` message, a ticket 09 note to dry-run the real-identity path with a throwaway certificate).
+- 2026-11-28: **PR #22 merged** (`e852070`): the actool step uses absolute paths (root cause of the flake). `main`
+  was merged into the three integration branches again.
