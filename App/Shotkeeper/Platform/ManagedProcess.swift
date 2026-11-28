@@ -76,15 +76,15 @@ final class RotatingLogFile: @unchecked Sendable {
         handle = nil
         let fm = FileManager.default
         if keep == 0 {
-            try? fm.removeItem(at: url)
+            try? fm.removeItem(at: url)  // lint-allow: file-op (our log)
         } else {
-            try? fm.removeItem(at: rotatedURL(keep))
+            try? fm.removeItem(at: rotatedURL(keep))  // lint-allow: file-op (our oldest log)
             if keep > 1 {
                 for index in stride(from: keep - 1, through: 1, by: -1) where fm.fileExists(atPath: rotatedURL(index).path) {
-                    try? fm.moveItem(at: rotatedURL(index), to: rotatedURL(index + 1))
+                    try? fm.moveItem(at: rotatedURL(index), to: rotatedURL(index + 1))  // lint-allow: file-op (our logs)
                 }
             }
-            try? fm.moveItem(at: url, to: rotatedURL(1))
+            try? fm.moveItem(at: url, to: rotatedURL(1))  // lint-allow: file-op (our log)
         }
         try? openForAppend()
     }

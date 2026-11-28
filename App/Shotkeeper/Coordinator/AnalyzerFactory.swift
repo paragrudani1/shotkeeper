@@ -42,7 +42,7 @@ final class ManagedLocalAnalyzer: ScreenshotAnalyzer, @unchecked Sendable {
     func analyze(_ image: ImagePayload, context: AnalysisContext) async throws -> ScreenshotAnalysis {
         let baseURL = try await runtime.beginRequest(for: variant)
         do {
-            let result = try await analyzer(for: baseURL).analyze(image, context: context)
+            let result = try await analyzer(for: baseURL).analyze(image, context: context)  // lint-allow: analyze (wrapper: forwards its own call)
             await runtime.endRequest()
             return result
         } catch {

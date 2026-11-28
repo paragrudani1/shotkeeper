@@ -63,7 +63,7 @@ final class SettingsStore: @unchecked Sendable {
         if (try? JSONSerialization.jsonObject(with: data)) == nil {
             // Not JSON at all: keep a copy for the user before defaults replace it on the next save.
             let backup = url.appendingPathExtension("unreadable")
-            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.removeItem(at: backup)  // lint-allow: file-op (our previous backup)
             try? FileManager.default.copyItem(at: url, to: backup)
         }
         return AppSettings.decode(data)

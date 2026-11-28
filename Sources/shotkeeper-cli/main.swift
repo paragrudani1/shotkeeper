@@ -264,7 +264,7 @@ if options.backend == "clairic" {
 let clock = ContinuousClock()
 let start = clock.now
 do {
-    let analysis = try await analyzer.analyze(image, context: context)
+    let analysis = try await analyzer.analyze(image, context: context)  // lint-allow: analyze (developer CLI: only the file on its command line)
     let elapsed = start.duration(to: clock.now)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
