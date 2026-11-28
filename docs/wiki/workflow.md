@@ -321,3 +321,10 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **PR #24 merged** (`f19156b`): lint runs in `macos-app` under `/bin/bash`. Job 140968794035 printed
   "GNU bash, version 3.2.57(1)-release", "lint self-test: ok" and "lint: ok". `main` still needs merging into the
   integration branches. For `t3/auto-update`, #26 also edits the `lint.sh` header, so merge #26 first, then main.
+- 2026-11-28: **PR #25 review (queue kinds): fix first**, with one should-fix. A paused job whose attempt then got a
+  429 kept showing `.running` (the reviewer proved it with a probe test). The chief of staff fixed it (`45f55b1`):
+  job states are published when an attempt ends, `waitUntil` now fails loudly on timeout, and a pause-then-429 test
+  was added (454 Linux tests pass). Consent carry is clean: the init is still internal, and the request is dropped
+  when the job ends.
+- 2026-11-28: Auto-update ticket 07 (Sparkle 2.10.1 + "Check for Updates…") started. It stops and reports if Sparkle
+  needs `SUPublicEDKey` to start, which would make it wait for Parag's key (ticket 03/P2).
