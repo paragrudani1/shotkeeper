@@ -70,8 +70,8 @@ struct SearchView: View {
         }
     }
 
-    private func hung<Picker: View>(under anchor: Anchor<CGRect>, width: CGFloat,
-                                    @ViewBuilder picker: () -> Picker) -> some View {
+    private func hung<Content: View>(under anchor: Anchor<CGRect>, width: CGFloat,
+                                    @ViewBuilder picker: () -> Content) -> some View {
         GeometryReader { proxy in
             let pill = proxy[anchor]
             ZStack(alignment: .topLeading) {
