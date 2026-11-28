@@ -93,8 +93,12 @@ Review of PR 10 at `06d1aea` (no blockers). Branch `t3/prefactor-app-fix`, merge
     markers already had that form.
   - The header lists the blind spots: a line starting with a comment is skipped (code after `*/` too), method
     references without a call, and a call split across lines.
-  - `macos-app` runs `/bin/bash scripts/lint.sh --self-test && /bin/bash scripts/lint.sh`, so it is proven on bash 3.2
-    and BSD grep/sed.
+  - ~~`macos-app` runs `/bin/bash scripts/lint.sh --self-test && /bin/bash scripts/lint.sh`, so it is proven on bash 3.2
+    and BSD grep/sed.~~ Correction 2026-11-28 (PR #19 review): that step was added to `linux-core` (Ubuntu), so it
+    ran Linux bash and GNU grep, and the script had never run on macOS. True from 2026-11-28 (branch
+    `t3/ci-lint-on-macos`): the step "Lint on macOS (bash 3.2, BSD grep/sed)" is the first step after checkout in
+    `macos-app` and logs `/bin/bash --version`; `linux-core` keeps "Lint on Linux (bash 5, GNU grep/sed)". Busybox
+    grep has no `--include`, so the script does not run there (noted in its header).
 - `testTheCoordinatorWiresItsParts` replaced by `testStartWatchingRequeuesPendingRowsOnce` (`FolderCapture` with a
   fake host: only `pending` rows are queued, and a second `startWatching()` queues nothing).
 - `GlobalHotKey.modifiers(from:)` is `nonisolated` and the search keys use it (the copy in `SearchPanel.swift` is gone).
