@@ -108,6 +108,40 @@ final class ScreenshotIndexTests: XCTestCase {
         XCTAssertEqual(try index.search("near(x").map(\.path), ["/1.png"])
     }
 
+    // MARK: - Recognized text (wave 1, ticket 01)
+
+    func testRecognizedTextIsPartOfTheAndMatch() throws {
+        let index = try ScreenshotIndex.inMemory()
+        try index.save(.testRow("/both.png") { $0.title = "Invoice from Acme"; $0.recognizedText = "Total due\nPayable to Globex" })
+        try index.save(.testRow("/title-only.png") { $0.title = "Invoice from Initech" })
+        try index.save(.testRow("/text-only.png") { $0.title = "Lunch menu"; $0.recognizedText = "Globex cafeteria" })
+        XCTAssertEqual(try index.search("invoice globex").map(\.path), ["/both.png"], "one term in the title, one only in the text")
+        XCTAssertEqual(Set(try index.search("globex").map(\.path)), ["/both.png", "/text-only.png"])
+        XCTAssertEqual(try index.search(ScreenshotQuery(text: "invoice payable")).rows.map(\.path), ["/both.png"])
+        XCTAssertEqual(try index.search("invoice nowhere"), [], "every term must match somewhere")
+    }
+
+    /// Spec story 27: a hit only in the recognized text ranks below a title, tags or description hit. Pins the order,
+    /// not the weights. The text-only row has the shortest text, which bm25 favours most.
+    func testRecognizedTextHitRanksBelowTitleTagsAndDescription() throws {
+        let index = try ScreenshotIndex.inMemory()
+        try index.save(.testRow("/text.png") {
+            $0.title = "Alpha one"; $0.tags = ["misc"]; $0.description = "A plain picture"; $0.recognizedText = "invoice"
+        })
+        try index.save(.testRow("/description.png") {
+            $0.title = "Alpha two"; $0.tags = ["misc"]; $0.description = "An invoice picture"; $0.recognizedText = "plain words here"
+        })
+        try index.save(.testRow("/tags.png") {
+            $0.title = "Alpha three"; $0.tags = ["invoice"]; $0.description = "A plain picture"; $0.recognizedText = "plain words here"
+        })
+        try index.save(.testRow("/title.png") {
+            $0.title = "Invoice four"; $0.tags = ["misc"]; $0.description = "A plain picture"; $0.recognizedText = "plain words here"
+        })
+        let expected = ["/title.png", "/tags.png", "/description.png", "/text.png"]
+        XCTAssertEqual(try index.search("invoice").map(\.path), expected)
+        XCTAssertEqual(try index.search(ScreenshotQuery(text: "invoice")).rows.map(\.path), expected)
+    }
+
     func testFTSQueryBuilder() {
         XCTAssertEqual(ScreenshotIndex.ftsQuery("foo bar"), #""foo"* AND "bar"*"#)
         XCTAssertEqual(ScreenshotIndex.ftsQuery(#"say "hi""#), #""say"* AND """hi"""*"#)
@@ -169,6 +203,62 @@ final class ScreenshotIndexTests: XCTestCase {
         XCTAssertFalse(row.restoredByUndo)
     }
 
+    /// Migration 3 replaces the FTS table: rows saved before it are still found (the 'rebuild' refilled it), keep their
+    /// values, and get no text status (not requested).
+    func testVersionTwoDatabaseMigratesWithRowsStillFoundAndNoTextStatus() throws {
+        let dir = try TempDir()
+        let path = dir.url.appendingPathComponent("index.sqlite").path
+        do {
+            let db = try SQLiteDatabase(path: path)
+            try db.migrate(Array(ScreenshotIndex.migrations.prefix(2)))
+            XCTAssertEqual(try db.userVersion, 2)
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, title, tags, key_text, source_app_or_site,
+                    status) VALUES ('/a.png', 'a.png', 'ha', 'Invoice from Acme', '["billing"]', 'Total 42', 'Mail', 'done')
+                """)
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, description, status)
+                VALUES ('/b.png', 'b.png', 'hb', 'Globex dashboard', 'done')
+                """)
+        }
+        let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: path))
+        XCTAssertEqual(index.schemaVersion, ScreenshotIndex.migrations.last?.version)
+        for (query, expected) in [("acme", "/a.png"), ("billing", "/a.png"), ("total", "/a.png"), ("mail", "/a.png"),
+                                  ("globex", "/b.png")] {
+            XCTAssertEqual(try index.search(query).map(\.path), [expected], query)
+            XCTAssertEqual(try index.search(ScreenshotQuery(text: query)).rows.map(\.path), [expected], query)
+        }
+        for path in ["/a.png", "/b.png"] {
+            let row = try XCTUnwrap(index.lookup(byPath: path))
+            XCTAssertNil(row.textStatus, path)
+            XCTAssertNil(row.recognizedText, path)
+            XCTAssertNil(row.textRecognizedBy, path)
+            XCTAssertNil(row.textError, path)
+        }
+        // The new triggers keep FTS in step after the migration too.
+        try index.save(.testRow("/a.png") { $0.title = "Renamed"; $0.recognizedText = "Quarterly figures" })
+        XCTAssertEqual(try index.search("acme"), [])
+        XCTAssertEqual(try index.search("renamed quarterly").map(\.path), ["/a.png"])
+    }
+
+    /// Story 23: date and source filters and the text runner's queue have indexes (checked by name, not SQL text).
+    func testFilterAndPendingTextIndexesExist() throws {
+        let db = try SQLiteDatabase(path: ":memory:")
+        try db.migrate(ScreenshotIndex.migrations)
+        var names: Set<String> = []
+        try db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'screenshots'") {
+            names.insert($0.text(0) ?? "")
+        }
+        for name in ["screenshots_taken_at", "screenshots_source_app_or_site", "screenshots_text_pending"] {
+            XCTAssertTrue(names.contains(name), "missing index \(name); have \(names.sorted())")
+        }
+        // The FTS table has exactly the columns the weights are given for.
+        var ftsColumns: [String] = []
+        try db.query("PRAGMA table_info(screenshots_fts)") { ftsColumns.append($0.text(1) ?? "") }
+        XCTAssertEqual(ftsColumns, ["title", "tags", "description", "key_text", "source_app_or_site", "recognized_text"])
+        XCTAssertEqual(ScreenshotIndex.ftsColumns.map(\.name), ftsColumns)
+    }
+
     func testMigrationVersionsAreUniqueAndContiguous() {
         let versions = ScreenshotIndex.migrations.map(\.version)
         XCTAssertEqual(versions, Array(1...Int32(versions.count)), "1, 2, 3, ... in order, no duplicates or gaps")
@@ -209,6 +299,7 @@ final class ScreenshotIndexTests: XCTestCase {
             "source_app_or_site", "content_type", "description", "tags", "key_text", "date_mentioned", "produced_by",
             "billed_input_tokens", "status", "last_error", "note"],
         2: ["restored_by_undo"],
+        3: ["recognized_text", "text_status", "text_recognized_by", "text_error"],
     ]
 
     /// The migrated table has exactly the declared columns, in order: a column without its migration (or the other
@@ -241,6 +332,10 @@ final class ScreenshotIndexTests: XCTestCase {
             $0.lastError = "boom"
             $0.note = "note"
             $0.restoredByUndo = true
+            $0.recognizedText = "Line one\nLine two"
+            $0.textStatus = .failed
+            $0.textRecognizedBy = "vision-r3-accurate-h1/96-lc0"
+            $0.textError = "file missing"
         }
         var expected = row
         expected.id = try index.save(row)
@@ -497,6 +592,108 @@ final class ScreenshotIndexTests: XCTestCase {
         try index.save(.testRow("/b.png"))
         XCTAssertEqual(received.get, 1)
         withExtendedLifetime(changes) {}
+    }
+
+    // MARK: - Conditional text write
+
+    private func pendingTextRow(_ path: String) -> IndexedScreenshot {
+        .testRow(path) { $0.title = "Receipt"; $0.contentHash = "hash-\(path)"; $0.textStatus = .pending }
+    }
+
+    func testSettingTextAppliesToAPendingRowWithItsHashAndIsSearchable() async throws {
+        var index: ScreenshotIndex! = try ScreenshotIndex.inMemory()
+        let id = try index.save(pendingTextRow("/a.png"))
+        let changes = index.changes()
+
+        XCTAssertTrue(try index.setRecognizedText(.text("Order 7781\nShipped to Globex"), recognizedBy: "vision-test",
+                                                  id: id, ifContentHash: "hash-/a.png"))
+        let row = try XCTUnwrap(index.lookup(byPath: "/a.png"))
+        XCTAssertEqual(row.recognizedText, "Order 7781\nShipped to Globex")
+        XCTAssertEqual(row.textStatus, .done)
+        XCTAssertEqual(row.textRecognizedBy, "vision-test")
+        XCTAssertNil(row.textError)
+        XCTAssertEqual(row.title, "Receipt", "the analysis is untouched")
+        XCTAssertEqual(row.status, .done)
+        // The write is an UPDATE of the text columns only: the FTS trigger must fire for recognized_text.
+        XCTAssertEqual(try index.search("globex receipt").map(\.path), ["/a.png"])
+        XCTAssertEqual(try index.search("7781").map(\.path), ["/a.png"])
+        index = nil
+        let received = await collect(changes)
+        XCTAssertEqual(received, [IndexChange(.updated, id: id, path: "/a.png")])
+    }
+
+    func testSettingNoTextAndFailureRecordTheirStatus() throws {
+        let index = try ScreenshotIndex.inMemory()
+        let none = try index.save(pendingTextRow("/none.png"))
+        let failed = try index.save(pendingTextRow("/failed.png"))
+        XCTAssertTrue(try index.setRecognizedText(.noText, recognizedBy: "vision-test", id: none, ifContentHash: "hash-/none.png"))
+        XCTAssertTrue(try index.setRecognizedText(.failed(reason: "file missing"), recognizedBy: "vision-test",
+                                                  id: failed, ifContentHash: "hash-/failed.png"))
+
+        let noneRow = try XCTUnwrap(index.lookup(byPath: "/none.png"))
+        XCTAssertEqual(noneRow.textStatus, .noText)
+        XCTAssertNil(noneRow.recognizedText)
+        XCTAssertNil(noneRow.textError)
+        XCTAssertEqual(noneRow.textRecognizedBy, "vision-test")
+        let failedRow = try XCTUnwrap(index.lookup(byPath: "/failed.png"))
+        XCTAssertEqual(failedRow.textStatus, .failed)
+        XCTAssertNil(failedRow.recognizedText)
+        XCTAssertEqual(failedRow.textError, "file missing")
+        XCTAssertEqual(failedRow.status, .done, "a failed read never touches the analysis status")
+    }
+
+    /// Spec story 45: the file changed during the read (the processor saved the row again with a new hash), or the
+    /// row is no longer pending: the late result is dropped, the row is unchanged and nothing is published.
+    func testSettingTextIsRefusedForAStaleHashANonPendingStatusOrAMissingRow() async throws {
+        var index: ScreenshotIndex! = try ScreenshotIndex.inMemory()
+        let pending = try index.save(pendingTextRow("/pending.png"))
+        let notRequested = try index.save(.testRow("/old.png") { $0.contentHash = "hash-old" })
+        let done = try index.save(.testRow("/done.png") {
+            $0.contentHash = "hash-done"; $0.textStatus = .done; $0.recognizedText = "Kept text"; $0.textRecognizedBy = "v1"
+        })
+        let failed = try index.save(.testRow("/failed.png") {
+            $0.contentHash = "hash-failed"; $0.textStatus = .failed; $0.textError = "file missing"
+        })
+        let before = try ["/pending.png", "/old.png", "/done.png", "/failed.png"].map { try index.lookup(byPath: $0) }
+        let changes = index.changes()
+
+        XCTAssertFalse(try index.setRecognizedText(.text("Late"), recognizedBy: "v2", id: pending, ifContentHash: "stale"))
+        XCTAssertFalse(try index.setRecognizedText(.text("Late"), recognizedBy: "v2", id: notRequested, ifContentHash: "hash-old"))
+        XCTAssertFalse(try index.setRecognizedText(.noText, recognizedBy: "v2", id: done, ifContentHash: "hash-done"))
+        XCTAssertFalse(try index.setRecognizedText(.text("Late"), recognizedBy: "v2", id: failed, ifContentHash: "hash-failed"))
+        XCTAssertFalse(try index.setRecognizedText(.text("Late"), recognizedBy: "v2", id: 9_999, ifContentHash: "hash-/pending.png"))
+
+        let after = try ["/pending.png", "/old.png", "/done.png", "/failed.png"].map { try index.lookup(byPath: $0) }
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(try index.search("late"), [])
+        index = nil
+        let received = await collect(changes)
+        XCTAssertEqual(received, [], "a refused write publishes nothing")
+    }
+
+    /// The text runner reads the newest `pending` row first, by when it was taken (processed time when unknown).
+    func testNewestPendingTextRowIsByTakenTimeThenProcessedTime() throws {
+        let index = try ScreenshotIndex.inMemory()
+        XCTAssertNil(try index.newestPendingTextRow())
+        func row(_ path: String, captured: Double?, processed: Double, text: TextStatus?) -> IndexedScreenshot {
+            .testRow(path) {
+                $0.capturedAt = captured.map { t0.addingTimeInterval($0 * 60) }
+                $0.processedAt = t0.addingTimeInterval(processed * 60)
+                $0.textStatus = text
+            }
+        }
+        try index.save(row("/old.png", captured: 1, processed: 50, text: .pending))
+        try index.save(row("/no-capture-time.png", captured: nil, processed: 5, text: .pending))
+        try index.save(row("/newest-done.png", captured: 40, processed: 40, text: .done))
+        try index.save(row("/newest-unrequested.png", captured: 30, processed: 30, text: nil))
+        try index.save(row("/newest-failed.png", captured: 20, processed: 20, text: .failed))
+        XCTAssertEqual(try index.newestPendingTextRow()?.path, "/no-capture-time.png", "taken at 5 beats taken at 1")
+
+        try index.save(row("/new.png", captured: 10, processed: 11, text: .pending))
+        XCTAssertEqual(try index.newestPendingTextRow()?.path, "/new.png")
+        let new = try XCTUnwrap(index.lookup(byPath: "/new.png"))
+        XCTAssertTrue(try index.setRecognizedText(.noText, recognizedBy: "v", id: new.id, ifContentHash: new.contentHash))
+        XCTAssertEqual(try index.newestPendingTextRow()?.path, "/no-capture-time.png", "a read row leaves the queue")
     }
 
     func testGenericMigrationsApplyOnlyNewSteps() throws {
