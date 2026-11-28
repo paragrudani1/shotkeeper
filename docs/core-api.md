@@ -10,7 +10,7 @@ Decisions and their reasons: [wiki/core-implementation.md](wiki/core-implementat
 | `FileMetadataWriter` | `Files/FinderMetadata.swift` | `getxattr`/`setxattr` on the given name; return nil for ENOATTR. Core builds the binary-plist payloads. |
 | `CredentialStore` | `Settings/CredentialStore.swift` | Keychain (generic password, service `dev.shotkeeper.Shotkeeper` (the bundle id), account `key.rawValue`): `KeychainCredentialStore`. |
 | `ScreenshotAnalyzer` | `Analysis/` (other task) | Built from settings + credentials; core ships `CloudflareClairicAnalyzer` and `OpenAICompatibleAnalyzer` (profile `.localServer` for local/custom endpoints, `OpenRouterBackend.configuration(apiKey:model:)` for OpenRouter). |
-| Folder watching | app only | FSEvents on `settings.watchedFolderOverride` or the `com.apple.screencapture location` (default Desktop). For each created/renamed file, `ScreenshotDetector(customPrefix:).isScreenshot(url)` → `queue.enqueue(url)`. |
+| Folder watching | app only | FSEvents on `settings.watchedFolderOverride` or the `com.apple.screencapture location` (default Desktop). For each created/renamed file, `ScreenshotDetector(customPrefix:).isScreenshot(url)` → `queue.enqueue(.process(url))`. |
 | Server process | app only | Run `MLXRuntimePlan` commands with `Process`; apply `IdlePolicy` and `RestartPolicy`. |
 
 ## Wiring
@@ -28,10 +28,17 @@ let processor = ScreenshotProcessor(
 let queue = ProcessingQueue(
     configuration: .init(concurrency: 1, requestsPerMinute: settings.requestsPerMinute),
     probe: { await localServerHealthy() },         // optional; e.g. GET MLXRuntimePlan.healthURL(port:)
-    jobHandler: { url, request in                  // request: carried by the job, every attempt
-        _ = try await processor.process(url, userRequest: requests.authorization(for: request)) })
-// Process Existing: queue.enqueue(url, userRequest: requests.request(for: target, madeIn: generationAtClick))
+    jobHandler: { job, request in                  // request: carried by the job, every attempt
+        switch job {                               // dispatch on the kind
+        case .process(let url):
+            _ = try await processor.process(url, userRequest: requests.authorization(for: request))
+        case .reanalyze:                           // Analyze Again: wired by wave 2 ticket 08
+            break
+        } })
+// Process Existing: queue.enqueue(.process(url), userRequest: requests.request(for: target, madeIn: generationAtClick))
+// Analyze Again:    queue.enqueue(.reanalyze(rowID: id), atFront: true, userRequest: …)
 for await status in await queue.statusUpdates() { menuBar.show(status) }
+for await states in await queue.jobStateUpdates() { search.show(states[.reanalyze(rowID: id)]) }
 ```
 For the toast, the handler calls `processor.processWithReport(url)` and feeds a `ScreenshotEvent` to a `ToastBatcher`
 on the main actor; on a thrown error it sends `.failed(originalURL:problem:)` when `UserFacingError.shouldNotify(error)`,
@@ -88,8 +95,17 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - Columns (internal): `ScreenshotIndex.columns` declares each column once (SQL, migration, bind, read). Adding one:
     an entry with the next `addedIn`, `SQLiteMigration(version: n, statements: addColumns("new_column"))`, and
     `n: ["new_column"]` in the test-side `shippedColumns`.
-  - `search(_ query: ScreenshotQuery, limit:) -> ScreenshotSearchResult` (search window): text + `contentType` chip +
-    optional batch `paths`, AND-combined, `done` rows only; returns `rows`, `matchCount` and `totalCount` for the footer.
+  - `search(_ query: ScreenshotQuery, limit:now:calendar:) -> ScreenshotSearchResult` (search window): text +
+    `contentType` chip + optional batch `paths` + optional `date: DateFilter`, AND-combined, `done` rows only; returns
+    `rows`, `matchCount` and `totalCount` for the footer. The date filter compares
+    `COALESCE(captured_at, processed_at)` (the `screenshots_taken_at` index) with `date.interval(now:calendar:)`, resolved
+    on each call; the app passes the search model's `now()` and `time.calendar`. With a date or a source and no text:
+    newest taken first. `source: SourceKey` is resolved to the raw `source_app_or_site` spellings with that key and
+    filtered with `IN (SELECT value FROM json_each(?))` (the `screenshots_source_app_or_site` index); a key with no rows
+    left finds nothing. `searchSQL(_:sourceSpellings:now:calendar:)` (internal) builds the statements, for query-plan tests.
+  - `sources() -> [SourceFacet]` (wave 1 ticket 03): the source list, one facet per `SourceKey` over `done` rows
+    (`key`, `displayName` = most common trimmed spelling, alphabetical tie-break; `count` over the whole index), sorted by
+    count then name; rows without a source left out.
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
     Text fields: `recognizedText`, `textStatus: TextStatus?` (nil = never requested; `.pending` / `.done` /
     `.noText` (stored `none`) / `.failed`), `textRecognizedBy`, `textError`. `save` writes them like every column, so a
@@ -98,9 +114,19 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     the model's title or the original name.
   - `ContentFingerprint.compute(for:)`: size + mtime + first 64 KiB (not a security hash).
 - **Queue/**
-  - `ProcessingQueue` (actor): `enqueue`, `pause(until:)`, `resume()`, `setRequestsPerMinute(_:)`, `statusUpdates()`, `status`, `waitUntilIdle()`,
-    `succeededCount`, `failedCount`, `lastFailure`.
-  - `QueueStatus`: `.idle`, `.processing(current:remaining:)`, `.paused(until:)`, `.offline`, `.error(message)`.
+  - `ProcessingQueue` (actor): `enqueue(_:atFront:userRequest:)`, `pause(until:)`, `resume()`, `setRequestsPerMinute(_:)`,
+    `statusUpdates()`, `status`, `jobStateUpdates()`, `jobStates`, `waitUntilIdle()`, `succeededCount`, `failedCount`,
+    `lastFailure` (`.process` jobs only).
+  - `QueueJob`: `.process(URL)` or `.reanalyze(rowID:)`. A job equal to one queued or running (same kind and key) is
+    ignored; `.process(a)` and `.reanalyze` of the row at `a` are different jobs. `atFront: true` places it after
+    earlier front jobs and before every other waiting job; it never pre-empts a running job and still takes a
+    rate-limit token. The `JobHandler` gets `(QueueJob, UserUploadRequest?)`; the file-only `Handler` init fails a
+    `.reanalyze` job at once (`QueueJobError.noReanalyzeHandler`).
+  - `jobStates: [QueueJob: QueueJobState]`: `.queued`, `.running` (an attempt is out, or it waits between attempts),
+    `.held(QueueHold)` (`.needsAttention(text)`, `.paused(until:)`, `.offline`; an attempt already out when the user
+    pauses stays `.running`). Ended jobs are absent: the handler saw their result.
+  - `QueueStatus`: `.idle`, `.processing(current:remaining:)` (`current` nil while a `.reanalyze` job is shown),
+    `.paused(until:)`, `.offline`, `.error(message)`.
     `.error` means held on `unauthorized`/`notConfigured`: show "Fix settings", call `resume()` after the user fixes them.
   - `QueueClock`/`SystemQueueClock`, `BackoffPolicy`, `TokenBucket`.
 - **Pipeline/**
@@ -150,7 +176,23 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     true when `query` changed: run it with `resultLimit`, then `apply(_:for:)` or `fail(_:for:)` (stale answers are ignored).
   - `SearchResultItem`: title (file stem), `subtitle(now:time:)` ("x.com · 5 min ago"), `accessibilityLabel(now:time:)`,
     `hashtags`, `metadata(time:)` (Source / Type / Taken / Folder). `IndexUnavailableError` → the error state.
-  - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`.
+  - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`; date filter
+    wording `days(_:_:now:)` ("Oct 3 – 17", "Dec 28, 2025 – Jan 4, 2026") and `day(_:now:alongside:spelled:)`.
+  - Date filter (wave 1, 2026-11-28): `DateFilter` (`.today`, `.yesterday`, `.last7Days`, `.last30Days`,
+    `.days(from:through:)` over `CalendarDay`); `interval(now:calendar:)` = whole local days `[start, end)`;
+    `label`, `spokenValue`, `takenPhrase(now:time:)`. `SearchWindowState`: `date`, `setDateFilter(_:)`,
+    `clearFilters()`, `datePicker: DatePickerState?` (highlight, custom range, From/To; `DatePickerState(today:current:calendar:)`),
+    `noMatchButtons`, `now`/`time` for the wording. `SearchKeyMap`: ⌘D (`.dateFilter`) and ⌫ (`.deleteBackward`).
+  - Source filter (wave 1 ticket 03, 2026-11-28): **`SourceKey`** (`Search/SourceKey.swift`), the one rule that two
+    spellings are one source: `SourceKey(_ raw:)` (nil when blank) trims, folds case and diacritics, drops a leading
+    `www.` and a lone top-level domain (`x.com` → `x`; `bbc.co.uk`, `docs.google.com` kept); no alias table.
+    `SourceKey.fold(_:)` is the folding alone (the picker's narrow field uses it). `SourceFacet` (`key`, `displayName`,
+    `count`). `SearchWindowState`: `source`, `sourceName`, `setSource(_ facet:)`, `sources` (nil until loaded) and
+    `setSources(_:)`, Source pill wording (`sourcePillTitle`/`Value`/`Help`, `sourcePillIsDisabled`), the picker
+    `sourcePicker: SourcePickerState?` (`narrowText`, `rows: [SourcePickerRow]`, `highlighted`, `noMatchMessage`,
+    `deleteClearsSource`) with `toggleSourcePicker()` (false = disabled, beep), `setSourceNarrowText`,
+    `moveSourceHighlight`, `chooseSource`, `chooseHighlightedSource`, `clearSourceFromPicker`; `isPickerOpen`,
+    `closePickers()`. `SearchKeyMap`: ⌘S (`.sourceFilter`).
   - `SearchKeyMap` (added 2026-11-28): the search window's key table. `bindings` (`SearchKeyBinding`: a `SearchKeyTrigger`
     `.plain(keyCode:)` or `.command(Character)` → a `SearchKey`: up, down, open, close, space, copyImage, reveal,
     quickLook, `chip(_)`), `plain(keyCode:modifiers:)` (no ⌘⌥⌃⇧), `command(keyCode:modifiers:characters:)` (typed ASCII
@@ -170,7 +212,7 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     dates (`effectiveCaptureTime(of:timeZone:)`) before and after preparing it and uses the earlier. `ScreenshotProcessor` is its
     only file-level caller: on the `AnalyzerSnapshot` read once after preparing the image, right before `analyze`.
     `UserUploadRequests` issues generation-stamped `UserUploadRequest`s and `invalidateAll()`s them on a
-    backend/endpoint/grant change; `ProcessingQueue.enqueue(_:userRequest:)` carries one with its job for every
+    backend/endpoint/grant change; `ProcessingQueue.enqueue(_:atFront:userRequest:)` carries one with its job (either kind) for every
     attempt (retries, holds) and drops it when the job ends; a running job does not take on a later request. `UploadConsent.grant(for:in:)` is the shared matching rule.
   - `BackendGate.readiness(settings:hasClairicToken:) -> BackendReadiness` (`.ready`, `.needsConsent`,
     `.notConfigured(reason)`): what the UI shows and offers (the analyzer factory's hold, `mayWatch` for the folder

@@ -416,6 +416,31 @@ final class ReanalyzeTests: XCTestCase {
         XCTAssertEqual(analyzer.calls.get.count, 1)
     }
 
+    /// With PR #25's queue: a `.reanalyze` job carrying the user's request for a file taken before the grant is
+    /// analyzed again after a 429, and the request is dropped when the job ends.
+    func testAReanalyzeJobKeepsItsRequestAcrossRetries() async throws {
+        let row = try await indexedScreenshot()  // named 2026-01-13: before the grant
+        settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare, grantedAt: Date().addingTimeInterval(60))] }
+        let analyzer = StubAnalyzer([.failure(.rateLimited(retryAfter: 1)), .success(newAnalysis())])
+        let processor = self.processor(analyzer)
+        let requests = UserUploadRequests()
+        let outcomes = Locked<[ReanalysisOutcome]>([])
+        let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
+                                    jobHandler: { job, request in
+            guard case .reanalyze(let rowID) = job else { return XCTFail("\(job)") }
+            let outcome = try await processor.reanalyze(rowID: rowID, request: requests.authorization(for: request))
+            outcomes.mutate { $0.append(outcome) }
+        })
+        let request = try XCTUnwrap(requests.request(for: .cloudflare, madeIn: requests.generation))
+        await queue.enqueue(.reanalyze(rowID: row.id), atFront: true, userRequest: request)
+        await queue.waitUntilIdle()
+        XCTAssertEqual(analyzer.calls.get.count, 2, "retried after the 429")
+        XCTAssertEqual(outcomes.get, [.updated(finalURL: desktop("Acme Invoice For November.png"), renamed: true,
+                                               moved: false, titleKept: nil, suggestedTitle: nil)])
+        let carried = await queue.carriedRequestCount
+        XCTAssertEqual(carried, 0, "dropped when the job ended")
+    }
+
     /// A renamed file has lost the time in its name; its original name still counts for consent (fails closed).
     func testARenamedFileIsJudgedByItsOriginalNameToo() async throws {
         let row = try await indexedScreenshot()  // now "Invoice From Acme.png", originally named 2026-01-13

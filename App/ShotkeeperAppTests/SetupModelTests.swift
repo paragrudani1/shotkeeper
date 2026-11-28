@@ -249,7 +249,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         var events: [ScreenshotEvent] = []
         let observer = coordinator.addEventObserver { events.append($0) }
         defer { coordinator.removeEventObserver(observer) }
-        await queue.enqueue(shot)
+        await queue.enqueue(.process(shot))
         await queue.waitUntilIdle()
         for _ in 0..<200 where events.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
         guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
@@ -277,7 +277,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         // 1. Setup closed without agreeing. 2. Local in Settings, not installed: the job is held.
         coordinator.updateSettings { $0.backend = .localInkling }
         let queue = try XCTUnwrap(coordinator.queue)
-        await queue.enqueue(shot)
+        await queue.enqueue(.process(shot))
         for _ in 0..<500 {
             if case .error = coordinator.queueStatus { break }
             try await Task.sleep(for: .milliseconds(10))
@@ -316,7 +316,7 @@ final class SetupModelTests: TempDirectoryTestCase {
         let observer = coordinator.addEventObserver { events.append($0) }
         defer { coordinator.removeEventObserver(observer) }
         let queue = try XCTUnwrap(coordinator.queue)
-        await queue.enqueue(shot) // what the watcher does for the event
+        await queue.enqueue(.process(shot)) // what the watcher does for the event
         try await waitForEvents({ events })
         guard case .processed(let report)? = events.first else { return XCTFail("\(events)") }
         XCTAssertEqual(report.outcome, .skipped(.awaitingConsent))

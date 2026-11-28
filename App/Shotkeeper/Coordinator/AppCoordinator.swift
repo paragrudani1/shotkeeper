@@ -428,7 +428,12 @@ final class AppCoordinator {
                                                           requestsPerMinute: max(1, settings.requestsPerMinute))
         let sink = eventSink
         let requests = userUploadRequests
-        let queue = ProcessingQueue(configuration: configuration, jobHandler: { url, request in
+        let queue = ProcessingQueue(configuration: configuration, jobHandler: { job, request in
+            guard case .process(let url) = job else {
+                // `.reanalyze` (Analyze Again): nothing enqueues it yet; wave 2 ticket 08 wires it to
+                // `ScreenshotProcessor.reanalyze` with the same per-attempt `authorization(for:)` check as below.
+                return
+            }
             // Checked on every attempt: a destination change since the click makes it count as none.
             let userRequest = requests.authorization(for: request)
             do {
