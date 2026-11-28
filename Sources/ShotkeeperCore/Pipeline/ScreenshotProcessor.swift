@@ -203,6 +203,9 @@ public final class ScreenshotProcessor: Sendable {
 
         entry.apply(analysis)
         entry.status = .done
+        // Queued for `TextRecognitionRunner`, which reads it on this Mac after this save (spec "Text recognition: when
+        // it runs"); not read here, so the rename toast waits for nothing. The entry is new, so old text is cleared.
+        entry.textStatus = .pending
         entry.lastError = nil
         entry.processedAt = now()
         var notes: [String] = []

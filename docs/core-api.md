@@ -11,6 +11,7 @@ Decisions and their reasons: [wiki/core-implementation.md](wiki/core-implementat
 | `CredentialStore` | `Settings/CredentialStore.swift` | Keychain (generic password, service `dev.shotkeeper.Shotkeeper` (the bundle id), account `key.rawValue`): `KeychainCredentialStore`. |
 | `ScreenshotAnalyzer` | `Analysis/` (other task) | Built from settings + credentials; core ships `CloudflareClairicAnalyzer` and `OpenAICompatibleAnalyzer` (profile `.localServer` for local/custom endpoints, `OpenRouterBackend.configuration(apiKey:model:)` for OpenRouter). |
 | Folder watching | app only | FSEvents on `settings.watchedFolderOverride` or the `com.apple.screencapture location` (default Desktop). For each created/renamed file, `ScreenshotDetector(customPrefix:).isScreenshot(url)` → `queue.enqueue(url)`. |
+| `TextRecognizer` | `Text/TextRecognizer.swift` | Vision: `VisionTextRecognizer` (`App/Shotkeeper/Platform/`), one `VNRecognizeTextRequest` revision 3 on the original file with `VisionTextSettings.current`. Linux and the CLI have none: rows stay `pending`. |
 | Server process | app only | Run `MLXRuntimePlan` commands with `Process`; apply `IdlePolicy` and `RestartPolicy`. |
 
 ## Wiring
@@ -44,6 +45,7 @@ At launch, re-enqueue `index.entries(withStatus: .pending)` and `.failed` if you
 |---|---|---|
 | `FolderCapture` (`coordinator.capture`) | `App/Shotkeeper/Coordinator/FolderCapture.swift` | Folder watcher, `ScreenshotDetector`, re-queue of `pending` rows, Process Existing (`ProcessExistingRequests`). |
 | `FileActions` (`coordinator.fileActions`) | `App/Shotkeeper/Coordinator/FileActions.swift` | `undoLast()`, `undo(ids:)`, `rename(_:to:)` through `ScreenshotProcessor`. |
+| `textRunner` (private) | `App/Shotkeeper/Coordinator/AppCoordinator.swift` | `TextRecognitionRunner` with `VisionTextRecognizer`: `start()` in `startServices()`, `stop()` in `stopServices()`. |
 | Test Connection | `App/Shotkeeper/Coordinator/ConnectionTest.swift` | `testConnection(settings:secrets:)` (generated image only). |
 | `SearchResultActions` | `App/Shotkeeper/Platform/SearchResultActions.swift` | Open / Copy Image / Reveal on a search result. `WorkspaceActions`: the `NSWorkspace`/pasteboard calls. |
 Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and pause/hold state are kept). Do not rebuild the queue for it.
@@ -94,6 +96,24 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `.noText` (stored `none`) / `.failed`), `textRecognizedBy`, `textError`. `save` writes them like every column, so a
     fresh entry without them clears old text.
   - `ContentFingerprint.compute(for:)`: size + mtime + first 64 KiB (not a security hash).
+- **Text/** (wave 1, on-device text recognition; the text never leaves the Mac)
+  - `TextRecognizer` (port): `recognizedBy` (what `text_recognized_by` records) and `recognize(_ url:) async throws ->
+    [RecognizedLine]` (`text`, `confidence`, `boundingBox: NormalizedBox`, normalized with the origin at the bottom
+    left, as Vision reports it).
+  - `TextRecognitionRunner` (actor): `start()` reads the rows still `pending`, then each row that becomes `pending`
+    (index `changes()`), one at a time, newest first, at utility priority; `stop()` (quit) starts no new row.
+    `drain()` reads until none is left. Missing file → `.failed` "file missing" (`fileMissingReason`); a recognizer
+    error → `.failed` "could not read the text (<domain> <code>)", never its description. Writes go through
+    `setRecognizedText`, so a row whose content changed during the read is read again. Takes no settings (Pause
+    does not stop it).
+  - `RecognizedText.result(from:) -> TextRecognitionResult`: reading order (top to bottom; lines whose vertical
+    centres are less than half the smaller height apart are one row, read left to right), whitespace-only lines
+    dropped, joined with "\n", nothing left → `.noText`. Cap `maximumLength` (100,000 characters): whole lines that
+    fit, then `truncationMarker` as the last line.
+  - `VisionTextSettings`: `level`, `minimumTextHeight` (`.fraction(n)` or `.pixelFloor(px)`,
+    `relativeHeight(pixelHeight:)`), `usesLanguageCorrection`, `automaticallyDetectsLanguage` (accurate only),
+    `recognizedBy` (e.g. `vision-r3-accurate-h1/96-lc0`). `current` is PROVISIONAL (Apple's defaults) until the
+    measurement in `docs/research/vision-ocr-settings.md`.
 - **Queue/**
   - `ProcessingQueue` (actor): `enqueue`, `pause(until:)`, `resume()`, `setRequestsPerMinute(_:)`, `statusUpdates()`, `status`, `waitUntilIdle()`,
     `succeededCount`, `failedCount`, `lastFailure`.
@@ -103,6 +123,8 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
 - **Pipeline/**
   - `ScreenshotProcessor(snapshot:…)`: `process(_:processExisting:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`; `.awaitingConsent` = `UploadConsent.decide` refused),
     `undoLast()`, `undo(id:)`. Throws analyzer/preparer errors after recording `failed` in the index; the file is untouched.
+    A successful analysis saves the row with `textStatus = .pending` (old text cleared) for `TextRecognitionRunner`;
+    the processor itself reads no text, and `AnalysisContext` carries none.
     - `processWithReport(_:) -> ProcessingReport` (`originalURL`, `outcome`, `undoRecordID`): what the toast needs.
     - `rename(_:to:) -> ManualRenameResult` (toast "Edit name"): `FilenameSanitizer` + original extension + `FileOrganizer`
       collisions ("Name 2.png"), undo record, index path and title. Throws `ManualRenameError.unusableName`, `FileOrganizerError`.

@@ -69,6 +69,52 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(attributes[FinderMetadata.commentAttribute].flatMap(FinderMetadata.decodeComment), "An invoice from Acme Corp")
     }
 
+    /// Wave 1 ticket 04: a successful analysis queues the text for reading on this Mac; the analyzer never gets text,
+    /// with either kind of backend.
+    func testASuccessfulAnalysisQueuesTheTextAndTheAnalyzerGetsNoRecognizedText() async throws {
+        for backend in [AppSettings.Backend.clairic, .localInkling] {
+            dir = try TempDir()
+            index = try ScreenshotIndex.inMemory()
+            settings.mutate { $0.backend = backend }
+            let source = try screenshot("new png bytes")
+            // The same path was read before, with other content: its old text must not survive or reach the analyzer.
+            try index.save(.testRow(source.standardizedFileURL.path) {
+                $0.originalFilename = self.shotName
+                $0.contentHash = "old-hash"
+                $0.recognizedText = "Old text from the previous picture"
+                $0.textStatus = .done
+                $0.textRecognizedBy = "vision-r3-accurate-h1/32-lc1"
+            })
+            let analyzer = StubAnalyzer(analysis(title: "Invoice From Acme"))
+
+            _ = try await processor(analyzer).process(source)
+
+            let row = try XCTUnwrap(index.lookup(byPath: dir.url.appendingPathComponent("Desktop/Invoice From Acme.png")
+                .standardizedFileURL.path), "\(backend)")
+            XCTAssertEqual(row.status, .done, "\(backend)")
+            XCTAssertEqual(row.textStatus, .pending, "\(backend)")
+            XCTAssertNil(row.recognizedText, "\(backend)")
+            XCTAssertNil(row.textRecognizedBy, "\(backend)")
+            let contexts = analyzer.calls.get
+            XCTAssertEqual(contexts.map(\.originalFilename), [shotName], "\(backend)")
+            // The index keeps whole seconds or so; the time is the file's, not anything read from the image.
+            XCTAssertEqual(try XCTUnwrap(contexts.first?.capturedAt).timeIntervalSince1970,
+                           try XCTUnwrap(row.capturedAt).timeIntervalSince1970, accuracy: 1, "\(backend)")
+        }
+        // What a backend receives besides the image: the name and the time, nothing else.
+        XCTAssertEqual(Mirror(reflecting: AnalysisContext(originalFilename: "", capturedAt: now)).children.map(\.label),
+                       ["originalFilename", "capturedAt"])
+    }
+
+    func testAFailedAnalysisDoesNotQueueTheText() async throws {
+        let source = try screenshot()
+        _ = try? await processor(StubAnalyzer([.failure(.serverError(status: 503, message: "busy"))])).process(source)
+
+        let row = try XCTUnwrap(index.lookup(byPath: source.standardizedFileURL.path))
+        XCTAssertEqual(row.status, .failed)
+        XCTAssertNil(row.textStatus)
+    }
+
     func testLowConfidenceKeepsNameButIndexes() async throws {
         let source = try screenshot()
         let outcome = try await processor(StubAnalyzer(analysis(title: "Maybe Invoice", confidence: 0.3))).process(source)
