@@ -42,7 +42,7 @@ At launch, re-enqueue `index.entries(withStatus: .pending)` and `.failed` if you
 `AppCoordinator` is the wiring point; its parts each have a file and a small host protocol the coordinator implements:
 | Part | File | Owns |
 |---|---|---|
-| `CaptureSources` (`coordinator.capture`) | `App/Shotkeeper/Coordinator/CaptureSources.swift` | Folder watcher, `ScreenshotDetector`, re-queue of `pending` rows, Process Existing (`ProcessExistingRequests`). |
+| `FolderCapture` (`coordinator.capture`) | `App/Shotkeeper/Coordinator/FolderCapture.swift` | Folder watcher, `ScreenshotDetector`, re-queue of `pending` rows, Process Existing (`ProcessExistingRequests`). |
 | `FileActions` (`coordinator.fileActions`) | `App/Shotkeeper/Coordinator/FileActions.swift` | `undoLast()`, `undo(ids:)`, `rename(_:to:)` through `ScreenshotProcessor`. |
 | Test Connection | `App/Shotkeeper/Coordinator/ConnectionTest.swift` | `testConnection(settings:secrets:)` (generated image only). |
 | `SearchResultActions` | `App/Shotkeeper/Platform/SearchResultActions.swift` | Open / Copy Image / Reveal on a search result. `WorkspaceActions`: the `NSWorkspace`/pasteboard calls. |

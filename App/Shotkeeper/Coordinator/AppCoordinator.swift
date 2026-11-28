@@ -6,7 +6,7 @@ import ShotkeeperCore
 /// local model server. Everything the menu, setup, settings and search UI do goes through here.
 ///
 /// The coordinator is the wiring point; behaviour that grows with features lives in its parts:
-/// - `capture` (`CaptureSources`): the watched folder and Process Existing; new capture sources go there.
+/// - `capture` (`FolderCapture`): the watched folder and Process Existing.
 /// - `fileActions` (`FileActions`): undo and rename of processed files; re-sort, Bin and re-analyse go there.
 /// - Test Connection is in `ConnectionTest.swift`.
 /// New parts follow the same shape: their own file, a small host protocol the coordinator implements.
@@ -83,7 +83,7 @@ final class AppCoordinator {
     /// with its job for the whole job; all are invalidated when the backend, endpoint or grants change.
     @ObservationIgnored let processExistingRequests = ProcessExistingRequests()
     /// The watched folder and Process Existing (observable: the menu reads `watchedFolder` and `isWatching`).
-    let capture: CaptureSources
+    let capture: FolderCapture
     /// Undo and rename of processed files.
     @ObservationIgnored let fileActions: FileActions
     /// Extra listeners for pipeline events (setup's "Try it now" step), keyed by the id `addEventObserver` returned.
@@ -106,7 +106,7 @@ final class AppCoordinator {
         self.settings = store.current
         self.analyzerBox = LockedValue(AnalyzerSnapshot(analyzer: UnconfiguredAnalyzer(backendID: "none", reason: "Starting"),
                                                         settings: store.current))
-        self.capture = CaptureSources()
+        self.capture = FolderCapture()
         self.fileActions = FileActions()
 
         let phaseSink = LockedValue<(@MainActor @Sendable (RuntimePhase) -> Void)?>(nil)
@@ -703,7 +703,7 @@ private struct CommittedCredentialStore: CredentialStore {
     func removeSecret(for key: CredentialKey) throws {}
 }
 
-extension AppCoordinator: CaptureSourcesHost, FileActionsHost {
+extension AppCoordinator: FolderCaptureHost, FileActionsHost {
     func beginProcessExistingRun(_ files: [URL]) {
         toastBatcher.beginRun(files)
     }

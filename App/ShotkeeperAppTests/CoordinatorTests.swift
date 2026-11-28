@@ -442,11 +442,42 @@ final class CoordinatorPartsTests: TempDirectoryTestCase {
         XCTAssertEqual(host.toasts, [])
     }
 
-    func testTheCoordinatorWiresItsParts() {
-        let coordinator = AppCoordinator.forTesting(in: directory)
-        XCTAssertNotNil(coordinator.fileActions.processor, "the index opened, so file actions can work")
-        XCTAssertTrue(coordinator.fileActions.host === coordinator)
-        XCTAssertTrue(coordinator.capture.host === coordinator)
-        XCTAssertFalse(coordinator.capture.isWatching, "unit tests never start services")
+    private final class CaptureHost: FolderCaptureHost {
+        var settings = AppSettings()
+        var readiness = BackendReadiness.ready
+        var index: ScreenshotIndex?
+        var queue: ProcessingQueue?
+        let processExistingRequests = ProcessExistingRequests()
+        var lastMessage: String?
+        func beginProcessExistingRun(_ files: [URL]) {}
+    }
+
+    /// Work interrupted by a quit (`pending` rows) is queued again when watching starts, once; finished and failed
+    /// rows are not.
+    func testStartWatchingRequeuesPendingRowsOnce() async throws {
+        let index = try ScreenshotIndex.inMemory()
+        let pending = directory.appendingPathComponent("Screenshot pending.png").standardizedFileURL
+        try index.save(IndexedScreenshot(path: pending.path, originalFilename: "p", contentHash: "h1", status: .pending))
+        try index.save(IndexedScreenshot(path: directory.appendingPathComponent("Screenshot done.png").path,
+                                         originalFilename: "d", contentHash: "h2", status: .done))
+        try index.save(IndexedScreenshot(path: directory.appendingPathComponent("Screenshot failed.png").path,
+                                         originalFilename: "f", contentHash: "h3", status: .failed))
+        let handled = LockedValue<[URL]>([])
+        let queue = ProcessingQueue(jobHandler: { url, _ in handled.withValue { $0.append(url) } })
+        let host = CaptureHost()
+        host.settings.watchedFolderOverride = directory
+        host.index = index
+        host.queue = queue
+        let capture = FolderCapture()
+        capture.host = host
+        defer { capture.stop() }
+
+        capture.startWatching()
+        XCTAssertTrue(capture.isWatching)
+        let requeued = await waitUntil { handled.value == [pending] }
+        XCTAssertTrue(requeued, "handled: \(handled.value)")
+        capture.startWatching()  // already watching: nothing is queued twice
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(handled.value, [pending])
     }
 }

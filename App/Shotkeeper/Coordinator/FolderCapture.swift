@@ -2,9 +2,9 @@ import Foundation
 import Observation
 import ShotkeeperCore
 
-/// What `CaptureSources` needs from the coordinator.
+/// What `FolderCapture` needs from the coordinator.
 @MainActor
-protocol CaptureSourcesHost: AnyObject {
+protocol FolderCaptureHost: AnyObject {
     var settings: AppSettings { get }
     var readiness: BackendReadiness { get }
     var index: ScreenshotIndex? { get }
@@ -16,12 +16,11 @@ protocol CaptureSourcesHost: AnyObject {
     func beginProcessExistingRun(_ files: [URL])
 }
 
-/// Where screenshots come from: the watched folder (FSEvents) and "Process Existing Screenshots…". Each source hands
-/// files to the coordinator's `ProcessingQueue`; the queue and `ScreenshotProcessor` decide the rest (exclusions,
-/// consent). A new source (clipboard, screen recordings) goes here, not into `AppCoordinator`.
+/// Where screenshots come from: the watched folder (FSEvents) and "Process Existing Screenshots…". Both hand files to
+/// the coordinator's `ProcessingQueue`; the queue and `ScreenshotProcessor` decide the rest (exclusions, consent).
 @MainActor
 @Observable
-final class CaptureSources {
+final class FolderCapture {
     /// The folder being watched (nil until watching starts). The menu shows its name.
     private(set) var watchedFolder: URL?
     /// The folder watcher runs. It starts only once the backend is usable (core `BackendGate`): nothing is queued,
@@ -30,7 +29,7 @@ final class CaptureSources {
     private(set) var isWatching = false
     /// Called on the main actor after Process Existing's folder scan (tests change the destination here).
     @ObservationIgnored var afterProcessExistingScan: (() -> Void)?
-    @ObservationIgnored weak var host: (any CaptureSourcesHost)?
+    @ObservationIgnored weak var host: (any FolderCaptureHost)?
     @ObservationIgnored private var watcher: FolderWatcher?
     @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var detector = ScreenshotDetector()

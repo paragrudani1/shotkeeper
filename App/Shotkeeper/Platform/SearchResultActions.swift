@@ -8,9 +8,9 @@ import ShotkeeperCore
 final class SearchResultActions {
     let model: SearchViewModel
     /// Hides the search panel (after Open and Reveal).
-    var hidePanel: () -> Void = {}
+    var hidePanel: @MainActor () -> Void = {}
     /// Posts a VoiceOver announcement from the panel.
-    var announce: (String) -> Void = { _ in }
+    var announce: @MainActor (String) -> Void = { _ in }
 
     init(model: SearchViewModel) {
         self.model = model

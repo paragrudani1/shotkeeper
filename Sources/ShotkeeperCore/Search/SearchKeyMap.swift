@@ -31,14 +31,11 @@ public struct SearchKeyBinding: Hashable, Sendable {
 ///
 /// To add a shortcut: add a binding here and a case to `SearchKey`, then handle it in the app's `SearchPanelController`.
 public enum SearchKeyMap {
-    /// Keypad Enter (`kVK_ANSI_KeypadEnter`); `KeyCode` names only the main keyboard.
-    public static let keypadEnter = 0x4C
-
     public static let bindings: [SearchKeyBinding] = [
         SearchKeyBinding(.plain(keyCode: KeyCode.upArrow), .up),
         SearchKeyBinding(.plain(keyCode: KeyCode.downArrow), .down),
         SearchKeyBinding(.plain(keyCode: KeyCode.returnKey), .open),
-        SearchKeyBinding(.plain(keyCode: keypadEnter), .open),
+        SearchKeyBinding(.plain(keyCode: KeyCode.keypadEnter), .open),
         SearchKeyBinding(.plain(keyCode: KeyCode.escape), .close),
         SearchKeyBinding(.plain(keyCode: KeyCode.space), .space),  // Quick Look or a typed space (SearchWindowState)
         SearchKeyBinding(.command("c"), .copyImage),               // a selection in the field keeps ⌘C for its text

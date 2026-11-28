@@ -121,22 +121,12 @@ extension SearchKeyMap {
     /// Unmodified keys, seen in `sendEvent` (↑/↓/Return/Esc/Space). `.function`/`.numericPad` (arrow keys carry them)
     /// do not count as modifiers.
     static func plain(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> SearchKey? {
-        plain(keyCode: Int(keyCode), modifiers: modifiers(flags))
+        plain(keyCode: Int(keyCode), modifiers: GlobalHotKey.modifiers(from: flags))
     }
 
     /// ⌘ shortcuts, seen in `performKeyEquivalent`.
     static func command(keyCode: UInt16, flags: NSEvent.ModifierFlags, characters: String?) -> SearchKey? {
-        command(keyCode: Int(keyCode), modifiers: modifiers(flags), characters: characters)
-    }
-
-    /// Only ⌘⌥⌃⇧ count (same rule as `GlobalHotKey.modifiers(from:)`, which is main-actor isolated).
-    private static func modifiers(_ flags: NSEvent.ModifierFlags) -> HotKeyShortcut.Modifiers {
-        var modifiers: HotKeyShortcut.Modifiers = []
-        if flags.contains(.command) { modifiers.insert(.command) }
-        if flags.contains(.option) { modifiers.insert(.option) }
-        if flags.contains(.control) { modifiers.insert(.control) }
-        if flags.contains(.shift) { modifiers.insert(.shift) }
-        return modifiers
+        command(keyCode: Int(keyCode), modifiers: GlobalHotKey.modifiers(from: flags), characters: characters)
     }
 
     static func plain(_ event: NSEvent) -> SearchKey? {

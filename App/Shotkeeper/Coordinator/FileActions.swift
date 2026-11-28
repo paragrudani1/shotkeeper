@@ -22,6 +22,9 @@ protocol FileActionsHost: AnyObject {
 @MainActor
 final class FileActions {
     /// Set by the coordinator once the index opened; nil when it did not (every action then reports that).
+    /// Assigned exactly once, in `AppCoordinator.openStorage()`: it cannot go through `init` because the coordinator
+    /// must initialize this stored `let` before it may call its own methods, and the processor comes from one of them.
+    /// Nothing reassigns it afterwards.
     var processor: ScreenshotProcessor?
     weak var host: (any FileActionsHost)?
 
