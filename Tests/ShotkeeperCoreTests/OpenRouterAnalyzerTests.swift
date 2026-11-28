@@ -51,6 +51,9 @@ final class OpenRouterAnalyzerTests: XCTestCase {
                                           "only": ["primeintellect", "io-net"]],
                        "the default model is pinned to the two providers the consent names")
         XCTAssertNil(body["usage"], "usage accounting is automatic; `usage.include` is deprecated")
+        XCTAssertEqual(body["service_tier"], "default",
+                       "top level, not under `provider`: keeps primeintellect/fast (priority, 2.5× the price) out")
+        XCTAssertNil(body["provider"]?["service_tier"])
 
         let format = try XCTUnwrap(body["response_format"])
         XCTAssertEqual(format["type"], "json_schema")
@@ -81,6 +84,8 @@ final class OpenRouterAnalyzerTests: XCTestCase {
         // Another model's providers are unknown: no `only`, and its consent names "the provider that serves" it.
         XCTAssertEqual(try jsonBody(a.makeRequest(messages: [], includeExtras: true))["provider"],
                        ["data_collection": "deny", "zdr": true, "require_parameters": true])
+        XCTAssertEqual(try jsonBody(a.makeRequest(messages: [], includeExtras: true))["service_tier"], "default",
+                       "any model stays on the standard tier")
         XCTAssertEqual(OpenRouterBackend.destinationPhrase(model: "x/y"), "OpenRouter, then to the provider that serves x/y")
         XCTAssertEqual(OpenRouterBackend.destinationPhrase(model: OpenRouterBackend.defaultModel),
                        "OpenRouter, then to Prime Intellect or io.net")
