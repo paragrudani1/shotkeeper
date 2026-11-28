@@ -362,7 +362,7 @@ public final class ScreenshotIndex: @unchecked Sendable {
     /// `ALTER TABLE ... ADD COLUMN` (later migrations), the upsert, its bindings and the row read all come from here.
     ///
     /// Adding a column (2026-11-28): append one entry with the next `addedIn` version, add
-    /// `SQLiteMigration(version: n, statements: addColumns("new_column"))` to `migrations`, and add `n: ["new_column"]`
+    /// `SQLiteMigration(version: n, statements: addColumns("new_column"))` to `migrations`, and append `(n, ["new_column"])`
     /// to the test's `shippedColumns`. The migration line names its columns, so two PRs that both take version n add
     /// different lines at the same spot and git reports a conflict; keeping both lines fails the versions test, and a
     /// column moved to the wrong migration fails the `addedIn` and `shippedColumns` tests. The second PR to merge
