@@ -72,14 +72,15 @@ struct SearchView: View {
 
     private func hung<Content: View>(under anchor: Anchor<CGRect>, width: CGFloat,
                                     @ViewBuilder picker: () -> Content) -> some View {
-        GeometryReader { proxy in
+        let content = picker()
+        return GeometryReader { proxy in
             let pill = proxy[anchor]
             ZStack(alignment: .topLeading) {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture { model.closePickers() }
                     .accessibilityHidden(true)
-                picker()
+                content
                     .fixedSize(horizontal: false, vertical: true)
                     // 6 pt under row 2 (design): the pill's bottom, row 2's 8 pt bottom padding, then the gap.
                     .offset(x: pill.maxX - width, y: pill.maxY + 8 + 6)

@@ -3,17 +3,22 @@ import Foundation
 /// One source (app or site) as the source filter sees it: the model's free-text `source_app_or_site`, normalized so
 /// that spellings of one source compare equal ("X", "x.com"; "GitHub", "github.com", "www.github.com").
 ///
+/// `rawValue` is a matching key only: never show it and never name a folder or file from it (it is lowercased, folded
+/// and may have lost its domain). Display and folder names come from `SourceFacet.displayName`.
+///
 /// The rule (wave 1 spec, "Filter model", Sources; 2026-11-28):
-/// - trim whitespace, fold case and diacritics ("Café" = "cafe");
+/// - fold case, diacritics and width ("Café" = "cafe", "ＧｉｔＨｕｂ" = "GitHub"), trim whitespace and collapse runs of
+///   it to one space ("Google  Chrome" = "Google Chrome");
 /// - drop a leading `www.`;
 /// - when what is left is one name plus one top-level domain (`x.com`, `github.com`, `nytimes.com`), drop the domain,
-///   so the site matches the app name;
+///   so the site matches the app name; a name with `:` or `/` is a URL, not a host, and is left alone
+///   (`https://github.com`);
 /// - leave anything with more labels as it is (`bbc.co.uk`, `docs.google.com`).
 ///
 /// There is no alias table: "Twitter" and "X" are two sources. Without a list of top-level domains, a name like
 /// "Node.js" also loses its last label ("node"); that only merges it with a source spelled "Node".
 public struct SourceKey: Hashable, Sendable, Comparable, CustomStringConvertible {
-    /// The normalized text ("github", "bbc.co.uk").
+    /// The normalized text ("github", "bbc.co.uk"). A matching key, not a display or folder name (see the type).
     public let rawValue: String
 
     /// The key for a raw source value; nil when nothing is left after trimming (rows without a source).
@@ -22,6 +27,7 @@ public struct SourceKey: Hashable, Sendable, Comparable, CustomStringConvertible
         if folded.hasPrefix("www.") { folded.removeFirst(4) }
         let labels = folded.split(separator: ".", omittingEmptySubsequences: false)
         if labels.count == 2, !labels[0].isEmpty, !folded.contains(where: \.isWhitespace),
+           !labels[0].contains(where: { $0 == ":" || $0 == "/" }),
            labels[1].count >= 2, labels[1].allSatisfy({ $0.isASCII && $0.isLetter }) {
             folded = String(labels[0])
         }
@@ -29,12 +35,15 @@ public struct SourceKey: Hashable, Sendable, Comparable, CustomStringConvertible
         rawValue = folded
     }
 
-    /// Text with whitespace trimmed and case and diacritics folded: what source keys and the source picker's narrow
-    /// field compare ("  Café " → "cafe").
+    /// Text with case, diacritics and width folded, whitespace trimmed and each run of it collapsed to one space: what
+    /// source keys and the source picker's narrow field compare ("  Café " → "cafe", "Ｇｏｏｇｌｅ　 Chrome" →
+    /// "google chrome"). Width folding runs first, so a full-width space counts as whitespace.
     public static func fold(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
             .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     public var description: String { rawValue }

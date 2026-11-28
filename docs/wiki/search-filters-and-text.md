@@ -137,6 +137,8 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
 - Core `SourceKey` and `SourceFacet` (`Sources/ShotkeeperCore/Search/SourceKey.swift`), a public API so wave 2's
   ticket 04 can reuse the rule that "x.com" and "X" are one source. `ScreenshotIndex.sources()`; `ScreenshotQuery.source`
   and its filter in `search`.
+  `SourceKey.rawValue` is a matching key only, never a display or folder name (it is lowercased, folded and may have
+  lost its domain); folder and display names come from `SourceFacet.displayName`.
 - `SearchWindowState`: `source`/`sourceName`, `setSource(_:)`, the loaded list (`sources`, `setSources(_:)`), the Source
   pill wording, and the picker (`SourcePickerState` in `Search/SourcePicker.swift`, beside `DatePickerState`).
   `SearchKeyMap`: ⌘S (`.sourceFilter`, character `s`, physical key 1).
@@ -153,6 +155,11 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   `github`, `www.nytimes.com` → `nytimes`; `bbc.co.uk` and `docs.google.com` stay as they are. No alias table (Twitter
   ≠ X). Without a TLD list, a name like "Node.js" also becomes `node` (it only merges with a source spelled "Node").
   Tests go through `sources()` (`SourceListTests`).
+- 2026-11-28 (review fix): the rule also folds width ("ＧｉｔＨｕｂ" = "GitHub", "ｘ.ｃｏｍ" → `x`) and collapses runs of
+  whitespace to one space ("Google  Chrome" = "Google Chrome"); ß folds to "ss", dotted İ to i, dotless ı stays its
+  own letter. The top-level-domain step skips a first label containing `:` or `/`, so "https://github.com" stays a URL
+  instead of becoming `https://github`. Tests: `testFullWidthLettersAreFolded`, `testRunsOfWhitespaceCollapseToOneSpace`,
+  `testUnicodeEdgeCasesKeepTheirMeaning`, `testAURLKeepsItsDomain`. `reloadSources()` cancels the previous load first.
 - 2026-11-28: the display name is the most common **trimmed** spelling ("Slack " and "Slack" count as one spelling).
   "Alphabetical" for the tie-break and the list's name order ignores case and diacritics, then falls back to Unicode
   order, so it never depends on the locale.

@@ -30,6 +30,33 @@ final class SourceListTests: XCTestCase {
         XCTAssertEqual(try names(["WWW.NYTimes.COM", "nytimes"]).values.sorted(), [2])
     }
 
+    func testFullWidthLettersAreFolded() throws {
+        XCTAssertEqual(try names(["ＧｉｔＨｕｂ", "GitHub", "github.com"]).values.sorted(), [3])
+        XCTAssertEqual(try names(["ｘ.ｃｏｍ", "X"]).values.sorted(), [2], "full-width dot too, so the domain is dropped")
+    }
+
+    func testRunsOfWhitespaceCollapseToOneSpace() throws {
+        XCTAssertEqual(try names(["Google  Chrome", "Google Chrome", "google\tchrome", " Google \u{3000}Chrome\n"])
+                           .values.sorted(), [4])
+    }
+
+    func testUnicodeEdgeCasesKeepTheirMeaning() throws {
+        XCTAssertEqual(try names(["İstanbul", "istanbul", "ISTANBUL"]).values.sorted(), [3], "dotted capital İ is i")
+        XCTAssertEqual(try names(["ılık", "ilik"]).values.sorted(), [1, 1], "dotless ı is its own letter")
+        XCTAssertEqual(try names(["Straße", "straße", "STRASSE"]).values.sorted(), [3], "ß folds to ss")
+        XCTAssertEqual(SourceKey("Straße"), SourceKey("STRA\u{1E9E}E"), "capital ẞ")
+        XCTAssertEqual(try names(["Cafe\u{0301}", "Café", "cafe"]).values.sorted(), [3], "combining accent")
+        XCTAssertEqual(try names(["📸 Snap", "📸 snap", "📸"]).values.sorted(), [1, 2], "emoji are kept")
+        XCTAssertEqual(try names(["", "   ", "\u{3000}", "\n\t", "Slack"]), ["Slack": 1], "blanks are no source")
+        XCTAssertNil(SourceKey("\u{3000} \t"))
+    }
+
+    func testAURLKeepsItsDomain() throws {
+        XCTAssertEqual(SourceKey("https://github.com")?.rawValue, "https://github.com")
+        XCTAssertEqual(SourceKey("github.com/x")?.rawValue, "github.com/x")
+        XCTAssertEqual(try names(["https://github.com", "GitHub"]), ["https://github.com": 1, "GitHub": 1])
+    }
+
     func testOnlyALoneTopLevelDomainIsDropped() throws {
         XCTAssertEqual(try names(["bbc.co.uk", "bbc", "docs.google.com", "google", "google.com"]),
                        ["bbc.co.uk": 1, "bbc": 1, "docs.google.com": 1, "google": 2])

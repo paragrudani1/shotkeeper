@@ -134,13 +134,15 @@ final class SearchViewModel {
 
     // MARK: Source filter (the Source pill and its in-panel picker)
 
-    /// Loads the source list off the main actor (the panel opened). A failure keeps the previous list: the search
-    /// shows the index error itself.
+    /// Loads the source list off the main actor (the panel opened). A newer load cancels the previous one, so an older,
+    /// slower load never overwrites a newer list. A failure keeps the previous list: the search shows the index error
+    /// itself.
     func reloadSources() {
         let load = sourcesFunction
+        sourceLoad?.cancel()
         sourceLoad = Task { [weak self] in
             let list = await Task.detached { try? load() }.value
-            guard let self, let list else { return }
+            guard !Task.isCancelled, let self, let list else { return }
             self.state.setSources(list)
         }
     }
