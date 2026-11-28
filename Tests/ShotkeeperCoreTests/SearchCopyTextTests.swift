@@ -77,7 +77,8 @@ final class SearchCopyTextTests: XCTestCase {
     /// A failed read says so; a file that was gone when it was read gets the existing missing-file sentence.
     func testAFailedRowTellsAMissingFileApart() throws {
         try save("Vision error", minutes: -1, status: .failed, error: "VNErrorDomain 9")
-        try save("Moved away", minutes: -2, status: .failed, error: "file missing")
+        // The reason the runner writes for a file that was gone (one constant, `SearchWindowState` points at it).
+        try save("Moved away", minutes: -2, status: .failed, error: TextRecognitionRunner.fileMissingReason)
         let failed = try window(selecting: "Vision error")
         XCTAssertEqual(failed.copyTextOutcome, .failed(fileMissing: false))
         XCTAssertEqual(failed.copyTextOutcome.message, "The text could not be read.")

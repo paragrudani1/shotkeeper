@@ -1,4 +1,4 @@
-# Vision text recognition settings: measurement (ticket 05, prepared 2026-11-28)
+# Vision text recognition settings: measurement (ticket 05, prepared 2026-11-28, results 2026-11-28)
 
 Chooses the Vision constants for ticket 04 (`VisionTextRecognizer`) from measurements on Parag's Mac, following the
 spec `docs/specs/search-filters-and-text-2026-11.md`, "Vision settings to measure on a real Mac". Background and
@@ -118,6 +118,53 @@ that case, raise the height before switching to `.fast`.
 Not in the spec (a proposal for Parag to confirm): language correction off if turning it on loses `exact:` code
 strings and turning it off loses no other found strings.
 
-## Results
+## Results (measured 2026-11-28)
 
-_Empty until Parag runs the tool._
+### Environment
+Parag's MacBook Air (M4), macOS 27.0.1, Command Line Tools with Swift 6.4.2, `scripts/measure-vision.swift`.
+
+### Method, and why the accuracy set is synthetic
+- **20 synthetic screenshots**, not Parag's own: Retina (2×) and 1× images of UI, dark mode, code, chat, a receipt,
+  Japanese, German and Arabic text. Parag's real screenshots were never opened by the tool or an agent, so that
+  they stay on the Mac. That means no `strings.txt` could be written for them, so the accuracy numbers below come from
+  the synthetic set only.
+- Known strings: **48 plain strings** (case ignored) and **7 exact code lines** (`exact:`, character for character).
+- The planned speed run on real screenshots was **skipped**, because the tool needs a `strings.txt` for every folder it
+  reads. The times below are on the synthetic images.
+
+### Summary by setting
+
+| Setting | Plain strings (of 48) | Exact code lines (of 7) | Time per image |
+|---|---|---|---|
+| `.accurate`, any minimum height | 47–48 | see language correction | median about 0.08–0.10 s, slowest about 0.14 s |
+| `.accurate`, minimum height 1/32 | 48 (all) | | |
+| `.accurate`, 1/64, 1/96, 1/128, 10 px floor | 47: each misses one spreadsheet number | | |
+| `.fast`, any height | 32 at best; no Japanese or Arabic text | 0 | |
+| Language correction on (`.accurate`) | | 4–5: it inserts a space before `(` (`URL (string:`) | |
+| Language correction off (`.accurate`) | no plain string lost compared with on | 6 | |
+| Automatic language detection off (`.accurate`) | Japanese comes out as gibberish | | |
+| Automatic language detection on (`.accurate`) | Japanese, German and Arabic read | | |
+
+### Decision (Parag, 2026-11-28)
+`VisionTextSettings.current` = `.accurate`, minimum text height **1/32**, language correction **off**, automatic
+language detection **on**. `text_recognized_by` = `vision-r3-accurate-h1/32-lc0`.
+
+- **1/32 deviates from the spec's rule.** The rule says to pick the lowest height with `.accurate` unless the slowest
+  image takes more than about 2 s. The slowest took about 0.14 s, so the rule would pick 1/128. Parag chose 1/32
+  (Apple's default) because it was the only height that found all 48 strings: every lower height missed one
+  spreadsheet number.
+- Language correction off meets the proposed rule above: on, it loses exact code lines; off, it loses no other string.
+- `.fast` is out: it found no code line and no Japanese or Arabic text.
+
+### Outlier: the first recognition
+Once, the first recognition took **28.9 s**. It did not happen again, so it was probably the first load of the model.
+Recognition must therefore run off the main thread with no short timeout. `VisionTextRecognizer` runs Vision on a
+utility-priority dispatch queue, and neither it nor `TextRecognitionRunner` has a timeout
+(`testASlowFirstReadIsWaitedForWithoutATimeout`).
+
+### Known recognition errors (with the chosen settings)
+- Junk characters after numbers in table cells (`52,407.9ął`).
+- SF Mono's slashed zero read as `ø`.
+- `[]` read as `[1)`.
+
+These end up in `recognized_text` as read. Search still finds the rest of the line.

@@ -8,6 +8,7 @@ import ShotkeeperCore
 /// The coordinator is the wiring point; behaviour that grows with features lives in its parts:
 /// - `capture` (`FolderCapture`): the watched folder and Process Existing.
 /// - `fileActions` (`FileActions`): undo and rename of processed files; re-sort, Bin and re-analyse go there.
+/// - `textRunner` (core `TextRecognitionRunner` with `VisionTextRecognizer`): reads the text of analysed screenshots.
 /// - Test Connection is in `ConnectionTest.swift`.
 /// New parts follow the same shape: their own file, a small host protocol the coordinator implements.
 ///
@@ -68,6 +69,9 @@ final class AppCoordinator {
     @ObservationIgnored private(set) var index: ScreenshotIndex?
     @ObservationIgnored private var undoLog: UndoLog?
     @ObservationIgnored private var processor: ScreenshotProcessor?
+    /// Reads the text of new screenshots on this Mac (Vision), one at a time; started with the services, stopped on
+    /// quit. `pending` rows wait in the index for the next launch.
+    @ObservationIgnored private var textRunner: TextRecognitionRunner?
     @ObservationIgnored private(set) var queue: ProcessingQueue?
     /// The analyzer and the settings it was built from, replaced together on every rebuild. The processor reads this
     /// pair once right before `analyze` and decides consent on it (`UploadConsent.decide`), so a rebuild while a job
@@ -216,6 +220,7 @@ final class AppCoordinator {
                 index: index, undoLog: undoLog)
             self.processor = processor
             fileActions.processor = processor
+            textRunner = TextRecognitionRunner(index: index, recognizer: VisionTextRecognizer())
         } catch {
             indexProblem = UserFacingError.problem(for: error)
             startupError = "Could not open the index: \(StatusText.describe(error))"
@@ -227,6 +232,8 @@ final class AppCoordinator {
         guard !servicesStarted else { return }
         servicesStarted = true
         Task { await localRuntime.cleanUpAfterPreviousRun() }
+        // Not gated on the backend or Pause: reading is local, and rows are only `pending` after an analysis.
+        if let textRunner { Task { await textRunner.start() } }
         startWatchingIfReady()
     }
 
@@ -238,6 +245,7 @@ final class AppCoordinator {
 
     func stopServices() {
         capture.stop()
+        if let textRunner { Task { await textRunner.stop() } }
         Task { await localRuntime.stop() }
     }
 

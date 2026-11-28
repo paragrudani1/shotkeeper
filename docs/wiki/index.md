@@ -46,7 +46,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [../research/capture-types.md](../research/capture-types.md): screen recordings (naming, finishing, frames, cost) and clipboard screenshots (pasteboard, privacy alert from macOS 27.2) (2026-11-28).
 - [../research/auto-update.md](../research/auto-update.md): Sparkle 2 on an ad-hoc build: EdDSA-only trust, keychain and privacy prompts after each update, quarantine, self-signed option, release flow (2026-11-28).
 - [../research/openrouter.md](../research/openrouter.md): OpenRouter + Inkling 2 Mini: parameters per provider, reasoning switch, logprobs, headers, usage/cost, privacy routing, errors (2026-11-22).
-- [../research/vision-ocr-settings.md](../research/vision-ocr-settings.md): Vision OCR settings sweep for ticket 04: `scripts/measure-vision.swift` (macOS only, type-checked and sample-run in `macos-app` CI), how Parag runs it; results pending (2026-11-28).
+- [../research/vision-ocr-settings.md](../research/vision-ocr-settings.md): Vision OCR settings sweep for ticket 04: `scripts/measure-vision.swift` (macOS only, type-checked and sample-run in `macos-app` CI), how Parag runs it; results and the chosen settings (`.accurate`, 1/32, language correction off), the 28.9 s first-read outlier, known errors (2026-11-28).
 
 ## Code map
 - [../core-api.md](../core-api.md): public core types and how the macOS app wires them.
