@@ -60,8 +60,8 @@ App data lives in `~/Library/Application Support/Shotkeeper/`: `settings.json`, 
 - **OpenRouter (cloud):** each screenshot is downscaled on your Mac (longest side 1280 px by default) and sent to
   **OpenRouter** with your OpenRouter API key. OpenRouter passes it to a third-party provider that serves Inkling 2
   Mini, **Prime Intellect or io.net**, under their data policies. With the default model, requests are pinned to
-  exactly those two providers (`provider.only`); each can serve the model from several endpoints (on 2026-11-28
-  Prime Intellect had three, io.net one). Every request asks OpenRouter for zero data retention (`zdr: true`) and
+  exactly those two providers (`provider.only`). On 2026-11-28 Prime Intellect had three endpoints for the model and
+  io.net one; with `service_tier: "default"` requests reach only the standard ones. Every request asks OpenRouter for zero data retention (`zdr: true`) and
   for providers that do not collect data (`data_collection: "deny"`); on 2026-11-28 every endpoint of the two
   providers that a request can reach met both (`docs/research/openrouter.md`). If no endpoint qualifies, OpenRouter refuses the request
   instead of sending it elsewhere. OpenRouter itself does not store prompts unless you opt in to logging in your
@@ -281,8 +281,9 @@ charged in `usage.cost` (US dollars); `shotkeeper-cli analyze --backend openrout
 - The index's content hash is size + modification time + the first 64 KiB of the file. It detects files Shotkeeper
   has already seen, but it is not a security hash.
 - There is a single global search shortcut, ⌥⌘S by default. Change it with the recorder in Settings → General →
-  Search shortcut. If macOS refuses a shortcut (for example, another app already uses it), Settings says why next to
-  the recorder and the previous shortcut keeps working.
+  Search shortcut. If macOS refuses a shortcut, Settings says why next to the recorder and the previous shortcut keeps
+  working. A shortcut that another app also uses may not be detected: it can register and then reach only one of
+  the two apps.
 
 ## Architecture
 
