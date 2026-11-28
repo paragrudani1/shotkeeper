@@ -202,3 +202,15 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   OpenRouter `service_tier: "default"` + README). PR #13 conflicted with `t3/wave1-search` after the fast-forward to
   #10 (`shippedColumns` changed to pairs). The chief of staff resolved it (`49aef72`: pairs plus `(3, […])`; lint ok,
   429 Linux tests pass). Docs commits made after `5eaac60` stay on `t3/roadmap-2026-11` for the next docs PR.
+- 2026-11-28: Parag **approved the wave 2 design** ([../design/subfolders-and-retitle.md](../design/subfolders-and-retitle.md))
+  and left all departures unticked, which accepts them. **Spelling: American everywhere**, so the action is
+  **"Analyze Again"**. The spec and design text say "Analyse"; Parag's quoted requirement stays verbatim, and
+  everything else (synthesis, design strings, code) uses "Analyze".
+- 2026-11-28: **Clean-up spec** drafted ([../specs/clean-up-2026-11.md](../specs/clean-up-2026-11.md)). Exact
+  duplicates are found by size grouping, then a full hash, then a byte-for-byte compare before each move (size + mtime
+  + 64 KiB would miss `cp` copies). A research note must come first: Finder "Put Back" with `trashItem` vs
+  `NSWorkspace.recycle`, what updates `kMDItemLastUsedDate`, and the Trash URL `trashItem` returns. 12 decisions went
+  to Parag.
+- 2026-11-28: Draft PRs **#15** (auto-update 01: `ReleasePlan` + `release-plan` CLI + CHANGELOG, into
+  `t3/auto-update`; Sparkle's release-notes naming confirmed at `generate_appcast/ArchiveItem.swift:419-446`) and
+  **#16** (wave 1 02: date filter, into `t3/wave1-search`) opened; both wait on `macos-app`.
