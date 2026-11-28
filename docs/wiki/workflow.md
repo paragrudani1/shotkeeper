@@ -328,3 +328,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   when the job ends.
 - 2026-11-28: Auto-update ticket 07 (Sparkle 2.10.1 + "Check for Updates…") started. It stops and reports if Sparkle
   needs `SUPublicEDKey` to start, which would make it wait for Parag's key (ticket 03/P2).
+- 2026-11-28: **PR #26 merged into `t3/auto-update`** (`904283b`; the `OTHER_CODE_SIGN_FLAGS --deep` check, the
+  `select-xcode.sh` message, and the ticket 09 note). Main (#24) was then merged into all three integration branches.
+  `t3/auto-update` needed a hand resolution (`96e720a`): the old misnamed lint step was dropped from `linux-core`, the
+  fake-codesign self-test kept, main's macOS lint step placed before Xcode selection, and both `lint.sh` header notes
+  kept. YAML parses, and lint and its self-test pass. CI on the push run verifies the result.
