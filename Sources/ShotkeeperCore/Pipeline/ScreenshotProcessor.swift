@@ -74,15 +74,19 @@ public struct UndoBatchResult: Equatable, Sendable {
 /// error is rethrown so `ProcessingQueue` can decide whether to retry. A rename failure keeps the name and is noted.
 /// The undo record is appended right after a successful move (before index/Finder writes) so a later failure can
 /// never leave a move that cannot be undone.
+///
+/// Analyze Again (`reanalyze(rowID:request:)`, in `ScreenshotProcessor+Reanalyze.swift`) goes through the same
+/// `consentedJob` → `send` path, so this file stays the only one that calls `.analyze(` (`scripts/lint.sh`).
 public final class ScreenshotProcessor: Sendable {
-    private let snapshot: @Sendable () -> AnalyzerSnapshot
-    private let imagePreparer: any ImagePreparer
-    private let metadataWriter: any FileMetadataWriter
-    private let index: ScreenshotIndex
-    private let organizer: FileOrganizer
-    private let undoLog: UndoLog
-    private let now: @Sendable () -> Date
-    private let timeZone: TimeZone
+    // Internal, not private, for the extensions in their own files (`+Reanalyze`).
+    let snapshot: @Sendable () -> AnalyzerSnapshot
+    let imagePreparer: any ImagePreparer
+    let metadataWriter: any FileMetadataWriter
+    let index: ScreenshotIndex
+    let organizer: FileOrganizer
+    let undoLog: UndoLog
+    let now: @Sendable () -> Date
+    let timeZone: TimeZone
 
     /// - Parameters:
     ///   - snapshot: the analyzer and the settings it was built from, read together (the app keeps them in one
@@ -187,17 +191,15 @@ public final class ScreenshotProcessor: Sendable {
 
         // The file may have been replaced while it was prepared: judge it by the earlier of both reads of its dates.
         consentCapturedAt = min(consentCapturedAt, UploadConsent.effectiveCaptureTime(of: url, timeZone: timeZone))
-        // THE consent decision (CODING_STANDARDS #2): on the pair this job uses, read once, right before `analyze`.
-        let job = self.snapshot()
+        guard let job = consentedJob(capturedAt: consentCapturedAt, userRequest: userRequest)
+        else { return .skipped(.awaitingConsent) }
         let settings = job.settings
-        guard UploadConsent.decide(settings: settings, capturedAt: consentCapturedAt,
-                                   userRequest: userRequest) == .allow else { return .skipped(.awaitingConsent) }
 
         try index.save(entry)
         let analysis: ScreenshotAnalysis
         do {
             let context = AnalysisContext(originalFilename: entry.originalFilename, capturedAt: capturedAt)
-            analysis = try await job.analyzer.analyze(payload, context: context)
+            analysis = try await send(payload, context: context, with: job)
         } catch {
             recordFailure(error)
             throw error
@@ -220,28 +222,11 @@ public final class ScreenshotProcessor: Sendable {
                 notes.append("kept name: title confidence \(Self.format(analysis.titleConfidence)) < \(Self.format(settings.minTitleConfidence))")
             }
         }
-        let folder = settings.moveEnabled ? settings.organizedFolder : nil
-
-        var finalURL = url
-        if stem != nil || folder != nil {
-            do {
-                finalURL = try organizer.organize(url, stem: stem, into: folder)
-            } catch {
-                notes.append("kept name: rename failed (\(error))")
-            }
-        }
-        if finalURL != url {
-            do { undoRecordID = try undoLog.append(from: url, to: finalURL, at: now()).id }
-            catch { notes.append("undo record not written (\(error))") }
-        }
-
-        if settings.writeFinderMetadata {
-            do {
-                try FinderMetadata.apply(tags: analysis.tags, comment: analysis.description, to: finalURL, using: metadataWriter)
-            } catch {
-                notes.append("Finder metadata not written (\(error))")
-            }
-        }
+        let folder = destinationFolder(for: analysis, settings: settings)
+        let placed = place(url, stem: stem, into: folder, notes: &notes)
+        let finalURL = placed.url
+        undoRecordID = placed.undoRecordID
+        writeFinderMetadata(analysis, to: finalURL, settings: settings, notes: &notes)
 
         entry.note = notes.isEmpty ? nil : notes.joined(separator: "; ")
         if finalURL != url {
@@ -254,6 +239,73 @@ public final class ScreenshotProcessor: Sendable {
         let moved = finalURL.deletingLastPathComponent().path != url.deletingLastPathComponent().path
         return .processed(finalURL: finalURL, renamed: renamed, moved: moved)
     }
+
+    // MARK: Shared by `process` and `reanalyze`
+
+    /// An analyzer + settings pair that `UploadConsent.decide` allowed for one file. Only `consentedJob` makes one
+    /// (fileprivate init), so `send` cannot be reached without the decision.
+    struct ConsentedJob {
+        let analyzer: any ScreenshotAnalyzer
+        let settings: AppSettings
+
+        fileprivate init(_ snapshot: AnalyzerSnapshot) {
+            analyzer = snapshot.analyzer
+            settings = snapshot.settings
+        }
+    }
+
+    /// THE consent decision (CODING_STANDARDS #2): reads the pair this job uses once, right before `analyze`, and
+    /// decides on it. nil when `UploadConsent.decide` refuses. The caller then uses only the returned pair (its
+    /// analyzer for `send`, its settings for rename, move and Finder), so a later settings change cannot reach it.
+    func consentedJob(capturedAt consentCapturedAt: Date, userRequest: UserUploadAuthorization?) -> ConsentedJob? {
+        let job = self.snapshot()
+        guard UploadConsent.decide(settings: job.settings, capturedAt: consentCapturedAt,
+                                   userRequest: userRequest) == .allow else { return nil }
+        return ConsentedJob(job)
+    }
+
+    /// The one place an image goes to a model (`scripts/lint.sh` rule `analyze`), to the consented pair's analyzer.
+    func send(_ payload: ImagePayload, context: AnalysisContext, with job: ConsentedJob) async throws -> ScreenshotAnalysis {
+        try await job.analyzer.analyze(payload, context: context)
+    }
+
+    /// The pipeline's move rule: the organized folder when moving is on, else nil (the file stays in its folder).
+    /// `analysis` is for the subfolder rule (ticket 04), which goes here so new screenshots and Analyze Again share it.
+    func destinationFolder(for analysis: ScreenshotAnalysis, settings: AppSettings) -> URL? {
+        settings.moveEnabled ? settings.organizedFolder : nil
+    }
+
+    /// Renames and/or moves `url` through `FileOrganizer` (no-replace) and appends the undo record right after the
+    /// move. A failure keeps the file where it was, or leaves the move without a record, and is noted.
+    func place(_ url: URL, stem: String?, into folder: URL?,
+               notes: inout [String]) -> (url: URL, undoRecordID: UUID?, failed: Bool) {
+        guard stem != nil || folder != nil else { return (url, nil, false) }
+        let finalURL: URL
+        do {
+            finalURL = try organizer.organize(url, stem: stem, into: folder)
+        } catch {
+            notes.append("kept name: rename failed (\(error))")
+            return (url, nil, true)
+        }
+        guard finalURL != url else { return (url, nil, false) }
+        do { return (finalURL, try undoLog.append(from: url, to: finalURL, at: now()).id, false) }
+        catch {
+            notes.append("undo record not written (\(error))")
+            return (finalURL, nil, false)
+        }
+    }
+
+    /// Finder tags and comment from the analysis, when Settings asks for them. A failure is noted.
+    func writeFinderMetadata(_ analysis: ScreenshotAnalysis, to url: URL, settings: AppSettings, notes: inout [String]) {
+        guard settings.writeFinderMetadata else { return }
+        do {
+            try FinderMetadata.apply(tags: analysis.tags, comment: analysis.description, to: url, using: metadataWriter)
+        } catch {
+            notes.append("Finder metadata not written (\(error))")
+        }
+    }
+
+    // MARK: Undo
 
     /// Undo the most recent rename/move, point the index back at the original path, and flag the file so it is
     /// never processed again.

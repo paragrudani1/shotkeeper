@@ -286,6 +286,11 @@ public final class ScreenshotIndex: @unchecked Sendable {
         }
     }
 
+    /// The row with this id, wherever its file is now (ids are stable across renames and moves).
+    public func lookup(id: Int64) throws -> IndexedScreenshot? {
+        try select("WHERE id = ? LIMIT 1", [.int(id)]).first
+    }
+
     public func lookup(byPath path: String) throws -> IndexedScreenshot? {
         try select("WHERE path = ? LIMIT 1", [.text(path)]).first
     }

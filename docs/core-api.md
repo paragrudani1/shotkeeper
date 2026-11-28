@@ -64,7 +64,7 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     Note: Finder's Get Info shows comments from `.DS_Store`, so an xattr-only comment may not appear there; Spotlight indexes it.
   - `_FilenameSanitizerStub.swift`: delete at merge (the analyzers task owns `FilenameSanitizer`).
 - **Index/**
-  - `ScreenshotIndex`: `save(_:) -> id` (upsert by path), `updatePath(from:to:)`, `lookup(byPath:)`, `lookup(byHash:)`,
+  - `ScreenshotIndex`: `save(_:) -> id` (upsert by path), `updatePath(from:to:)`, `lookup(id:)`, `lookup(byPath:)`, `lookup(byHash:)`,
     `recent(limit:)`, `recentProcessed(limit:)` (`done` only), `entries(withStatus:limit:)`, `search(_:limit:)` (empty → recent),
     `stats()`, `markRestoredByUndo(path:)`. Thread-safe. Schema version 4 (2 added `restored_by_undo`; 3 adds the
     recognized-text columns, rebuilds FTS with `recognized_text`, and adds the filter and pending-text indexes; 4 adds
@@ -114,6 +114,20 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
       Throws `ManualRenameError.unusableName`, `FileOrganizerError`.
     - `process` writes `titleSource = .model` on every row it builds, so a path whose content changed starts again as
       the model's.
+    - `reanalyze(rowID:request:) -> ReanalysisOutcome` (Analyze Again, `ScreenshotProcessor+Reanalyze.swift`): the
+      only way past `.alreadyIndexed`. Keyed on the row id (`ScreenshotIndex.lookup(id:)`), the path read at each
+      call. `.refused(.missing | .excluded(rule) | .paused(until:))` and `.skipped(.awaitingConsent)` send and write
+      nothing. `.updated(finalURL:renamed:moved:titleKept:suggestedTitle:)`: analysis applied to the row (still
+      `done`, note gains "analyzed again", `textStatus = .pending` only when the content hash changed), today's
+      rename and move rules, undo record, Finder, `updatePath`, `save`. `TitleKeptReason`: `.restoredByUndo` (index
+      only, checked first), `.yourName` (with `suggestedTitle`, not stored; pass it to
+      `rename(_:to:asSuggestedTitle: true)`), `.renameOff`, `.lowConfidence`, `.unusable`, `.renameFailed`. The kept
+      reasons other than `.renameOff` keep the row's old title. `titleKept == nil && !renamed` = "the title is the
+      same as before". `request:` is `UserUploadRequests.authorization(for:)` of the job's request. A throw from
+      fingerprinting, preparing or analyzing leaves the row untouched (not saved as `failed`).
+    - `process` and `reanalyze` share `consentedJob` (THE `decide` call, on the snapshot read once) and `send` (the
+      one `.analyze(`), `destinationFolder(for:settings:)` (the move rule; ticket 04's subfolder rule goes there),
+      `place` (organize + undo record) and `writeFinderMetadata`.
     - `undo(ids:) -> UndoBatchResult` (Undo / Undo All; newest first, keeps going), `lastUndoable()` (menu "Undo: <title>").
     - Undo flags the file in the index (`restoredByUndo`); `process` then returns `.skipped(.restoredByUndo)` for it forever,
       also after a restart and after the file changed.
