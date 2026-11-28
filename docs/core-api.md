@@ -121,8 +121,8 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     fit, then `truncationMarker` as the last line.
   - `VisionTextSettings`: `level`, `minimumTextHeight` (`.fraction(n)` or `.pixelFloor(px)`,
     `relativeHeight(pixelHeight:)`), `usesLanguageCorrection`, `automaticallyDetectsLanguage` (accurate only),
-    `recognizedBy` (e.g. `vision-r3-accurate-h1/96-lc0`). `current` is PROVISIONAL (Apple's defaults) until the
-    measurement in `docs/research/vision-ocr-settings.md`.
+    `recognizedBy` (e.g. `vision-r3-accurate-h1/96-lc0`). `current` is the measured `.accurate`, 1/32, language
+    correction off (`vision-r3-accurate-h1/32-lc0`; `docs/research/vision-ocr-settings.md`).
 - **Queue/**
   - `ProcessingQueue` (actor): `enqueue`, `pause(until:)`, `resume()`, `setRequestsPerMinute(_:)`, `statusUpdates()`, `status`, `waitUntilIdle()`,
     `succeededCount`, `failedCount`, `lastFailure`.

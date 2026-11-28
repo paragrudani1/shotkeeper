@@ -11,10 +11,10 @@ final class VisionTextSettingsTests: XCTestCase {
             .recognizedBy, "vision-r3-fast-h10px-lc1")
     }
 
-    /// PROVISIONAL until Parag's measurement is in docs/research/vision-ocr-settings.md (merge gate of ticket 04):
-    /// Apple's defaults, which the measurement replaces.
-    func testTheCurrentSettingsAreApplesDefaultsUntilMeasured() {
-        XCTAssertEqual(VisionTextSettings.current.recognizedBy, "vision-r3-accurate-h1/32-lc1")
+    /// The measured settings (docs/research/vision-ocr-settings.md "Results", 2026-11-28).
+    func testTheCurrentSettingsAreTheMeasuredOnes() {
+        XCTAssertEqual(VisionTextSettings.current.recognizedBy, "vision-r3-accurate-h1/32-lc0")
+        XCTAssertTrue(VisionTextSettings.current.automaticallyDetectsLanguage)
     }
 
     func testAutomaticLanguageDetectionIsOnForAccurateOnly() {

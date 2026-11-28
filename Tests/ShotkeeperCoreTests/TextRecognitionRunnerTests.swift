@@ -337,6 +337,33 @@ final class TextRecognitionRunnerTests: XCTestCase {
         XCTAssertEqual(recognizer.reads.get.map(\.path), [first.path])
     }
 
+    /// The first Vision read once took 28.9 s (model load, docs/research/vision-ocr-settings.md): a read is waited for
+    /// however long it takes. It is not failed, given up or started again, and nothing is read alongside it.
+    func testASlowFirstReadIsWaitedForWithoutATimeout() async throws {
+        let slow = try pendingRow("first-read.png", takenAt: 2)
+        let recognizer = StubTextRecognizer([.success([line("Loaded at last")]), .success([line("Next")])])
+        let (released, release) = AsyncStream<Void>.makeStream()
+        recognizer.whileReading.set {
+            var waiting = released.makeAsyncIterator()
+            _ = await waiting.next() // held until the test releases it; then every read goes through
+        }
+        let runner = runner(recognizer)
+        await runner.start()
+        try await eventually("the slow read to start") { recognizer.reads.get.count == 1 }
+
+        let next = try pendingRow("next.png", takenAt: 1) // wakes the runner while the read is still going
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(try index.lookup(byPath: slow.path)?.textStatus, .pending, "still being read")
+        XCTAssertEqual(recognizer.reads.get.map(\.path), [slow.path], "not restarted, nothing read alongside it")
+
+        release.finish()
+
+        try await eventually("both rows to be read") { try index.lookup(byPath: next.path)?.textStatus == .done }
+        XCTAssertEqual(try index.lookup(byPath: slow.path)?.recognizedText, "Loaded at last")
+        XCTAssertEqual(recognizer.reads.get.map(\.path), [slow.path, next.path])
+        await runner.stop()
+    }
+
     func testAStoppedRunnerStartsAgain() async throws {
         let runner = runner(StubTextRecognizer([.success([line("Again")])]))
         await runner.start()

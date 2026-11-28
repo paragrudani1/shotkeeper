@@ -24,7 +24,9 @@ struct VisionTextRecognizer: TextRecognizer {
 
     var recognizedBy: String { settings.recognizedBy }
 
-    /// Runs Vision on a utility-priority queue, not on the Swift concurrency pool: `perform` blocks for the whole read.
+    /// Runs Vision on a utility-priority queue, not on the main thread or the Swift concurrency pool: `perform` blocks
+    /// for the whole read. No timeout: the first read after launch once took 28.9 s, probably the model load
+    /// (docs/research/vision-ocr-settings.md "Results").
     func recognize(_ url: URL) async throws -> [RecognizedLine] {
         let settings = settings
         return try await withCheckedThrowingContinuation { continuation in

@@ -57,11 +57,12 @@ public struct VisionTextSettings: Equatable, Sendable {
         "vision-r\(Self.revision)-\(level.rawValue)-h\(minimumTextHeight.label)-lc\(usesLanguageCorrection ? 1 : 0)"
     }
 
-    /// The settings the app uses.
-    ///
-    /// PROVISIONAL (2026-11-28): Apple's defaults (`.accurate`, 1/32, language correction on [V1] [V3]), not chosen.
-    /// Parag has not run `scripts/measure-vision.swift` yet. Ticket 04 must not merge until the results are in
-    /// docs/research/vision-ocr-settings.md and these three values are set from them.
+    /// The settings the app uses, measured on a real Mac (2026-11-28, docs/research/vision-ocr-settings.md "Results"):
+    /// - `.accurate`: `.fast` found no code line and no Japanese or Arabic text.
+    /// - 1/32 (Apple's default [V1]): every lower height missed a spreadsheet number. Parag's decision, a dated
+    ///   deviation from the spec's rule (which would pick 1/128).
+    /// - Language correction off: on, it puts a space before `(` in code (`URL (string:`).
+    /// - Automatic language detection on (`automaticallyDetectsLanguage`): off, Japanese came out as gibberish.
     public static let current = VisionTextSettings(level: .accurate, minimumTextHeight: .fraction(32),
-                                                   usesLanguageCorrection: true)
+                                                   usesLanguageCorrection: false)
 }

@@ -35,8 +35,9 @@ public struct RecognizedLine: Equatable, Sendable {
 ///
 /// Privacy: the lines it returns must never leave the Mac or reach a log, an error message or `text_error`.
 public protocol TextRecognizer: Sendable {
-    /// What `text_recognized_by` records: the recognizer and its settings, e.g. `vision-r3-accurate-h1/32-lc1`.
+    /// What `text_recognized_by` records: the recognizer and its settings, e.g. `vision-r3-accurate-h1/32-lc0`.
     var recognizedBy: String { get }
     /// Reads the original file at `url`, at full resolution. Lines in any order; `TextRecognitionRunner` orders them.
+    /// It may take long: the first Vision read once took 28.9 s (model load), so callers set no timeout.
     func recognize(_ url: URL) async throws -> [RecognizedLine]
 }

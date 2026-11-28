@@ -72,6 +72,15 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   from them. `VisionTextRecognizer` uses exactly the request setup of `scripts/measure-vision.swift`. The pixel floor
   is `VisionTextSettings.MinimumTextHeight.pixelFloor(n).relativeHeight(pixelHeight:)`, the same formula as the
   script's.
+- 2026-11-28: **Vision constants measured; PR #18's merge blocker is resolved.** Parag's measurement (MacBook Air
+  M4, macOS 27.0.1, 20 synthetic screenshots; results in `../research/vision-ocr-settings.md`) replaces the
+  provisional defaults: `.accurate`, minimum height 1/32, language correction **off**, automatic language detection
+  on, so `text_recognized_by` = `vision-r3-accurate-h1/32-lc0`.
+  **Spec deviation (Parag, 2026-11-28):** the spec's rule would pick 1/128
+  (the slowest image took about 0.14 s), but every height below 1/32 missed a spreadsheet number, so 1/32 stays.
+- 2026-11-28: **no timeout on a read.** The first recognition once took 28.9 s (probably the model load). Vision runs
+  on a utility dispatch queue, never the main thread, and neither `VisionTextRecognizer` nor `TextRecognitionRunner`
+  has a timeout (`testASlowFirstReadIsWaitedForWithoutATimeout`).
 - 2026-11-28 (`1d9f0e2`): **the processor sets `pending`.** Only on the final `done` save after a successful
   analysis. The entry is new, so old text, `text_recognized_by` and `text_error` are cleared. That ends ticket 01's
   "until 04 lands" gap. A failed analysis leaves `text_status` NULL. `rename(_:to:)` and undo keep the row's text.
@@ -284,6 +293,8 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
 - 2026-11-28: "file missing" is recognised by `textError == "file missing"` (`SearchWindowState.fileMissingReason`).
   That is the spec's reason and the value of PR #18's `TextRecognitionRunner.fileMissingReason`. Core can't reference
   that constant until #18 merges; whoever merges second should make one of them use the other.
+- 2026-11-28 (ticket 04 merged with the base): **one "file missing" constant.** `SearchWindowState.fileMissingReason`
+  is now `TextRecognitionRunner.fileMissingReason`; `testAFailedRowTellsAMissingFileApart` saves the runner's constant.
 - 2026-11-28: **the open panel refreshes on index changes.** While the panel is shown, `SearchPanelController`
   subscribes to `ScreenshotIndex.changes()` (cancelled on hide). An `.updated` change of a listed row runs the search
   again, so the badge goes from "Reading text…" to "Copy Text" without reopening. That refresh is also the moment a

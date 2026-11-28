@@ -295,9 +295,8 @@ public struct SearchWindowState: Equatable, Sendable {
     public static let noTextMessage = "No text found in this screenshot."
     /// Copy Text on a row whose text could not be read (`failed`, other than a missing file).
     public static let textFailedMessage = "The text could not be read."
-    /// `textError` of a row whose file was not at its indexed path when the runner read it (the spec's reason, the
-    /// value ticket 04's `TextRecognitionRunner.fileMissingReason` writes).
-    static let fileMissingReason = "file missing"
+    /// `textError` of a row whose file was not at its indexed path when the runner read it (the spec's reason).
+    static let fileMissingReason = TextRecognitionRunner.fileMissingReason
 
     /// VoiceOver announcements when something is cleared (design §5). Choosing a value announces nothing: VoiceOver
     /// reads the pill's new value.
