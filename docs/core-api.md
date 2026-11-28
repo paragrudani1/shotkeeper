@@ -37,6 +37,15 @@ For the toast, the handler calls `processor.processWithReport(url)` and feeds a 
 on the main actor; on a thrown error it sends `.failed(originalURL:problem:)` when `UserFacingError.shouldNotify(error)`,
 then rethrows so the queue still decides about retries (see `AppCoordinator.buildQueue`).
 At launch, re-enqueue `index.entries(withStatus: .pending)` and `.failed` if you want retries across restarts.
+
+### Where the macOS app does it (2026-11-28)
+`AppCoordinator` is the wiring point; its parts each have a file and a small host protocol the coordinator implements:
+| Part | File | Owns |
+|---|---|---|
+| `FolderCapture` (`coordinator.capture`) | `App/Shotkeeper/Coordinator/FolderCapture.swift` | Folder watcher, `ScreenshotDetector`, re-queue of `pending` rows, Process Existing (`ProcessExistingRequests`). |
+| `FileActions` (`coordinator.fileActions`) | `App/Shotkeeper/Coordinator/FileActions.swift` | `undoLast()`, `undo(ids:)`, `rename(_:to:)` through `ScreenshotProcessor`. |
+| Test Connection | `App/Shotkeeper/Coordinator/ConnectionTest.swift` | `testConnection(settings:secrets:)` (generated image only). |
+| `SearchResultActions` | `App/Shotkeeper/Platform/SearchResultActions.swift` | Open / Copy Image / Reveal on a search result. `WorkspaceActions`: the `NSWorkspace`/pasteboard calls. |
 Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and pause/hold state are kept). Do not rebuild the queue for it.
 
 ## Types by folder
@@ -106,6 +115,12 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `SearchResultItem`: title (file stem), `subtitle(now:time:)` ("x.com · 5 min ago"), `accessibilityLabel(now:time:)`,
     `hashtags`, `metadata(time:)` (Source / Type / Taken / Folder). `IndexUnavailableError` → the error state.
   - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`.
+  - `SearchKeyMap` (added 2026-11-28): the search window's key table. `bindings` (`SearchKeyBinding`: a `SearchKeyTrigger`
+    `.plain(keyCode:)` or `.command(Character)` → a `SearchKey`: up, down, open, close, space, copyImage, reveal,
+    quickLook, `chip(_)`), `plain(keyCode:modifiers:)` (no ⌘⌥⌃⇧), `command(keyCode:modifiers:characters:)` (typed ASCII
+    letter/digit, else the ANSI physical key via `physicalCharacter(_:)`), `commandShortcutText(for:)` ("⌘C"),
+    `reservedCommandCharacters` (A V X Z H M Q stay free). `SearchKeyMapTests` fail when two actions share a key. The app
+    only translates `NSEvent`s (`SearchPanel.swift`) and performs the action (`SearchPanelController.handle`).
 - **Setup/** (first-run setup; the app renders it)
   - **`UploadConsent.decide(target:grants:capturedAt:processExisting:) -> UploadDecision`** (`Setup/UploadConsent.swift`):
     THE consent decision (CODING_STANDARDS #2), pure. `.allow` for `UploadTarget.thisMac`; for `.cloudflare` /

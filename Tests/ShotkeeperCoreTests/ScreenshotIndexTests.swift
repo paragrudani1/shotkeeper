@@ -188,11 +188,16 @@ final class ScreenshotIndexTests: XCTestCase {
     /// Each migration adds exactly the columns whose `addedIn` names it, and exactly the columns it shipped with.
     /// A column moved into a version that is already out (and so never reruns on a user's database) fails here.
     func testEachMigrationAddsItsShippedColumns() {
-        XCTAssertEqual(Set(Self.shippedColumns.keys), Set(ScreenshotIndex.migrations.map(\.version)),
-                       "add `n: [columns]` to shippedColumns with each new migration")
+        let versions = Self.shippedColumns.map(\.version)
+        XCTAssertEqual(versions, Array(1...Int32(versions.count)),
+                       "shippedColumns versions must be unique and run 1, 2, 3… in order; two entries with one "
+                       + "version usually mean a merge kept both sides: renumber the newer one")
+        XCTAssertEqual(versions, ScreenshotIndex.migrations.map(\.version),
+                       "add `(n, [columns])` to shippedColumns with each new migration")
         for migration in ScreenshotIndex.migrations {
             let declared = ScreenshotIndex.columns(addedIn: migration.version).map(\.name)
-            XCTAssertEqual(declared, Self.shippedColumns[migration.version] ?? [],
+            let shipped = Self.shippedColumns.first { $0.version == migration.version }?.columns ?? []
+            XCTAssertEqual(declared, shipped,
                            "columns with addedIn: \(migration.version) differ from what that version shipped")
             guard migration.version > 1 else { continue }
             let prefix = "ALTER TABLE screenshots ADD COLUMN "
@@ -202,13 +207,14 @@ final class ScreenshotIndexTests: XCTestCase {
         }
     }
 
-    /// The columns each migration adds, as shipped. Append `n: [...]` with each new migration; never edit a line:
-    /// a database already at that version will not run it again.
-    private static let shippedColumns: [Int32: [String]] = [
-        1: ["path", "original_filename", "content_hash", "captured_at", "processed_at", "title", "title_confidence",
-            "source_app_or_site", "content_type", "description", "tags", "key_text", "date_mentioned", "produced_by",
-            "billed_input_tokens", "status", "last_error", "note"],
-        2: ["restored_by_undo"],
+    /// The columns each migration adds, as shipped. Append `(n, [...])` with each new migration; never edit a line:
+    /// a database already at that version will not run it again. An ordered list, not a dictionary literal: a merge
+    /// that keeps two entries for one version then fails the test above instead of crashing the run on duplicate keys.
+    private static let shippedColumns: [(version: Int32, columns: [String])] = [
+        (1, ["path", "original_filename", "content_hash", "captured_at", "processed_at", "title", "title_confidence",
+             "source_app_or_site", "content_type", "description", "tags", "key_text", "date_mentioned", "produced_by",
+             "billed_input_tokens", "status", "last_error", "note"]),
+        (2, ["restored_by_undo"]),
     ]
 
     /// The migrated table has exactly the declared columns, in order: a column without its migration (or the other

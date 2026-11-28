@@ -70,8 +70,9 @@ final class GlobalHotKey {
         return UInt32(mask)
     }
 
-    /// The shortcut's modifiers from an AppKit event (the recorder).
-    static func modifiers(from flags: NSEvent.ModifierFlags) -> HotKeyShortcut.Modifiers {
+    /// The shortcut's modifiers from an AppKit event (the recorder and the search panel's keys). Only ⌘⌥⌃⇧ count.
+    /// Nonisolated: it only reads the flags, and `SearchKeyMap`'s AppKit translation is not main-actor isolated.
+    nonisolated static func modifiers(from flags: NSEvent.ModifierFlags) -> HotKeyShortcut.Modifiers {
         var modifiers: HotKeyShortcut.Modifiers = []
         if flags.contains(.command) { modifiers.insert(.command) }
         if flags.contains(.option) { modifiers.insert(.option) }

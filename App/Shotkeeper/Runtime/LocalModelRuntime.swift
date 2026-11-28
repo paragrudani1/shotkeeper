@@ -164,7 +164,7 @@ actor LocalModelRuntime: LocalModelServing {
         let models = pathsPlan.modelsDirectory.standardizedFileURL.path + "/"
         guard directory.path.hasPrefix(models), directory.path.count > models.count else { return }
         if FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.removeItem(at: directory)
+            try FileManager.default.removeItem(at: directory)  // lint-allow: file-op (our downloaded model)
         }
         setPhase(.notInstalled)
     }

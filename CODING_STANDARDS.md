@@ -1,6 +1,9 @@
 # Coding standards (read during review)
 
 Judgement calls a reviewer enforces. Mechanical rules belong in CI, not here.
+Mechanical rules run in `scripts/lint.sh` (CI `linux-core`; run it locally before pushing): Foundation-only core imports,
+user-file moves/deletes only in `FileOrganizer`/`NoReplaceRename`/`UndoLog`, `.analyze(` only in `ScreenshotProcessor`.
+An exception is marked on its line with `// lint-allow: <rule> (<why>)`; review each new marker like a rule change.
 
 1. **User files are sacred.** Every rename/move goes through `FileOrganizer` (no-replace primitives). No code path deletes a user file;
    on any error the file stays where it was, and the undo log is written as soon as a move happens.

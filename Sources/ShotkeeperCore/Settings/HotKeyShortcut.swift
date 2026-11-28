@@ -67,6 +67,8 @@ public enum KeyCode {
     public static let returnKey = 0x24, tab = 0x30, space = 0x31, delete = 0x33, escape = 0x35, grave = 0x32
     public static let slash = 0x2C, forwardDelete = 0x75, home = 0x73, end = 0x77, pageUp = 0x74, pageDown = 0x79
     public static let leftArrow = 0x7B, rightArrow = 0x7C, downArrow = 0x7D, upArrow = 0x7E
+    /// Keypad Enter (`kVK_ANSI_KeypadEnter`). Not in the shortcut recorder's name tables: search opens with it.
+    public static let keypadEnter = 0x4C
     public static let f1 = 0x7A, f2 = 0x78, f3 = 0x63, f4 = 0x76, f5 = 0x60, f6 = 0x61, f7 = 0x62, f8 = 0x64
     public static let f9 = 0x65, f10 = 0x6D, f11 = 0x67, f12 = 0x6F, f13 = 0x69, f14 = 0x6B, f15 = 0x71
     public static let f16 = 0x6A, f17 = 0x40, f18 = 0x4F, f19 = 0x50, f20 = 0x5A
