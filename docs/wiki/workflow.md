@@ -353,3 +353,7 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   change-feed refresh runs one search per change, which ticket 07's bulk reads would turn into a storm; missing tests
   that hiding unsubscribes and that unlisted rows don't refresh; scroll doesn't follow a re-sort; the badge tooltip is
   likely hidden under `FileDragView`. A fix agent took these plus the Source pill width polish from #23.
+- 2026-11-28: PR #28 `macos-app` failed at `f1bcdef`: an old app test (`SearchKeyTranslationTests.testCommandKeys`,
+  `AppLogicTests.swift:189`) still asserted that ⇧⌘C maps to nothing; it now maps to `.copyText`. The fix is a
+  one-line change to the expectation. It gets applied after the running #28 fix agent pushes, to avoid a push race on
+  the branch.
