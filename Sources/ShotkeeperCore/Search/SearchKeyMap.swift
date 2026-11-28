@@ -3,6 +3,13 @@ import Foundation
 /// What a key does in the search window (spec PR 2). The app performs it (`SearchPanelController.handle`).
 public enum SearchKey: Hashable, Sendable {
     case up, down, open, close, space, copyImage, reveal, quickLook, chip(SearchChip)
+    /// ⌘D: open or close the date picker (design §6).
+    case dateFilter
+    /// ⌘S: open or close the source picker; the app beeps when the Source pill is disabled (design §6).
+    case sourceFilter
+    /// ⌫: clears the date when the date list is open, or the source when the source picker's narrow field is empty;
+    /// otherwise it deletes in the field (the app passes it on).
+    case deleteBackward
 }
 
 /// A key of the search window, as `SearchKeyMap` matches it.
@@ -38,9 +45,12 @@ public enum SearchKeyMap {
         SearchKeyBinding(.plain(keyCode: KeyCode.keypadEnter), .open),
         SearchKeyBinding(.plain(keyCode: KeyCode.escape), .close),
         SearchKeyBinding(.plain(keyCode: KeyCode.space), .space),  // Quick Look or a typed space (SearchWindowState)
+        SearchKeyBinding(.plain(keyCode: KeyCode.delete), .deleteBackward),  // only an open picker takes it
         SearchKeyBinding(.command("c"), .copyImage),               // a selection in the field keeps ⌘C for its text
         SearchKeyBinding(.command("r"), .reveal),
         SearchKeyBinding(.command("y"), .quickLook),               // ⌘Y, the Finder shortcut
+        SearchKeyBinding(.command("d"), .dateFilter),              // D for date (design §6)
+        SearchKeyBinding(.command("s"), .sourceFilter),            // S for source; the global ⌥⌘S has ⌥ too
     ] + SearchChip.allCases.map { chip in
         SearchKeyBinding(.command(Character(String(chip.shortcutNumber))), .chip(chip))  // ⌘1…⌘7
     }

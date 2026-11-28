@@ -88,8 +88,17 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - Columns (internal): `ScreenshotIndex.columns` declares each column once (SQL, migration, bind, read). Adding one:
     an entry with the next `addedIn`, `SQLiteMigration(version: n, statements: addColumns("new_column"))`, and
     `n: ["new_column"]` in the test-side `shippedColumns`.
-  - `search(_ query: ScreenshotQuery, limit:) -> ScreenshotSearchResult` (search window): text + `contentType` chip +
-    optional batch `paths`, AND-combined, `done` rows only; returns `rows`, `matchCount` and `totalCount` for the footer.
+  - `search(_ query: ScreenshotQuery, limit:now:calendar:) -> ScreenshotSearchResult` (search window): text +
+    `contentType` chip + optional batch `paths` + optional `date: DateFilter`, AND-combined, `done` rows only; returns
+    `rows`, `matchCount` and `totalCount` for the footer. The date filter compares
+    `COALESCE(captured_at, processed_at)` (the `screenshots_taken_at` index) with `date.interval(now:calendar:)`, resolved
+    on each call; the app passes the search model's `now()` and `time.calendar`. With a date or a source and no text:
+    newest taken first. `source: SourceKey` is resolved to the raw `source_app_or_site` spellings with that key and
+    filtered with `IN (SELECT value FROM json_each(?))` (the `screenshots_source_app_or_site` index); a key with no rows
+    left finds nothing. `searchSQL(_:sourceSpellings:now:calendar:)` (internal) builds the statements, for query-plan tests.
+  - `sources() -> [SourceFacet]` (wave 1 ticket 03): the source list, one facet per `SourceKey` over `done` rows
+    (`key`, `displayName` = most common trimmed spelling, alphabetical tie-break; `count` over the whole index), sorted by
+    count then name; rows without a source left out.
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
     Text fields: `recognizedText`, `textStatus: TextStatus?` (nil = never requested; `.pending` / `.done` /
     `.noText` (stored `none`) / `.failed`), `textRecognizedBy`, `textError`. `save` writes them like every column, so a
@@ -136,7 +145,23 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     true when `query` changed: run it with `resultLimit`, then `apply(_:for:)` or `fail(_:for:)` (stale answers are ignored).
   - `SearchResultItem`: title (file stem), `subtitle(now:time:)` ("x.com · 5 min ago"), `accessibilityLabel(now:time:)`,
     `hashtags`, `metadata(time:)` (Source / Type / Taken / Folder). `IndexUnavailableError` → the error state.
-  - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`.
+  - `TimeLabel.relative(_:now:)` ("Just now", "12 min ago", "3 h ago", then `short`), `dateTime(_:)`; date filter
+    wording `days(_:_:now:)` ("Oct 3 – 17", "Dec 28, 2025 – Jan 4, 2026") and `day(_:now:alongside:spelled:)`.
+  - Date filter (wave 1, 2026-11-28): `DateFilter` (`.today`, `.yesterday`, `.last7Days`, `.last30Days`,
+    `.days(from:through:)` over `CalendarDay`); `interval(now:calendar:)` = whole local days `[start, end)`;
+    `label`, `spokenValue`, `takenPhrase(now:time:)`. `SearchWindowState`: `date`, `setDateFilter(_:)`,
+    `clearFilters()`, `datePicker: DatePickerState?` (highlight, custom range, From/To; `DatePickerState(today:current:calendar:)`),
+    `noMatchButtons`, `now`/`time` for the wording. `SearchKeyMap`: ⌘D (`.dateFilter`) and ⌫ (`.deleteBackward`).
+  - Source filter (wave 1 ticket 03, 2026-11-28): **`SourceKey`** (`Search/SourceKey.swift`), the one rule that two
+    spellings are one source: `SourceKey(_ raw:)` (nil when blank) trims, folds case and diacritics, drops a leading
+    `www.` and a lone top-level domain (`x.com` → `x`; `bbc.co.uk`, `docs.google.com` kept); no alias table.
+    `SourceKey.fold(_:)` is the folding alone (the picker's narrow field uses it). `SourceFacet` (`key`, `displayName`,
+    `count`). `SearchWindowState`: `source`, `sourceName`, `setSource(_ facet:)`, `sources` (nil until loaded) and
+    `setSources(_:)`, Source pill wording (`sourcePillTitle`/`Value`/`Help`, `sourcePillIsDisabled`), the picker
+    `sourcePicker: SourcePickerState?` (`narrowText`, `rows: [SourcePickerRow]`, `highlighted`, `noMatchMessage`,
+    `deleteClearsSource`) with `toggleSourcePicker()` (false = disabled, beep), `setSourceNarrowText`,
+    `moveSourceHighlight`, `chooseSource`, `chooseHighlightedSource`, `clearSourceFromPicker`; `isPickerOpen`,
+    `closePickers()`. `SearchKeyMap`: ⌘S (`.sourceFilter`).
   - `SearchKeyMap` (added 2026-11-28): the search window's key table. `bindings` (`SearchKeyBinding`: a `SearchKeyTrigger`
     `.plain(keyCode:)` or `.command(Character)` → a `SearchKey`: up, down, open, close, space, copyImage, reveal,
     quickLook, `chip(_)`), `plain(keyCode:modifiers:)` (no ⌘⌥⌃⇧), `command(keyCode:modifiers:characters:)` (typed ASCII

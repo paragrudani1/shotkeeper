@@ -90,7 +90,7 @@ final class SearchPanelTests: XCTestCase {
     }
 
     func testEscapeClearsTheQueryBeforeClosing() {
-        let controller = SearchPanelController(model: SearchViewModel(debounce: .zero) { _, _ in
+        let controller = SearchPanelController(model: SearchViewModel(debounce: .zero) { _, _, _, _ in
             ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0)
         })
         controller.show()

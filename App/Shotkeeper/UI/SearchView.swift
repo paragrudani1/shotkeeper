@@ -14,8 +14,8 @@ struct SearchViewActions {
                                                    processExisting: {})
 }
 
-/// The search window (spec PR 2): 880×540, radius 16. Row 1 field, row 2 type chips, a 330 pt list and a preview,
-/// a 36 pt footer with key hints. The material and the shadow come from the panel; `opaqueBackground` draws the
+/// The search window (spec PR 2): 880×540, radius 16. Row 1 field, row 2 type chips and filter pills
+/// (`SearchFilterViews.swift`), a 330 pt list and a preview, a 36 pt footer with key hints. The material and the shadow come from the panel; `opaqueBackground` draws the
 /// window background instead, for snapshots (offscreen rendering cannot show behind-window blur).
 struct SearchView: View {
     static let size = CGSize(width: 880, height: 540)
@@ -41,11 +41,51 @@ struct SearchView: View {
         .background {
             if opaqueBackground { Color(nsColor: .windowBackgroundColor) }
         }
+        .overlayPreferenceValue(FilterPillAnchorKey.self) { anchors in
+            pickerOverlay(anchors)
+        }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
-        .onAppear { fieldFocused = true }
-        .onChange(of: model.focusRequest) { _, _ in fieldFocused = true }
+        .onAppear { fieldFocused = !model.state.isPickerOpen }
+        .onChange(of: model.focusRequest) { _, _ in fieldFocused = !model.state.isPickerOpen }
+        // A picker takes the focus while it is open and gives it back to the field when it closes (design §6).
+        .onChange(of: model.state.isPickerOpen) { _, open in fieldFocused = !open }
+    }
+
+    // MARK: Picker
+
+    /// The open picker, hung under its pill (right edges aligned), over the list and preview. A click anywhere else
+    /// closes it.
+    @ViewBuilder
+    private func pickerOverlay(_ anchors: [SearchFilterKind: Anchor<CGRect>]) -> some View {
+        if let picker = model.state.datePicker, let anchor = anchors[.date] {
+            hung(under: anchor, width: DatePickerPanel.width) {
+                DatePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
+            }
+        } else if let picker = model.state.sourcePicker, let anchor = anchors[.source] {
+            hung(under: anchor, width: SourcePickerPanel.width) {
+                SourcePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
+            }
+        }
+    }
+
+    private func hung<Content: View>(under anchor: Anchor<CGRect>, width: CGFloat,
+                                    @ViewBuilder picker: () -> Content) -> some View {
+        let content = picker()
+        return GeometryReader { proxy in
+            let pill = proxy[anchor]
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.closePickers() }
+                    .accessibilityHidden(true)
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                    // 6 pt under row 2 (design): the pill's bottom, row 2's 8 pt bottom padding, then the gap.
+                    .offset(x: pill.maxX - width, y: pill.maxY + 8 + 6)
+            }
+        }
     }
 
     // MARK: Rows 1 and 2
@@ -82,19 +122,23 @@ struct SearchView: View {
 
     private var chipRow: some View {
         HStack(spacing: 6) {
-            ForEach(SearchChip.allCases, id: \.self) { chip in
-                let selected = model.state.chip == chip
-                Button(chip.title) { model.selectChip(chip) }
-                    .buttonStyle(SearchChipStyle(isSelected: selected))
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                    .help(chip.help)
+            HStack(spacing: 6) {
+                ForEach(SearchChip.allCases, id: \.self) { chip in
+                    let selected = model.state.chip == chip
+                    Button(chip.title) { model.selectChip(chip) }
+                        .buttonStyle(SearchChipStyle(isSelected: selected))
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                        .help(chip.help)
+                }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Type")
             Spacer(minLength: 0)
+            DateFilterPill(model: model)
+            SourceFilterPill(model: model)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Type")
     }
 
     // MARK: Body
@@ -117,9 +161,18 @@ struct SearchView: View {
             }
         case .noMatch(let message):
             SearchMessageView(symbol: "magnifyingglass", tint: .secondary, title: message.title, message: message.message) {
-                Button("Clear search") { model.clearSearch() }
-                    .buttonStyle(PanelSecondaryButtonStyle())
-                    .help("Clear the search text and the type")
+                HStack(spacing: 8) {
+                    ForEach(model.state.noMatchButtons, id: \.self) { button in
+                        Button(button.title) {
+                            switch button {
+                            case .clearFilters: model.clearFilters()
+                            case .clearSearch: model.clearSearch()
+                            }
+                        }
+                        .buttonStyle(PanelSecondaryButtonStyle())
+                        .help(model.state.help(for: button))
+                    }
+                }
             }
         case .emptyIndex:
             SearchMessageView(symbol: "viewfinder", tint: Brand.indigo, title: "No screenshots yet",

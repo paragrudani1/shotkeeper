@@ -239,7 +239,7 @@ final class SearchViewModelTests: XCTestCase {
 
     func testEmptyQueryShowsRecentAndSelectsTheFirstRow() async {
         let queries = LockedValue<[ScreenshotQuery]>([])
-        let model = SearchViewModel(debounce: .milliseconds(10)) { query, _ in
+        let model = SearchViewModel(debounce: .milliseconds(10)) { query, _, _, _ in
             queries.withValue { $0.append(query) }
             return Self.page(["a", "b"], total: 214)
         }
@@ -251,9 +251,31 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(model.state.footerText, "Recent · 214 screenshots")
     }
 
+    func testSearchResolvesDatesWithTheModelsClockAndCalendar() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Kolkata")!
+        let clock = LockedValue(Date(timeIntervalSince1970: 1_795_000_000))
+        let received = LockedValue<[(Date, Calendar)]>([])
+        let model = SearchViewModel(debounce: .zero, now: { clock.value },
+                                    time: TimeLabel(calendar: calendar, locale: Locale(identifier: "en_US"))) { _, _, at, zone in
+            received.withValue { $0.append((at, zone)) }
+            return Self.page([])
+        }
+        model.refresh()
+        await model.waitForPendingSearch()
+        clock.withValue { $0 += 86_400 }
+        model.setText("receipt")
+        await model.waitForPendingSearch()
+        XCTAssertEqual(received.value.map { $0.0 }, [Date(timeIntervalSince1970: 1_795_000_000),
+                                                 Date(timeIntervalSince1970: 1_795_086_400)],
+                       "each search reads the clock again")
+        XCTAssertEqual(received.value.map { $0.1.timeZone }, [calendar.timeZone, calendar.timeZone])
+        XCTAssertEqual(model.state.now, received.value.last?.0, "the date wording uses the same instant")
+    }
+
     func testTypingIsDebouncedToTheLastQuery() async {
         let queries = LockedValue<[String]>([])
-        let model = SearchViewModel(debounce: .milliseconds(200)) { query, _ in
+        let model = SearchViewModel(debounce: .milliseconds(200)) { query, _, _, _ in
             queries.withValue { $0.append(query.text) }
             return Self.page([])
         }
@@ -268,7 +290,7 @@ final class SearchViewModelTests: XCTestCase {
     func testChipTagEscapeAndBatchRunTheRightQueries() async {
         let queries = LockedValue<[ScreenshotQuery]>([])
         let limits = LockedValue<[Int]>([])
-        let model = SearchViewModel(debounce: .zero) { query, limit in
+        let model = SearchViewModel(debounce: .zero) { query, limit, _, _ in
             queries.withValue { $0.append(query) }
             limits.withValue { $0.append(limit) }
             return Self.page(["a"], total: 5)
@@ -295,7 +317,7 @@ final class SearchViewModelTests: XCTestCase {
     }
 
     func testIndexUnavailableShowsTheErrorStateNotTheEmptyState() async {
-        let model = SearchViewModel(debounce: .zero) { _, _ in
+        let model = SearchViewModel(debounce: .zero) { _, _, _, _ in
             throw IndexUnavailableError(problem: UserFacingProblem(message: "the index file is damaged"))
         }
         model.refresh()
@@ -307,7 +329,7 @@ final class SearchViewModelTests: XCTestCase {
     }
 
     func testPillsHideAgain() async throws {
-        let model = SearchViewModel(debounce: .zero) { _, _ in Self.page([]) }
+        let model = SearchViewModel(debounce: .zero) { _, _, _, _ in Self.page([]) }
         model.showCopied()
         XCTAssertEqual(model.pill, .copied)
         try await Task.sleep(for: .seconds(SearchWindowState.copiedPillDuration + 0.4))
@@ -320,7 +342,7 @@ final class SearchViewModelTests: XCTestCase {
 
     func testHidingABatchViewSearchesAgain() async {
         let queries = LockedValue<[ScreenshotQuery]>([])
-        let model = SearchViewModel(debounce: .zero) { query, _ in
+        let model = SearchViewModel(debounce: .zero) { query, _, _, _ in
             queries.withValue { $0.append(query) }
             return query.paths == nil ? Self.page(["recent"]) : Self.page(["batch"])
         }
@@ -339,7 +361,7 @@ final class SearchViewModelTests: XCTestCase {
         receipt.keyText = "Total 8.25"
         try index.save(receipt)
         try index.save(Self.row("diagram", type: .design))
-        let model = SearchViewModel(debounce: .zero) { try index.search($0, limit: $1) }
+        let model = SearchViewModel(debounce: .zero) { try index.search($0, limit: $1, now: $2, calendar: $3) }
         model.setText("coffee")
         await model.waitForPendingSearch()
         XCTAssertEqual(model.state.items.map(\.path), ["/tmp/receipt.png"])

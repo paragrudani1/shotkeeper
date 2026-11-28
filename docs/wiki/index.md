@@ -15,9 +15,11 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
   consent per model + `provider.only`, "Agree and Continue", account states hold the queue (2026-11-22).
 - [prefactor-index](prefactor-index.md): index column table (one place per column, explicit migration versions, frozen
   295df83 schema test), `changes()` feed, settings every-property round-trip, `IndexedScreenshot.testRow` (2026-11-28).
-- [search-filters-and-text](search-filters-and-text.md): wave 1 (search filters, recognized text): one index
-  migration (3) for the text columns, FTS rebuild and filter indexes, a deviation from the spec's two; `ftsColumns`
-  and weights; the conditional text write (2026-11-28).
+- [search-filters-and-text](search-filters-and-text.md): wave 1 (search filters, recognized text): ticket 01's one
+  index migration (3) for the text columns, FTS rebuild and filter indexes, a deviation from the spec's two;
+  `ftsColumns` and weights; the conditional text write. Ticket 02's date filter: core `DateFilter`, picker state in
+  core, Esc order, newest-taken order with a date, no-match buttons, the `screenshots_taken_at` query plan, one clock
+  and calendar for index and panel, real-Mac checks (2026-11-28).
 - [subfolders-and-retitle](subfolders-and-retitle.md): wave 2 (subfolders, Edit name, Analyze Again): consent
   generalized as `UserUploadAuthorization`, CODING_STANDARDS #2 reworded; index migration 4 `title_source` with the
   note backfill, `rename(_:to:asSuggestedTitle:)` (2026-11-28).
