@@ -28,8 +28,10 @@ public enum OpenRouterBackend {
     public static let appTitle = "Shotkeeper"
 
     /// openrouter.md, "Privacy routing": only endpoints that keep no prompts (`zdr`) and do not collect data
-    /// (`data_collection: deny`); both Inkling 2 Mini endpoints stay eligible. `require_parameters` routes only to
-    /// providers that honour every parameter sent (reasoning off, json_schema, logprobs); both do. For `defaultModel`
+    /// (`data_collection: deny`). Each of the two providers can have several Inkling 2 Mini endpoints (2026-11-28:
+    /// Prime Intellect three, io.net one); every one `only` reaches stays eligible (openrouter.md, "Re-check
+    /// 2026-11-28"). `require_parameters` routes only to endpoints that honour every parameter sent (reasoning off,
+    /// json_schema, logprobs); all of those do. For `defaultModel`
     /// `only` pins the two providers the consent names; another model's providers are not known in advance, so its
     /// consent names "the provider that serves <model>" instead.
     public static func providerRouting(model: String) -> AnalysisJSON {
@@ -68,12 +70,22 @@ public enum OpenRouterBackend {
     public static let providerDataPolicyURL = URL(string: "https://openrouter.ai/docs/guides/privacy/provider-logging")!
     public static let zeroDataRetentionURL = URL(string: "https://openrouter.ai/docs/guides/features/zdr")!
 
+    /// openrouter.md, "Re-check 2026-11-28" (service-tiers guide, "Using Service Tiers"): `service_tier: "default"`
+    /// "keeps priority endpoints of open-weight models out of the pool, so a … `provider.only` request is served at the
+    /// standard rate". Without it a request may be served (and billed) by `primeintellect/fast`, 2.5× the standard
+    /// price. Neither that guide nor provider-selection ("Requiring Providers to Support All Parameters") says that
+    /// `require_parameters` checks `service_tier`: it covers the LLM parameters (api_reference/parameters), which do not
+    /// include it, and no endpoint lists it in `supported_parameters` (read 2026-11-28). If OpenRouter did count it,
+    /// no endpoint would qualify and the 404 holds the queue with `noEndpointText`; it does not fall through to `fast`.
+    public static let serviceTier: AnalysisJSON = "default"
+
     /// The profile for `model` (an effective model ID): only `provider` routing depends on it.
     public static func profile(model: String = defaultModel) -> OpenAICompatibleProfile {
         var p = OpenAICompatibleProfile(backendID: "openrouter", producedByPrefix: "openrouter", serviceName: "OpenRouter")
         p.headers = ["HTTP-Referer": appURL, "X-OpenRouter-Title": appTitle, "X-Title": appTitle]
         // openrouter.md, "Logprobs": `logprobs: true` returns `choices[].logprobs.content[]` (both providers list it).
-        p.extraBody = ["reasoning": reasoningOff, "logprobs": true, "provider": providerRouting(model: model)]
+        p.extraBody = ["reasoning": reasoningOff, "logprobs": true, "service_tier": serviceTier,
+                       "provider": providerRouting(model: model)]
         p.retriesWithoutExtrasOn400 = false
         p.requiresAPIKey = true
         // openrouter.md, "Image input": "we recommend sending the text prompt first, then the images".

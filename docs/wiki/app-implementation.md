@@ -87,3 +87,10 @@ builds; see the open question in [core-implementation](core-implementation.md)).
 - 2026-11-21 (PR #2): accepting the privacy notice now rebuilds the analyzer. Before, with the consent gate in place,
   a user on the default Clairic backend who accepted the notice stayed held until another analyzer setting changed or
   the app restarted. Caught by `testAnalyzerIsRebuiltWhenSettingsOrSecretsChange`.
+
+## Real-Mac run
+- 2026-11-28: Parag reported that nothing looked wrong on their Mac so far. They did not go through each item, so
+  the "What CI cannot check" lists in [ui-polish](ui-polish.md) are still not individually confirmed, and which
+  backend they used was not stated. README "Known limits" (as of `295df83`) still says the app has never run on a
+  real Mac, and that the search shortcut cannot be changed, although PR 4 added a shortcut recorder. Both lines are
+  out of date.

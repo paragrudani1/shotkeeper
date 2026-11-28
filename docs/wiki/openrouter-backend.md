@@ -179,3 +179,11 @@ Branch `t3/openrouter-inkling`. Commits: `1ca0d2a` (research), `71a97b5` (core, 
 - 2026-11-22: does `effort: "none"` really skip reasoning at both providers, and do they return logprobs? (Live test.)
 - 2026-11-22: hold the queue on "out of credits" instead of failing each file? Answered by the review: it holds (S4).
 - 2026-11-22: make OpenRouter the default or recommended backend? (Parag, after the live test.)
+- 2026-11-28: Parag chose to leave the live test for now (no key added). The two open questions above and the price
+  line stay open.
+- 2026-11-28 (PR #11, `7edf4b0`): every request sends top-level **`service_tier: "default"`**, so the `provider.only`
+  pin never routes to Prime Intellect's priority `fast` endpoint, which bills 2.5×. Source: "Re-check 2026-11-28" in
+  [../research/openrouter.md](../research/openrouter.md). **Open (live call needed):** whether `require_parameters:
+  true` also checks `service_tier`. No endpoint lists it in `supported_parameters`. If OpenRouter did check it,
+  every request would get a 404 → `accountState(noEndpointText)`, holding the queue with "OpenRouter has no provider
+  for this model…", and the text would send the user to check the model, which would be the wrong place.

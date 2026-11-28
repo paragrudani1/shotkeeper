@@ -5,7 +5,8 @@ import Foundation
 /// for a 1280×800 screenshot = 8,242 tokens; docs/wiki/clairic-field-schema.md).
 public enum ClairicPricing {
     /// "$0.10 per M input tokens until December 1, 2026, then $0.24 per M input tokens"
-    /// (docs/research/clairic/model-page-2026-11-21.md, "Unit Pricing"). Setup quotes the price after the promo.
+    /// (docs/research/clairic/pricing-2026-11-28.md, "Model page" and "Workers AI pricing page"). Setup quotes the
+    /// price after the promo.
     public static let standardUSDPerMillionInputTokens = 0.24
 
     /// US dollars per 1,000 full-screen 16:10 screenshots downscaled to `longSide` (the app's `maxImageLongSide`).
