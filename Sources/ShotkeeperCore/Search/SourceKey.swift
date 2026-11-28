@@ -8,7 +8,8 @@ import Foundation
 ///
 /// The rule (wave 1 spec, "Filter model", Sources; 2026-11-28):
 /// - fold case, diacritics and width ("Café" = "cafe", "ＧｉｔＨｕｂ" = "GitHub"), trim whitespace and collapse runs of
-///   it to one space ("Google  Chrome" = "Google Chrome");
+///   it to one space ("Google  Chrome" = "Google Chrome"), drop invisible format characters except the zero-width
+///   (non-)joiner ("\u{200E}Slack" = "Slack"; see `fold`);
 /// - drop a leading `www.`;
 /// - when what is left is one name plus one top-level domain (`x.com`, `github.com`, `nytimes.com`), drop the domain,
 ///   so the site matches the app name; a name with `:` or `/` is a URL, not a host, and is left alone
@@ -35,15 +36,30 @@ public struct SourceKey: Hashable, Sendable, Comparable, CustomStringConvertible
         rawValue = folded
     }
 
-    /// Text with case, diacritics and width folded, whitespace trimmed and each run of it collapsed to one space: what
-    /// source keys and the source picker's narrow field compare ("  Café " → "cafe", "Ｇｏｏｇｌｅ　 Chrome" →
-    /// "google chrome"). Width folding runs first, so a full-width space counts as whitespace.
+    /// Text with case, diacritics and width folded, whitespace trimmed and each run of it collapsed to one space, and
+    /// invisible format characters dropped: what source keys and the source picker's narrow field compare
+    /// ("  Café " → "cafe", "Ｇｏｏｇｌｅ　 Chrome" → "google chrome", "\u{200E}Slack" → "slack").
+    ///
+    /// Width folding runs first, so a full-width space counts as whitespace. Format characters (general category Cf:
+    /// bidi marks U+200E/U+200F/U+061C, U+FEFF, soft hyphen U+00AD, word joiner U+2060, …) are removed from each word
+    /// after the text is split on whitespace, so a word made only of them disappears instead of leaving a double space.
+    /// U+200C and U+200D (zero-width non-joiner and joiner) are not removed by this step: emoji ZWJ sequences ("👩‍💻")
+    /// need U+200D. (Diacritic folding in swift-foundation on Linux already drops U+200C; checked 2026-11-28.)
     public static func fold(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
             .lowercased()
             .components(separatedBy: .whitespacesAndNewlines)
+            .map(dropFormatCharacters)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    private static func dropFormatCharacters(_ word: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: word.unicodeScalars.filter {
+            $0.properties.generalCategory != .format || $0 == "\u{200C}" || $0 == "\u{200D}"
+        })
+        return String(scalars)
     }
 
     public var description: String { rawValue }

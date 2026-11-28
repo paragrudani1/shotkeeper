@@ -51,6 +51,25 @@ final class SourceListTests: XCTestCase {
         XCTAssertNil(SourceKey("\u{3000} \t"))
     }
 
+    func testInvisibleFormatCharactersAreFoldedAway() throws {
+        for mark in ["\u{200E}", "\u{200F}", "\u{FEFF}", "\u{00AD}", "\u{2060}", "\u{061C}"] {
+            let name = "U+" + String(mark.unicodeScalars.first!.value, radix: 16, uppercase: true)
+            XCTAssertEqual(try names(["\(mark)Slack", "Sl\(mark)ack", "Slack\(mark)", "Slack"]).values.sorted(), [4], name)
+            XCTAssertEqual(try names(["Google \(mark) Chrome", "Google Chrome"]).values.sorted(), [2],
+                           "\(name) alone between spaces leaves one space")
+            XCTAssertEqual(try names([mark, " \(mark)\(mark) ", "Slack"]), ["Slack": 1], "\(name) alone is no source")
+        }
+        XCTAssertEqual(try names(["\u{200E}Slack", "Slack", "Slack"]), ["Slack": 3], "a look-alike merges with Slack")
+    }
+
+    func testEmojiZWJSequencesAreKept() throws {
+        let coder = "\u{1F469}\u{200D}\u{1F4BB}" // 👩‍💻
+        XCTAssertEqual(SourceKey("\(coder) Dev")?.rawValue, "\(coder) dev")
+        XCTAssertEqual(try names(["\(coder) Dev", "\u{1F469}\u{1F4BB} Dev"]).values.sorted(), [1, 1],
+                       "the joiner is part of the emoji")
+        // No U+200C case: diacritic folding already drops it on Linux (swift-foundation, checked 2026-11-28).
+    }
+
     func testAURLKeepsItsDomain() throws {
         XCTAssertEqual(SourceKey("https://github.com")?.rawValue, "https://github.com")
         XCTAssertEqual(SourceKey("github.com/x")?.rawValue, "github.com/x")
