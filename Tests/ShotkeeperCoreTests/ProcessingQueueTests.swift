@@ -63,9 +63,9 @@ final class ProcessingQueueTests: XCTestCase {
         let (handler, calls) = scripted([])
         let queue = makeQueue(handler, clock: FakeClock())
         await queue.pause()  // keep jobs queued so the duplicate arrives while `a` is still pending
-        await queue.enqueue(a)
-        await queue.enqueue(b)
-        await queue.enqueue(a)
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.process(b))
+        await queue.enqueue(.process(a))
         let queued = await queue.queuedCount
         XCTAssertEqual(queued, 2)
         await queue.resume()
@@ -82,7 +82,7 @@ final class ProcessingQueueTests: XCTestCase {
         let (handler, calls) = scripted([AnalyzerError.serverError(status: 503, message: "busy"),
                                          AnalyzerError.serverError(status: 500, message: "oops")])
         let queue = makeQueue(handler, clock: clock)
-        await queue.enqueue(a)
+        await queue.enqueue(.process(a))
         await queue.waitUntilIdle()
         XCTAssertEqual(calls.get.count, 3)
         XCTAssertEqual(clock.sleeps, [2, 4])
@@ -94,7 +94,7 @@ final class ProcessingQueueTests: XCTestCase {
         let clock = FakeClock()
         let (handler, calls) = scripted([AnalyzerError.rateLimited(retryAfter: 7), AnalyzerError.rateLimited(retryAfter: nil)])
         let queue = makeQueue(handler, clock: clock)
-        await queue.enqueue(a)
+        await queue.enqueue(.process(a))
         await queue.waitUntilIdle()
         XCTAssertEqual(calls.get.count, 3)
         XCTAssertEqual(clock.sleeps, [7, 4], "retryAfter used as-is, then backoff for attempt 2")
@@ -104,8 +104,8 @@ final class ProcessingQueueTests: XCTestCase {
         let clock = FakeClock()
         let (handler, calls) = scripted(Array(repeating: AnalyzerError.serverError(status: 500, message: "x"), count: 10))
         let queue = makeQueue(handler, clock: clock, maxAttempts: 3)
-        await queue.enqueue(a)
-        await queue.enqueue(b)
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.process(b))
         await queue.waitUntilIdle()
         XCTAssertEqual(calls.get, [a, a, a, b, b, b])
         let failed = await queue.failedCount
@@ -119,7 +119,7 @@ final class ProcessingQueueTests: XCTestCase {
         let (handler, calls) = scripted([AnalyzerError.badRequest(status: 400, message: "no"),
                                          AnalyzerError.invalidResponse("junk"), CocoaError(.fileNoSuchFile)])
         let queue = makeQueue(handler, clock: clock)
-        for url in [a, b, c] { await queue.enqueue(url) }
+        for url in [a, b, c] { await queue.enqueue(.process(url)) }
         await queue.waitUntilIdle()
         XCTAssertEqual(calls.get, [a, b, c])
         XCTAssertEqual(clock.sleeps, [])
@@ -131,7 +131,7 @@ final class ProcessingQueueTests: XCTestCase {
         let clock = FakeClock()
         let (handler, calls) = scripted([])
         let queue = makeQueue(handler, clock: clock, rpm: 60, burst: 1)
-        for url in [a, b, c] { await queue.enqueue(url) }
+        for url in [a, b, c] { await queue.enqueue(.process(url)) }
         await queue.waitUntilIdle()
         XCTAssertEqual(calls.get.count, 3)
         XCTAssertEqual(clock.sleeps, [1, 1])
@@ -141,8 +141,8 @@ final class ProcessingQueueTests: XCTestCase {
         let (handler, calls) = scripted([])
         let queue = makeQueue(handler, clock: FakeClock())
         await queue.pause()
-        await queue.enqueue(a)
-        await queue.enqueue(b)
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.process(b))
         await settle()
         XCTAssertEqual(calls.get, [])
         let status = await queue.status
@@ -157,7 +157,7 @@ final class ProcessingQueueTests: XCTestCase {
         let (handler, calls) = scripted([])
         let queue = makeQueue(handler, clock: clock)
         await queue.pause(until: clock.now().addingTimeInterval(600))
-        await queue.enqueue(a)
+        await queue.enqueue(.process(a))
         await queue.waitUntilIdle()
         XCTAssertEqual(calls.get, [a])
         XCTAssertEqual(clock.sleeps, [600])
@@ -170,7 +170,7 @@ final class ProcessingQueueTests: XCTestCase {
         let seen = Locked<[QueueStatus]>([])
         let updates = await queue.statusUpdates()
         let watcher = Task { for await status in updates { seen.mutate { $0.append(status) } } }
-        await queue.enqueue(a)
+        await queue.enqueue(.process(a))
         await queue.waitUntilIdle()
         await settle()
         watcher.cancel()
@@ -188,7 +188,7 @@ final class ProcessingQueueTests: XCTestCase {
         let probes = Locked([false, false, true])
         let (handler, calls) = scripted([AnalyzerError.unreachable("down")])
         let queue = makeQueue(handler, clock: clock, probe: { probes.mutate { $0.removeFirst() } })
-        await queue.enqueue(a)
+        await queue.enqueue(.process(a))
         await queue.waitUntilIdle()
         XCTAssertEqual(calls.get.count, 2, "the job is retried only once the probe succeeds")
         XCTAssertEqual(clock.sleeps, [5, 10, 20])
@@ -197,8 +197,8 @@ final class ProcessingQueueTests: XCTestCase {
     func testUnauthorizedHoldsInErrorUntilResume() async {
         let (handler, calls) = scripted([AnalyzerError.unauthorized("HTTP 401: {\"errors\":[{\"message\":\"bad token\"}]}")])
         let queue = makeQueue(handler, clock: FakeClock())
-        await queue.enqueue(a)
-        await queue.enqueue(b)
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.process(b))
         let held = QueueStatus.error("the model backend rejected the token")
         let status = await waitForStatus(queue) { $0 == held }
         XCTAssertEqual(status, held, "the menu shows readable text, never the server's response body")
@@ -217,8 +217,8 @@ final class ProcessingQueueTests: XCTestCase {
         for text in [OpenRouterBackend.outOfCreditsText, OpenRouterBackend.spendingLimitText] {
             let (handler, calls) = scripted([AnalyzerError.accountState(text)])
             let queue = makeQueue(handler, clock: FakeClock())
-            await queue.enqueue(a)
-            await queue.enqueue(b)
+            await queue.enqueue(.process(a))
+            await queue.enqueue(.process(b))
             let held = QueueStatus.error(text)
             let status = await waitForStatus(queue) { $0 == held }
             XCTAssertEqual(status, held)
@@ -239,8 +239,8 @@ final class ProcessingQueueTests: XCTestCase {
         let clock = FakeClock()
         let queue = makeQueue(handler, clock: clock, rpm: 60, burst: 1)
         await queue.pause()
-        await queue.enqueue(a)
-        await queue.enqueue(b)
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.process(b))
         await queue.setRequestsPerMinute(6)
         await settle()
         XCTAssertEqual(calls.get, [], "still paused")
@@ -261,8 +261,8 @@ final class ProcessingQueueTests: XCTestCase {
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock()) { _ in
             await withCheckedContinuation { gate.set($0) }
         }
-        await queue.enqueue(a)
-        await queue.enqueue(b)
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.process(b))
         let status = await waitForStatus(queue) { _ in gate.get != nil }
         XCTAssertEqual(status, .processing(current: a, remaining: 1))
         gate.mutate { let k = $0; $0 = nil; return k }?.resume()
@@ -307,7 +307,7 @@ final class ProcessingQueueTests: XCTestCase {
             }
             running.mutate { $0 -= 1 }
         }
-        for url in [a, b, c] { await queue.enqueue(url) }
+        for url in [a, b, c] { await queue.enqueue(.process(url)) }
         await queue.waitUntilIdle()
         fallback.cancel()
         XCTAssertEqual(peak.get, 2)
@@ -324,12 +324,12 @@ final class ProcessingQueueTests: XCTestCase {
             seen.mutate { $0.append(carried) }
             if failures.mutate({ $0 -= 1; return $0 >= 0 }) { throw AnalyzerError.serverError(status: 503, message: "busy") }
         })
-        await queue.enqueue(a, userRequest: request)
+        await queue.enqueue(.process(a), userRequest: request)
         await queue.waitUntilIdle()
         XCTAssertEqual(seen.get, [request, request, request])
         let carried = await queue.carriedRequestCount
         XCTAssertEqual(carried, 0)
-        await queue.enqueue(a) // a later file event for the same path
+        await queue.enqueue(.process(a)) // a later file event for the same path
         await queue.waitUntilIdle()
         XCTAssertEqual(seen.get.last, .some(nil), "nothing left for a later job")
     }
@@ -346,17 +346,17 @@ final class ProcessingQueueTests: XCTestCase {
             started.set(true)
             while !release.get { try await Task.sleep(nanoseconds: 1_000_000) }
         })
-        await queue.enqueue(a, userRequest: request)
+        await queue.enqueue(.process(a), userRequest: request)
         for _ in 0..<2_000 where !started.get { try await Task.sleep(nanoseconds: 1_000_000) }
         XCTAssertTrue(started.get)
-        await queue.enqueue(a, userRequest: request) // the second Process Existing while in flight
+        await queue.enqueue(.process(a), userRequest: request) // the second Process Existing while in flight
         let carriedWhileRunning = await queue.carriedRequestCount
         XCTAssertEqual(carriedWhileRunning, 1, "only the running job's own request")
         release.set(true)
         await queue.waitUntilIdle()
         let carried = await queue.carriedRequestCount
         XCTAssertEqual(carried, 0, "nothing stale")
-        await queue.enqueue(a)
+        await queue.enqueue(.process(a))
         await queue.waitUntilIdle()
         XCTAssertEqual(seen.get, [request, nil], "a later run gets the normal time rule")
     }
@@ -367,10 +367,313 @@ final class ProcessingQueueTests: XCTestCase {
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
                                     jobHandler: { _, carried in seen.mutate { $0.append(carried) } })
         await queue.pause()
-        await queue.enqueue(a) // the watcher
-        await queue.enqueue(a, userRequest: request) // then Process Existing, before it ran
+        await queue.enqueue(.process(a)) // the watcher
+        await queue.enqueue(.process(a), userRequest: request) // then Process Existing, before it ran
         await queue.resume()
         await queue.waitUntilIdle()
         XCTAssertEqual(seen.get, [request])
+    }
+
+    // MARK: Job kinds (wave 2 ticket 03: Analyze Again runs through the queue)
+
+    /// Records every attempt's job and request; `block` holds the first attempt of `blockedJob` until released.
+    private final class JobRecorder: @unchecked Sendable {
+        let calls = Locked<[QueueJob]>([])
+        let requests = Locked<[UserUploadRequest?]>([])
+        let errors: Locked<[Error]>
+        private let gate = Locked<(job: QueueJob?, waiter: CheckedContinuation<Void, Never>?, released: Bool)>((nil, nil, false))
+
+        init(errors: [Error] = [], blocking job: QueueJob? = nil) {
+            self.errors = Locked(errors)
+            gate.mutate { $0.job = job }
+        }
+
+        var handler: ProcessingQueue.JobHandler {
+            { job, request in
+                self.calls.mutate { $0.append(job) }
+                self.requests.mutate { $0.append(request) }
+                if self.gate.get.job == job, !self.gate.get.released {
+                    await withCheckedContinuation { continuation in
+                        let releasedAlready = self.gate.mutate { g -> Bool in
+                            if g.released { return true }
+                            g.waiter = continuation
+                            return false
+                        }
+                        if releasedAlready { continuation.resume() }
+                    }
+                }
+                if let error = self.errors.mutate({ $0.isEmpty ? nil : $0.removeFirst() }) { throw error }
+            }
+        }
+
+        var isBlocked: Bool { gate.get.waiter != nil }
+
+        func release() {
+            gate.mutate { g -> CheckedContinuation<Void, Never>? in
+                g.released = true
+                defer { g.waiter = nil }
+                return g.waiter
+            }?.resume()
+        }
+    }
+
+    private func jobQueue(_ recorder: JobRecorder, clock: FakeClock = FakeClock(), maxAttempts: Int = 5, rpm: Int = 0,
+                          burst: Int = 3) -> ProcessingQueue {
+        ProcessingQueue(configuration: .init(maxAttempts: maxAttempts, requestsPerMinute: rpm, burst: burst),
+                        clock: clock, random: { 0.5 }, jobHandler: recorder.handler)
+    }
+
+    private func waitUntil(_ condition: () async -> Bool) async {
+        for _ in 0..<2_000 {
+            if await condition() { return }
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    func testAProcessJobAndAReanalyzeJobOfTheRowAtThatURLAreDifferentJobs() async {
+        let recorder = JobRecorder()
+        let queue = jobQueue(recorder)
+        await queue.pause()
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.reanalyze(rowID: 7)) // row 7 is the screenshot at `a`
+        let queued = await queue.queuedCount
+        XCTAssertEqual(queued, 2)
+        await queue.resume()
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.calls.get, [.process(a), .reanalyze(rowID: 7)])
+    }
+
+    func testASecondReanalyzeOfAQueuedRowDoesNothing() async {
+        let recorder = JobRecorder()
+        let queue = jobQueue(recorder)
+        await queue.pause()
+        await queue.enqueue(.reanalyze(rowID: 7))
+        await queue.enqueue(.reanalyze(rowID: 8))
+        await queue.enqueue(.reanalyze(rowID: 7))
+        let queued = await queue.queuedCount
+        XCTAssertEqual(queued, 2)
+        await queue.resume()
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.calls.get, [.reanalyze(rowID: 7), .reanalyze(rowID: 8)])
+    }
+
+    func testASecondReanalyzeOfARunningRowDoesNothing() async {
+        let recorder = JobRecorder(blocking: .reanalyze(rowID: 7))
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7))
+        await waitUntil { recorder.isBlocked }
+        XCTAssertTrue(recorder.isBlocked)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        let queued = await queue.queuedCount
+        XCTAssertEqual(queued, 1, "only the running job")
+        recorder.release()
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.calls.get, [.reanalyze(rowID: 7)], "analyzed once, not charged twice (story 63)")
+    }
+
+    /// Story 52: Analyze Again goes ahead of a long Process Existing run, without pre-empting the running file, and
+    /// still takes a rate-limit token.
+    func testAFrontJobBehindFiftyWaitingJobsRunsNextAndStillTakesAToken() async {
+        let files = (0...50).map { URL(fileURLWithPath: "/shots/\($0).png") }
+        let recorder = JobRecorder(blocking: .process(files[0]))
+        let clock = FakeClock()
+        let queue = jobQueue(recorder, clock: clock, rpm: 60, burst: 1)
+        for file in files { await queue.enqueue(.process(file)) }
+        await waitUntil { recorder.isBlocked }
+        XCTAssertTrue(recorder.isBlocked, "the first file is running")
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        recorder.release()
+        await queue.waitUntilIdle()
+        let calls = recorder.calls.get
+        XCTAssertEqual(calls.count, 52)
+        XCTAssertEqual(Array(calls.prefix(3)), [.process(files[0]), .reanalyze(rowID: 7), .process(files[1])],
+                       "the running file finished first; the re-analysis ran next")
+        XCTAssertEqual(Array(calls.dropFirst(2)), files.dropFirst().map { .process($0) }, "the rest keep their order")
+        XCTAssertEqual(clock.sleeps, Array(repeating: 1, count: 51), "60/min, burst 1: every job after the first, the re-analysis too, waits for a token")
+    }
+
+    func testFrontJobsKeepTheOrderTheyWereAskedIn() async {
+        let recorder = JobRecorder()
+        let queue = jobQueue(recorder)
+        await queue.pause()
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.reanalyze(rowID: 1), atFront: true)
+        await queue.enqueue(.reanalyze(rowID: 2), atFront: true)
+        await queue.resume()
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.calls.get, [.reanalyze(rowID: 1), .reanalyze(rowID: 2), .process(a)])
+    }
+
+    // The user request of an Analyze Again job lives as long as the job (review 4 rule, as for Process Existing).
+
+    private let request = UserUploadRequest(authorization: .init(target: .cloudflare), generation: 3)
+
+    /// After the job ends, a new job for the same row (Analyze Again pressed later without a request) gets none.
+    private func assertDroppedAfterTheJob(_ queue: ProcessingQueue, _ recorder: JobRecorder,
+                                          file: StaticString = #filePath, line: UInt = #line) async {
+        let carried = await queue.carriedRequestCount
+        XCTAssertEqual(carried, 0, "dropped when the job ended", file: file, line: line)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.requests.get.last, .some(nil), "nothing left for a later job", file: file, line: line)
+    }
+
+    func testAReanalyzeJobKeepsItsRequestThroughRetries() async {
+        let recorder = JobRecorder(errors: [AnalyzerError.rateLimited(retryAfter: 2),
+                                            AnalyzerError.serverError(status: 503, message: "busy")])
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true, userRequest: request)
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.calls.get, Array(repeating: .reanalyze(rowID: 7), count: 3))
+        XCTAssertEqual(recorder.requests.get, [request, request, request])
+        await assertDroppedAfterTheJob(queue, recorder)
+    }
+
+    func testAReanalyzeJobKeepsItsRequestThroughAnOfflineHold() async {
+        let recorder = JobRecorder(errors: [AnalyzerError.unreachable("refused")])
+        let queue = jobQueue(recorder, maxAttempts: 1)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true, userRequest: request)
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.requests.get, [request, request])
+        let failed = await queue.failedCount
+        XCTAssertEqual(failed, 0)
+        await assertDroppedAfterTheJob(queue, recorder)
+    }
+
+    func testAReanalyzeJobKeepsItsRequestThroughANeedsAttentionHold() async {
+        let recorder = JobRecorder(errors: [AnalyzerError.unauthorized("HTTP 401")])
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true, userRequest: request)
+        _ = await waitForStatus(queue) { if case .error = $0 { return true } else { return false } }
+        let carriedWhileHeld = await queue.carriedRequestCount
+        XCTAssertEqual(carriedWhileHeld, 1, "held, not failed: the request stays")
+        await queue.resume()
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.requests.get, [request, request])
+        await assertDroppedAfterTheJob(queue, recorder)
+    }
+
+    func testAFailedReanalyzeJobDropsItsRequest() async {
+        let recorder = JobRecorder(errors: [AnalyzerError.badRequest(status: 400, message: "no")])
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true, userRequest: request)
+        await queue.waitUntilIdle()
+        let failed = await queue.failedCount
+        XCTAssertEqual(failed, 1)
+        await assertDroppedAfterTheJob(queue, recorder)
+    }
+
+    // MARK: Per-job state (the app maps a row id to queued / analyzing / held)
+
+    func testJobStatesReportQueuedAndRunningAndForgetEndedJobs() async {
+        let recorder = JobRecorder(blocking: .process(a))
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.process(a))
+        await queue.enqueue(.process(b))
+        await waitUntil { recorder.isBlocked }
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        let states = await queue.jobStates
+        XCTAssertEqual(states, [.process(a): .running, .reanalyze(rowID: 7): .queued, .process(b): .queued])
+        recorder.release()
+        await queue.waitUntilIdle()
+        let after = await queue.jobStates
+        XCTAssertEqual(after, [:], "done and failed jobs are no longer the queue's: the app has their result")
+    }
+
+    func testJobStatesReportTheHoldReason() async {
+        let recorder = JobRecorder(errors: [AnalyzerError.unauthorized("HTTP 401")])
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        await queue.enqueue(.process(a))
+        _ = await waitForStatus(queue) { if case .error = $0 { return true } else { return false } }
+        let hold = QueueHold.needsAttention("the model backend rejected the token")
+        let held = await queue.jobStates
+        XCTAssertEqual(held, [.reanalyze(rowID: 7): .held(hold), .process(a): .held(hold)])
+        await queue.resume()
+        await queue.waitUntilIdle()
+
+        await queue.pause()
+        await queue.enqueue(.reanalyze(rowID: 8), atFront: true)
+        let paused = await queue.jobStates
+        XCTAssertEqual(paused, [.reanalyze(rowID: 8): .held(.paused(until: nil))])
+        await queue.resume()
+        await queue.waitUntilIdle()
+    }
+
+    func testJobStatesReportAnOfflineHold() async {
+        let online = Locked(false)
+        let recorder = JobRecorder(errors: [AnalyzerError.unreachable("refused")])
+        let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
+                                    probe: { await Task.yield(); return online.get }, jobHandler: recorder.handler)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        _ = await waitForStatus(queue) { $0 == .offline }
+        let held = await queue.jobStates
+        XCTAssertEqual(held, [.reanalyze(rowID: 7): .held(.offline)])
+        online.set(true)
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.calls.get.count, 2)
+    }
+
+    /// Pause stops new attempts; the one already sent finishes, so it is still analyzing, not held.
+    func testARunningAttemptIsStillRunningWhileTheQueueIsPaused() async {
+        let recorder = JobRecorder(blocking: .reanalyze(rowID: 7))
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        await queue.enqueue(.process(a))
+        await waitUntil { recorder.isBlocked }
+        await queue.pause()
+        let states = await queue.jobStates
+        XCTAssertEqual(states, [.reanalyze(rowID: 7): .running, .process(a): .held(.paused(until: nil))])
+        recorder.release()
+        await queue.resume()
+        await queue.waitUntilIdle()
+    }
+
+    func testJobStateUpdatesStreamEachChange() async {
+        let recorder = JobRecorder(blocking: .reanalyze(rowID: 7))
+        let queue = jobQueue(recorder)
+        let seen = Locked<[QueueJobState?]>([])
+        let updates = await queue.jobStateUpdates()
+        let watcher = Task {
+            for await states in updates {
+                seen.mutate { if $0.last != states[.reanalyze(rowID: 7)] { $0.append(states[.reanalyze(rowID: 7)]) } }
+            }
+        }
+        await queue.pause()
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        await queue.resume()
+        await waitUntil { recorder.isBlocked }
+        recorder.release()
+        await queue.waitUntilIdle()
+        await waitUntil { seen.get.last == .some(nil) && seen.get.count > 1 }
+        watcher.cancel()
+        XCTAssertEqual(seen.get, [nil, .held(.paused(until: nil)), .queued, .running, nil])
+    }
+
+    func testAFileOnlyQueueFailsAReanalyzeJobAtOnce() async {
+        let (handler, calls) = scripted([])
+        let clock = FakeClock()
+        let queue = makeQueue(handler, clock: clock)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        await queue.enqueue(.process(a))
+        await queue.waitUntilIdle()
+        XCTAssertEqual(calls.get, [a], "the file handler never sees a row")
+        XCTAssertEqual(clock.sleeps, [], "not retried")
+        let failed = await queue.failedCount
+        XCTAssertEqual(failed, 1)
+        let lastFailure = await queue.lastFailure
+        XCTAssertNil(lastFailure, "the menu's last error names files; a re-analysis reports through its handler")
+    }
+
+    func testProcessingStatusHasNoFileWhileAReanalyzeJobIsShown() async {
+        let recorder = JobRecorder(blocking: .reanalyze(rowID: 7))
+        let queue = jobQueue(recorder)
+        await queue.enqueue(.reanalyze(rowID: 7), atFront: true)
+        await queue.enqueue(.process(a))
+        await waitUntil { recorder.isBlocked }
+        let status = await queue.status
+        XCTAssertEqual(status, .processing(current: nil, remaining: 1))
+        recorder.release()
+        await queue.waitUntilIdle()
     }
 }

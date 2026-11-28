@@ -1,8 +1,9 @@
 import Foundation
 
-/// Runs jobs (screenshot URLs) through a handler, usually `ScreenshotProcessor.process`.
+/// Runs jobs through a handler: `.process(url)` for a new or existing file (usually `ScreenshotProcessor.process`),
+/// `.reanalyze(rowID:)` for Analyze Again on an indexed row.
 ///
-/// - Concurrency 1 by default. Duplicate URLs already queued or in flight are ignored.
+/// - Concurrency 1 by default. A job equal to one already queued or in flight (same kind and key) is ignored.
 /// - Every attempt first takes a token from a requests-per-minute `TokenBucket`.
 /// - `AnalyzerError.rateLimited` / `.serverError`: retry after `retryAfter` (when given) or exponential backoff with
 ///   jitter, up to `maxAttempts` calls; then the job fails (the processor has already recorded the error in the index).
@@ -11,8 +12,9 @@ import Foundation
 /// - `AnalyzerError.unauthorized` / `.notConfigured`: the queue holds in `.error(message)` until `resume()`;
 ///   the job is kept, not failed, so nothing is lost while the user fixes credentials.
 /// - Any other error fails the job at once.
-/// - A job may carry a `UserUploadRequest` (`enqueue(_:userRequest:)`): every attempt of that job gets it,
+/// - A job may carry a `UserUploadRequest` (`enqueue(_:atFront:userRequest:)`): every attempt of that job gets it,
 ///   retries and holds included, and it is dropped when the job ends.
+/// - `status` summarises the queue for the menu bar; `jobStates` / `jobStateUpdates()` say where each job is.
 public actor ProcessingQueue {
     public struct Configuration: Sendable, Equatable {
         public var concurrency: Int = 1
@@ -30,9 +32,10 @@ public actor ProcessingQueue {
         }
     }
 
+    /// A handler for queues that only process files: a `.reanalyze` job fails at once.
     public typealias Handler = @Sendable (URL) async throws -> Void
-    /// A handler that also gets the job's user upload request (nil for watcher jobs).
-    public typealias JobHandler = @Sendable (URL, UserUploadRequest?) async throws -> Void
+    /// A handler that dispatches on the job's kind and also gets its user upload request (nil for watcher jobs).
+    public typealias JobHandler = @Sendable (QueueJob, UserUploadRequest?) async throws -> Void
 
     public private(set) var configuration: Configuration
     private let clock: QueueClock
@@ -40,10 +43,14 @@ public actor ProcessingQueue {
     private let probe: (@Sendable () async -> Bool)?
     private let handler: JobHandler
 
-    private var pending: [URL] = []
+    private var pending: [QueueJob] = []
+    /// Waiting jobs added `atFront`; they sit at the head of `pending`, in the order they were added.
+    private var frontJobs: Set<QueueJob> = []
     /// The user upload request each pending or running job carries, for the whole job.
-    private var carried: [URL: UserUploadRequest] = [:]
-    private var inFlight: [URL] = []
+    private var carried: [QueueJob: UserUploadRequest] = [:]
+    private var inFlight: [QueueJob] = []
+    /// Running jobs whose handler is executing right now (an attempt was sent); a pause lets it finish.
+    private var attempting: Set<QueueJob> = []
     private var activeWorkers = 0
     private var bucket: TokenBucket
     private var userPaused = false
@@ -55,11 +62,15 @@ public actor ProcessingQueue {
     private var gateWaiters: [CheckedContinuation<Void, Never>] = []
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
     private var subscribers: [UUID: AsyncStream<QueueStatus>.Continuation] = [:]
+    private var jobSubscribers: [UUID: AsyncStream<[QueueJob: QueueJobState]>.Continuation] = [:]
 
     public private(set) var status: QueueStatus = .idle
+    /// Every queued or running job and where it is. Jobs that ended are absent: their handler saw the result.
+    public private(set) var jobStates: [QueueJob: QueueJobState] = [:]
     public private(set) var succeededCount = 0
     public private(set) var failedCount = 0
-    /// Last permanent failure, for the menu bar ("last error").
+    /// Last permanent failure of a `.process` job, for the menu bar ("last error"). A `.reanalyze` job's outcome
+    /// reaches the app through its handler.
     public private(set) var lastFailure: (url: URL, message: String)?
 
     /// - Parameters:
@@ -70,7 +81,10 @@ public actor ProcessingQueue {
                 random: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) },
                 probe: (@Sendable () async -> Bool)? = nil, handler: @escaping Handler) {
         self.init(configuration: configuration, clock: clock, random: random, probe: probe,
-                  jobHandler: { url, _ in try await handler(url) })
+                  jobHandler: { job, _ in
+            guard case .process(let url) = job else { throw QueueJobError.noReanalyzeHandler }
+            try await handler(url)
+        })
     }
 
     public init(configuration: Configuration = Configuration(), clock: QueueClock = SystemQueueClock(),
@@ -86,15 +100,24 @@ public actor ProcessingQueue {
 
     // MARK: - Public API
 
-    /// Adds a job unless the URL is already queued or running.
-    /// - Parameter userRequest: the user's request to send this file (`UserUploadRequest`). A job still waiting takes
-    ///   it on; a running job does not (its attempts already started without it), and nothing is kept for later.
-    public func enqueue(_ url: URL, userRequest: UserUploadRequest? = nil) {
-        let url = url.standardizedFileURL
-        guard !inFlight.contains(url) else { return }
-        if let userRequest { carried[url] = userRequest }
-        guard !pending.contains(url) else { return }
-        pending.append(url)
+    /// Adds a job unless the same job (kind and key) is already queued or running.
+    /// - Parameters:
+    ///   - atFront: place it after other front jobs but before every other waiting job (Analyze Again ahead of a
+    ///     Process Existing run). It never pre-empts a running job and still takes a rate-limit token. A job already
+    ///     waiting keeps its place.
+    ///   - userRequest: the user's request to send this file (`UserUploadRequest`). A job still waiting takes it on; a
+    ///     running job does not (its attempts already started without it), and nothing is kept for later.
+    public func enqueue(_ job: QueueJob, atFront: Bool = false, userRequest: UserUploadRequest? = nil) {
+        let job = job.standardized
+        guard !inFlight.contains(job) else { return }
+        if let userRequest { carried[job] = userRequest }
+        guard !pending.contains(job) else { return }
+        if atFront {
+            pending.insert(job, at: pending.prefix(while: frontJobs.contains).count)
+            frontJobs.insert(job)
+        } else {
+            pending.append(job)
+        }
         spawnWorkers()
         publish()
     }
@@ -149,6 +172,17 @@ public actor ProcessingQueue {
         return stream
     }
 
+    /// A new stream per caller of `jobStates`, starting with the current value; yields on every change.
+    public func jobStateUpdates() -> AsyncStream<[QueueJob: QueueJobState]> {
+        let (stream, continuation) = AsyncStream.makeStream(of: [QueueJob: QueueJobState].self,
+                                                            bufferingPolicy: .bufferingNewest(32))
+        let id = UUID()
+        jobSubscribers[id] = continuation
+        continuation.yield(jobStates)
+        continuation.onTermination = { _ in Task { await self.removeSubscriber(id) } }
+        return stream
+    }
+
     /// Returns when nothing is queued or running. While paused or held with jobs queued, it waits for that to clear.
     public func waitUntilIdle() async {
         if pending.isEmpty && inFlight.isEmpty && activeWorkers == 0 { return }
@@ -168,12 +202,13 @@ public actor ProcessingQueue {
         while !pending.isEmpty {
             await waitForGate()
             guard !pending.isEmpty else { break }
-            let url = pending.removeFirst()
-            inFlight.append(url)
+            let job = pending.removeFirst()
+            frontJobs.remove(job)
+            inFlight.append(job)
             publish()
-            await run(url)
-            carried[url] = nil // the job ended (done, failed or given up): its request goes with it
-            inFlight.removeAll { $0 == url }
+            await run(job)
+            carried[job] = nil // the job ended (done, failed or given up): its request goes with it
+            inFlight.removeAll { $0 == job }
             publish()
         }
         activeWorkers -= 1
@@ -185,14 +220,14 @@ public actor ProcessingQueue {
         publish()
     }
 
-    private func run(_ url: URL) async {
+    private func run(_ job: QueueJob) async {
         var failures = 0
         while true {
             await waitForGate()
             let wait = bucket.reserve(at: clock.now())
             if wait > 0 { try? await clock.sleep(seconds: wait) }
             do {
-                try await handler(url, carried[url])
+                try await attempt(job)
                 offlineStreak = 0
                 succeededCount += 1
                 return
@@ -207,7 +242,7 @@ public actor ProcessingQueue {
                 case .rateLimited, .serverError:
                     failures += 1
                     if failures >= configuration.maxAttempts {
-                        fail(url, "gave up after \(failures) attempts: \(error)")
+                        fail(job, "gave up after \(failures) attempts: \(error)")
                         return
                     }
                     let delay: Double
@@ -218,14 +253,22 @@ public actor ProcessingQueue {
                     }
                     try? await clock.sleep(seconds: delay)
                 case .badRequest, .invalidResponse:
-                    fail(url, "\(error)")
+                    fail(job, "\(error)")
                     return
                 }
             } catch {
-                fail(url, "\(error)")
+                fail(job, "\(error)")
                 return
             }
         }
+    }
+
+    /// One call of the handler. The job counts as attempting only while it runs, so a hold that follows shows.
+    private func attempt(_ job: QueueJob) async throws {
+        attempting.insert(job)
+        publish()
+        defer { attempting.remove(job) }
+        try await handler(job, carried[job])
     }
 
     private func holdOffline() async {
@@ -242,9 +285,9 @@ public actor ProcessingQueue {
         publish()
     }
 
-    private func fail(_ url: URL, _ message: String) {
+    private func fail(_ job: QueueJob, _ message: String) {
         failedCount += 1
-        lastFailure = (url, message)
+        if case .process(let url) = job { lastFailure = (url, message) }
     }
 
     // MARK: - Gate and status
@@ -273,23 +316,43 @@ public actor ProcessingQueue {
 
     private func removeSubscriber(_ id: UUID) {
         subscribers[id] = nil
+        jobSubscribers[id] = nil
+    }
+
+    /// What holds the queue, in the order the menu shows it.
+    private var hold: QueueHold? {
+        if let holdMessage { return .needsAttention(holdMessage) }
+        if userPaused { return .paused(until: pausedUntil) }
+        if offline { return .offline }
+        return nil
     }
 
     private func publish() {
+        publishJobStates()
         let next: QueueStatus
-        if let holdMessage {
-            next = .error(holdMessage)
-        } else if userPaused {
-            next = .paused(until: pausedUntil)
-        } else if offline {
-            next = .offline
+        if let hold {
+            switch hold {
+            case .needsAttention(let message): next = .error(message)
+            case .paused(let until): next = .paused(until: until)
+            case .offline: next = .offline
+            }
         } else if let current = inFlight.last ?? pending.first {
-            next = .processing(current: current, remaining: pending.count + inFlight.count - 1)
+            next = .processing(current: current.fileURL, remaining: pending.count + inFlight.count - 1)
         } else {
             next = .idle
         }
         guard next != status else { return }
         status = next
         for continuation in subscribers.values { continuation.yield(next) }
+    }
+
+    private func publishJobStates() {
+        let hold = self.hold
+        var next: [QueueJob: QueueJobState] = [:]
+        for job in pending { next[job] = hold.map(QueueJobState.held) ?? .queued }
+        for job in inFlight { next[job] = attempting.contains(job) ? .running : hold.map(QueueJobState.held) ?? .running }
+        guard next != jobStates else { return }
+        jobStates = next
+        for continuation in jobSubscribers.values { continuation.yield(next) }
     }
 }

@@ -29,3 +29,25 @@ not created twice.
   `request(for:madeIn:)` refuse a target that is not allowed at the click, so the "asks first" branch cannot be
   forgotten. Open for Parag: CODING_STANDARDS #2 could add "…and the destination has not changed since", which the
   code already enforces.
+- 2026-11-28 (ticket 03): **queue: job kinds, front placement, per-kind dedupe.** `ProcessingQueue` jobs are
+  `QueueJob.process(URL)` or `.reanalyze(rowID:)`; `enqueue(_:atFront:userRequest:)` replaces `enqueue(_:userRequest:)`
+  and the `JobHandler` gets `(QueueJob, UserUploadRequest?)`, so the coordinator dispatches on the kind (its
+  `.reanalyze` branch does nothing until ticket 08, since nothing enqueues that kind yet). A job is a duplicate only
+  with the same kind and key: a second `.reanalyze` of a queued or running row does nothing (story 63), while
+  `.process(a)` and `.reanalyze` of the row at `a` are different jobs. `atFront` puts the job after earlier front
+  jobs (they keep their order) and before every other waiting job; it never pre-empts the running job and still
+  takes a rate-limit token (story 52). A job already waiting keeps its place, and still takes on a later user
+  request, as before. The user request lives as long as the job, either kind; consent stays in
+  `UploadConsent.decide`. Tests: `ProcessingQueueTests` (`testAFrontJobBehindFiftyWaitingJobsRunsNextAndStillTakesAToken`,
+  `testASecondReanalyzeOfARunningRowDoesNothing`, `testAReanalyzeJobKeepsItsRequestThrough…`).
+- 2026-11-28 (ticket 03): **per-job state for the app.** `ProcessingQueue.jobStates` / `jobStateUpdates()` give each
+  queued or running job's `QueueJobState`: `.queued`, `.running`, or `.held(QueueHold)` (`.needsAttention(text)`,
+  `.paused(until:)`, `.offline`). An attempt already sent when the user pauses stays `.running`. Ended jobs are
+  absent; done or failed comes from the handler (ticket 08 maps both to the row). The menu's `QueueStatus` is
+  unchanged except `.processing(current:)` is now `URL?`: nil while a `.reanalyze` job is the one shown. `lastFailure`
+  records `.process` failures only. The file-only `Handler` init fails a `.reanalyze` job at once
+  (`QueueJobError.noReanalyzeHandler`).
+- 2026-11-28 (ticket 03): **deviation: two existing tests changed beyond the enqueue call.** Their `jobHandler`
+  closures now take a `QueueJob` (`ScreenshotProcessorTests.testAUserUploadRequestLastsTheWholeJobAcrossRetries`,
+  `CoordinatorPartsTests.testStartWatchingRequeuesPendingRowsOnce`). The ticket has the handler dispatch on the kind,
+  so that is the handler's call shape changing, not a weaker test.
