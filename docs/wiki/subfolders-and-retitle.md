@@ -53,7 +53,42 @@ not created twice.
   Undo after a hand rename leaves `title_source = user` with the typed title while the file is back at the model's
   name; this is harmless only because ticket 06 checks `restored_by_undo` **before** `title_source` (spec step 7),
   and ticket 06 must keep that order.
+- 2026-11-28 (`7569cb2`, ticket 06): **Analyze Again in core: `ScreenshotProcessor.reanalyze(rowID:request:)`** in
+  `ScreenshotProcessor+Reanalyze.swift`. `request:` is a `UserUploadAuthorization?` like `process(_:userRequest:)`: the
+  `.reanalyze` job (PR #25) passes `UserUploadRequests.authorization(for:)` of its request at each attempt. It keys on
+  the row id (new `ScreenshotIndex.lookup(id:)`) and reads the path at each call. Order as the spec: missing →
+  exclude/Pause → fingerprint + prepare → `decide` on the snapshot read once → `analyze` → apply → name → place →
+  undo → Finder → `updatePath` → `save`. Nothing is written before the analysis succeeds, so a throw leaves the row
+  byte-for-byte as it was. `restored_by_undo` is checked **before** `title_source`, as the PR #20 note asks.
+- 2026-11-28 (`7569cb2`): **one send path.** `.analyze(` stays only in `ScreenshotProcessor.swift`: `process` and
+  `reanalyze` both call `consentedJob(capturedAt:userRequest:)` (THE `decide` call on the snapshot it reads) and
+  `send(_:context:with:)`, which takes only the `ConsentedJob` that `consentedJob` makes (fileprivate init). No
+  `lint-allow`. They also share `destinationFolder(for:settings:)` (today `moveEnabled ? organizedFolder : nil`):
+  **ticket 04 puts the subfolder rule there**, and whichever of 04/06 merges second adds the "Analyze Again moves to
+  the new type's folder" test (04 had not merged, so `testAnalyzeAgainAppliesTodaysMoveSettings` covers the
+  organized folder only).
+- 2026-11-28 (`7569cb2`): **choices the spec left open.**
+  - Consent capture time for a re-analysis is the earliest of the file's dates, the time in its **original** name and
+    the stored `capturedAt`: a renamed file has lost the time in its name, and earlier fails closed
+    (`testARenamedFileIsJudgedByItsOriginalNameToo`).
+  - A kept name (restored, your name, low confidence, unusable, rename failed) keeps the row's old title **and its
+    confidence**, so the title still matches the file name. With renaming off, the row gets the model's title, as
+    `process` stores it.
+  - Restored rows are **index only**: no rename, no move, and no Finder tags/comment either (the user's "leave this
+    file alone"). `suggestedTitle` is only returned for `.yourName`, and only when it gives a usable file name
+    (otherwise "Use This Name" would throw `unusableName`).
+  - The note keeps earlier parts, adds this run's notes (e.g. "kept name: rename failed (…)"), and ends with one
+    "analyzed again" (not repeated on later runs). `text_status = pending` on a hash change leaves the old
+    `recognizedText` until the runner reads it again, as the spec says.
+  - "Same title as before" (design §5.3) is `.updated(renamed: false, titleKept: nil)`.
+- 2026-11-28 (`7569cb2`): **deviation: `TitleKeptReason.renameFailed`**, a sixth reason beside the ticket's five.
+  Without it a `FileOrganizer` failure (EIO, too many collisions) would look like "the title is the same as before".
+  Ticket 08 needs wording for it (design §5.3 has none; "The name stays: it could not be renamed" fits the
+  "Moved, name kept by rule" pattern). Test: `testARenameFailureKeepsTheNameAndTheOldTitle`.
 
 ## Verification
 - 2026-11-28 (`1312ab1`, ticket 02): `SCRATCH=.build/linux-w2-02 scripts/test-linux.sh` green, 433 tests;
   `scripts/lint.sh` ok.
+- 2026-11-28 (`7569cb2`, ticket 06): `SCRATCH=.build/linux-w2-06 scripts/test-linux.sh` green, 457 tests;
+  `scripts/lint.sh` ok, no new `lint-allow`. Each key reanalyze test was checked to fail with its rule broken
+  (order of restored/your name, `text_status` reset, original-name consent time, a write before `analyze`).
