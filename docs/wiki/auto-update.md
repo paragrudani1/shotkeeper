@@ -173,6 +173,23 @@ Recorded in [workflow](workflow.md) ("Auto-update spec", 2026-11-28); copied her
 - **Lint**: rule `sparkle-import` covers every form of `import Sparkle` outside `UpdateChecks.swift`, in Sources,
   App and Tests (tests included). The self-test has 6 planted cases plus `import SparkleLike` and a comment as
   non-matches.
+- **First CI run** (2026-11-28, run 46143619062, head `081a8ec`). `linux-core` was green. In `macos-app`, every build,
+  test, signing and plist step was green:
+  - The XcodeGen package `exactVersion: 2.10.1` resolved and embedded Sparkle ("Sparkle.framework version: 2.10.1").
+  - `scripts/sign-app.sh -` signed `Installer.xpc`, `Downloader.xpc`, `Autoupdate`, `Updater.app` and
+    `Sparkle.framework` in that order, each "replacing existing signature" (Sparkle's own) and each "Hardened Runtime
+    on (flags: adhoc,runtime)". It then signed the app ("off (flags: adhoc)"). `codesign --verify --deep --strict`
+    validated all five Sparkle items, then "valid on disk" and "satisfies its Designated Requirement".
+  - The plist check printed `SUEnableAutomaticChecks: false`, the feed URL, 0.1.0 and 1, then "check-app-plist: ok".
+    The self-test passed with the real `plutil`.
+  - `testCheckForUpdatesSitsBetweenAboutAndQuitAndIsSkippedWhileDisabled` passed, as did the menu snapshot test.
+    The three new snapshots were checked by eye: the row sits between About and Quit with no shortcut, is shown
+    before setup, and when disabled is greyed out and not highlighted.
+
+  The job failed only at the ticket 06 step "Download the app artifact back": `download-artifact@v4` ran 10 ms after
+  `upload-artifact@v4` logged "successfully finalized. Artifact ID 15262739119" and got "Artifact not found for name:
+  Shotkeeper-unsigned". This looks like a timing race in that step, not this change. It was reported, not worked
+  around (AGENTS.md); the next run is on the merged head.
 
 ## Ticket 09: notes from earlier tickets (not started)
 
