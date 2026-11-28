@@ -139,3 +139,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   `lint-allow` comments, and per-screen snapshot tests ([prefactor-app](prefactor-app.md) on that branch). Note:
   `CaptureSources` was designed for feature 7, which Parag had dropped by then; the review was asked to judge it.
   **PR #11** (OpenRouter `service_tier: "default"` + README refresh, head `7edf4b0`) opened. Reviews of #10 and #11 were started.
+- 2026-11-28: **Wave 1 design pass** done: [../design/search-filters-and-text.md](../design/search-filters-and-text.md) +
+  mockup. Date/Source pills at the end of the chip row (⌘D/⌘S open in-panel pickers); Copy Text as a Live-Text-style
+  badge on the preview image (the one bold choice). Departures from the polish spec: picker fields take focus while
+  open, Esc order picker → clear → close, "Clear filters" button. Sent to Parag for approval. Practical note: the
+  mockup's 880 px panel overflows the 728 px render frame; it was shown through a `body{zoom:.8}` copy in /tmp.
