@@ -258,3 +258,6 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   bypass the generation check. The chief of staff made it internal (`d6ceef4`; lint ok, 433 Linux tests pass). The
   "issue only if allowed at the click" guard is assigned to ticket 08. Kept app identifiers that name the
   Process Existing command (accepted deviation).
+- 2026-11-28: **PR #16 merged into `t3/wave1-search`** (`6841d92`, head `327a7a0`; wave 1 ticket 02). The chief of
+  staff checked `search-date-custom-light.png` from run 46138812725: the picker sits below the row-2 divider, as the
+  design says. Ticket 03 (source filter) and 06 (Copy Text) are next on the panel.
