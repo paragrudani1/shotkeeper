@@ -82,7 +82,8 @@ final class SubfolderRuleTests: XCTestCase {
         // What is left of path syntax alone ("-") is unknown too.
         XCTAssertNil(SubfolderRule.folderName(forSource: "../.."))
         XCTAssertNil(SubfolderRule.folderName(forSource: "/"))
-        XCTAssertEqual(SubfolderRule.folderName(forSource: "../../etc"), "- .. - etc")
+        // Dashes, dots and spaces are trimmed at both ends.
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "../../etc"), "etc")
         for name in ["../..", "../../etc", "/", "a/../b", "/tmp"] {
             let folder = SubfolderRule.folderName(forSource: name)
             XCTAssertFalse(folder?.contains("/") ?? false, name)
@@ -101,7 +102,61 @@ final class SubfolderRuleTests: XCTestCase {
     func testControlAndBidiCharactersAreDropped() {
         XCTAssertEqual(SubfolderRule.folderName(forSource: "Sl\u{0}ack\u{7}\n"), "Slack")
         XCTAssertEqual(SubfolderRule.folderName(forSource: "evil\u{202E}gnp.exe"), "evilgnp.exe")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "Sl\u{2028}ack"), "Sl ack")  // line separator is whitespace
         XCTAssertNil(SubfolderRule.folderName(forSource: "\u{1}\u{2}"))
+    }
+
+    func testInvisibleFormatCharactersAreDropped() {
+        // Unicode category Cf: invisible, and bidi ones can reorder or disguise a name.
+        let cases: [(String, String)] = [
+            ("Sla\u{200F}ck", "U+200F right-to-left mark"),
+            ("\u{FEFF}Slack", "U+FEFF byte order mark"),
+            ("Sl\u{00AD}ack", "U+00AD soft hyphen"),
+            ("Sla\u{2060}ck", "U+2060 word joiner"),
+            ("Slack\u{061C}", "U+061C Arabic letter mark"),
+            ("\u{200E}Slack", "U+200E left-to-right mark"),
+            ("Sl\u{200B}ack", "U+200B zero-width space"),
+            ("\u{2066}Slack\u{2069}", "U+2066/2069 isolates"),
+        ]
+        for (source, what) in cases {
+            XCTAssertEqual(SubfolderRule.folderName(forSource: source), "Slack", what)
+        }
+        XCTAssertNil(SubfolderRule.folderName(forSource: "\u{200E}\u{FEFF}\u{00AD}"))
+    }
+
+    func testAnLtrMarkBeforeSlackReusesTheSlackFolder() {
+        let existing: ([String]) -> [String] = { $0 == [] ? ["Slack"] : [] }
+        XCTAssertEqual(SubfolderRule.bySource.relativeFolder(contentType: .chat, source: "\u{200E}Slack",
+                                                             existing: existing), ["Slack"])
+        XCTAssertEqual(SubfolderRule.bySource.relativeFolder(contentType: .chat, source: "\u{200E}Slack", existing: none),
+                       ["Slack"])
+    }
+
+    func testAnEmojiZwjSequenceIsKept() {
+        // U+200D joins the family emoji; U+200C/U+200D are the format characters that stay.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"
+        XCTAssertEqual(SubfolderRule.folderName(forSource: family), family)
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308} Pride"),
+                       "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308} Pride")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "\u{0645}\u{06CC}\u{200C}\u{062E}"),
+                       "\u{0645}\u{06CC}\u{200C}\u{062E}")  // Persian needs ZWNJ
+    }
+
+    func testWhitespaceCollapsesBeforeControlCharactersAreDropped() {
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "Google\nChrome"), "Google Chrome")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "Google\tChrome"), "Google Chrome")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "Google\r\nChrome"), "Google Chrome")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "Google \u{0} Chrome"), "Google Chrome")
+    }
+
+    func testDashesSpacesAndDotsAreTrimmedAtBothEnds() {
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "Mail:"), "Mail")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "/Mail/"), "Mail")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "-- Mail --"), "Mail")
+        XCTAssertEqual(SubfolderRule.folderName(forSource: "Notes: Work"), "Notes - Work")
+        // After the 60-character cut too: the cut lands just after a " -" from a colon.
+        XCTAssertEqual(SubfolderRule.folderName(forSource: String(repeating: "a", count: 58) + ":b"),
+                       String(repeating: "a", count: 58))
     }
 
     func testEmojiAndAccentsAreKept() {

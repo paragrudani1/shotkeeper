@@ -153,10 +153,12 @@ not created twice.
   folder exists it is reused by key, so the first name given still stays (spec: "the first spelling seen stays"). Test:
   `testANewSourceFolderIsNamedFromTheIndexDisplayNameNotTheKey`.
 - 2026-11-28 (ticket 04): **folder-name cleaning beyond the spec's list**, for safety: a run of `/` and `:` becomes one
-  " - " ("https://x" → "https - x", not "https - - - x"); runs of whitespace collapse; line separators and bidirectional
-  controls (U+202A–202E, U+2066–2069) are dropped with the control characters; the 60-character cap is also capped at
-  255 UTF-8 bytes (60 emoji can be 1500 bytes); a name left with only dashes, dots and spaces ("../.." → "-") counts as
-  unknown, like an empty one. macOS reserves no names besides `.` and `..`; a name a volume refuses falls back to the
+  " - " ("https://x" → "https - x", not "https - - - x"); runs of whitespace collapse; line separators and the
+  bidirectional embeddings/isolates (U+202A–202E, U+2066–2069) are dropped with the control characters (other
+  invisible format characters such as U+200E got through: fixed in the review of PR #30, below); the 60-character cap
+  is also capped at 255 UTF-8 bytes (60 emoji can be 1500 bytes); a name left with only dashes, dots and spaces
+  ("../.." → "-") counts as unknown, like an empty one (since the review: such a name trims to empty). macOS
+  reserves no names besides `.` and `..`; a name a volume refuses falls back to the
   organized folder. Tests: `SubfolderRuleTests` "Folder names from hostile sources".
 - 2026-11-28 (ticket 04): **the existing-name listing sees only real folders**: not hidden names, not symbolic links
   (`attributesOfItem`, which does not follow links), and a subfolder is created one level at a time below the organized
@@ -189,6 +191,25 @@ not created twice.
   undo record (`organize` returns the same URL). The stored properties' comment names both extensions. Tests:
   `ReanalyzeTests.testAnalyzeAgainMovesToTheNewTypesFolder` (the seam 1 test 06 left open),
   `testAReceiptAlreadyInReceiptsStaysThereWithoutAnUndoRecord`; the 06 tests (ghost rows, rename failure) pass as is.
+- 2026-11-28 (review of PR #30): **folder names drop every invisible format character** (Unicode category Cf: U+200E/F,
+  U+061C, U+FEFF, U+00AD, U+2060, U+200B, the bidi embeddings and isolates), so "\u{200E}Slack" no longer makes a
+  look-alike second "Slack" folder. U+200C/U+200D stay: emoji ZWJ sequences (👨‍👩‍👧‍👦) and scripts such as Persian
+  need them. Known limits: a ZWJ inside a word ("Sl\u{200D}ack") still gives a look-alike name, and the emoji tag
+  characters (Cf) are dropped, so a subdivision flag such as England's becomes a plain black flag. Order: format
+  characters first (Linux Foundation counts U+200B as whitespace), then whitespace collapses **before** control
+  characters are dropped ("Google\nChrome" → "Google Chrome", not "GoogleChrome"). Dashes are trimmed at both ends
+  with spaces and dots, again after the cut ("Mail:" → "Mail", "../../etc" → "etc").
+  Tests: `SubfolderRuleTests` `testInvisibleFormatCharactersAreDropped`, `testAnLtrMarkBeforeSlackReusesTheSlackFolder`,
+  `testAnEmojiZwjSequenceIsKept`, `testWhitespaceCollapsesBeforeControlCharactersAreDropped`,
+  `testDashesSpacesAndDotsAreTrimmedAtBothEnds`.
+- 2026-11-28 (review of PR #30, for Parag to revisit): **folder reuse inherits `SourceKey`'s top-level-domain drop.**
+  A source folder is reused when its `SourceKey` matches, and `SourceKey` drops the TLD of a two-label host. So "x.ai"
+  lands in an existing "x.com" folder, and a "Mail" screenshot in a user's own "Mail.backup" folder in the organized
+  folder (key "mail"). Kept for now: it is the same merge the source filter makes (wave 1 ticket 03).
+- 2026-11-28 (review of PR #30): **time-of-check window in `makeSubfolder`**, now commented at the real-folder check:
+  another process could swap a checked folder for a link before the move. Closing it needs directory-descriptor calls
+  (`openat`, `renameatx_np`). The move stays no-replace, so nothing is overwritten. Only a process running as the user
+  could do it, and that process could move the file anyway.
 
 ## Verification
 - 2026-11-28 (`1312ab1`, ticket 02): `SCRATCH=.build/linux-w2-02 scripts/test-linux.sh` green, 433 tests;
@@ -217,4 +238,10 @@ not created twice.
 - 2026-11-28 (ticket 04): `SCRATCH=.build/linux-w2-04 scripts/test-linux.sh` green after merging `t3/wave2` (ticket 03),
   562 tests; `scripts/lint.sh` ok (no new `lint-allow`). Real-Mac checks (Finder shows the folders; "slack" reused for
   "Slack" on APFS; Undo from the toast and the menu leaves the empty folder; Settings does not jump) are open for ticket
-  10.
+  10. Added in the review of PR #30: a folder blocked by macOS privacy settings (organized folder in Documents or
+  Desktop without access) shows the Settings warning, and a screenshot then falls back as described above.
+- 2026-11-28 (review of PR #30, after merging `t3/wave2` with PR #27): `SCRATCH=.build/linux-w2-04f
+  scripts/test-linux.sh` green, 597 tests; `scripts/lint.sh` ok, no new `lint-allow`. Mutation check, restored
+  afterwards: sending Analyze Again to the organized folder only (06's old rule) fails
+  `testAnalyzeAgainMovesToTheNewTypesFolder` and `testAReceiptAlreadyInReceiptsStaysThereWithoutAnUndoRecord`. The
+  `macos-app` CI job is pending.

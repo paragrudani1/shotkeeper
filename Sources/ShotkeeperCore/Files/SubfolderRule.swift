@@ -61,30 +61,34 @@ extension SubfolderRule {
     static let maxFolderNameBytes = 255
 
     /// A safe folder name for a source, or nil when the source is unknown (nil, a non-answer, or nothing usable left).
-    /// The rules (spec "Source folder names"): drop a leading `www.`; `/` and `:` (a run of them counts once) become
-    /// " - "; control characters
-    /// (and line separators and bidirectional controls, which can disguise a name) are dropped; runs of whitespace
-    /// become one space; spaces and dots are trimmed at both ends (so no hidden folder, no `.` or `..`); at most 60
-    /// characters and 255 UTF-8 bytes, cut at a character boundary. A name left with only dashes, dots and spaces
-    /// ("../.." → "-") is unknown, like an empty one. macOS reserves no other names: a name the volume
-    /// still refuses makes the pipeline fall back to the organized folder itself.
+    /// The rules (spec "Source folder names"), in order: drop a leading `www.`; `/` and `:` (a run of them counts
+    /// once) become " - "; invisible format characters (Unicode category Cf: bidirectional marks and controls such as
+    /// U+200E, U+202E, U+2066, zero-width spaces, U+FEFF, soft hyphens) are dropped, so "\u{200E}Slack" is the same
+    /// folder as "Slack", but U+200C/U+200D (zero-width non-joiner and joiner) stay, because emoji sequences such as
+    /// 👨‍👩‍👧‍👦 and some scripts need them; runs of whitespace, newlines and line separators included, become one space
+    /// ("Google\nChrome" → "Google Chrome"); then the remaining control characters are dropped. Dashes, spaces and dots
+    /// are trimmed at both ends ("Mail:" → "Mail"; no hidden folder, no `.` or `..`), again after the cut to at most
+    /// 60 characters and 255 UTF-8 bytes (at a character boundary). A name with nothing left ("../..") is unknown.
+    /// macOS reserves no other names: a name the volume still refuses makes the pipeline fall back to the organized
+    /// folder itself.
     public static func folderName(forSource raw: String?) -> String? {
         guard let raw else { return nil }
         var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.lowercased().hasPrefix("www.") { name.removeFirst(4) }
         name = name.replacingOccurrences(of: "[/:]+", with: " - ", options: .regularExpression)
-        name = String(String.UnicodeScalarView(name.unicodeScalars.filter { !isUnsafe($0) }))
-        name = name.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
-        name = trimSpacesAndDots(name)
+        // Format characters first: some Foundations count U+200B as whitespace, and it must vanish, not become a space.
+        name = dropping(name, where: isInvisibleFormat)
+        name = collapseWhitespace(name)
+        name = dropping(name, where: isControl)
+        name = trimEnds(collapseWhitespace(name))  // again: "a \u{0} b" left two spaces
         var capped = ""
         for character in name {
             guard capped.count < maxFolderNameLength,
                   capped.utf8.count + String(character).utf8.count <= maxFolderNameBytes else { break }
             capped.append(character)
         }
-        name = trimSpacesAndDots(capped)
-        guard name.contains(where: { $0 != "-" && $0 != "." && $0 != " " }), !isNonAnswer(raw), !isNonAnswer(name)
-        else { return nil }
+        name = trimEnds(capped)
+        guard !name.isEmpty, !isNonAnswer(raw), !isNonAnswer(name) else { return nil }
         return name
     }
 
@@ -110,14 +114,29 @@ extension SubfolderRule {
 
     private static func isNonAnswer(_ text: String) -> Bool { unknownSources.contains(SourceKey.fold(text)) }
 
-    private static func isUnsafe(_ scalar: Unicode.Scalar) -> Bool {
+    private static func isInvisibleFormat(_ scalar: Unicode.Scalar) -> Bool {
+        // ZWNJ/ZWJ stay: emoji sequences and scripts need them.
+        scalar.properties.generalCategory == .format && scalar.value != 0x200C && scalar.value != 0x200D
+    }
+
+    /// Controls, plus line/paragraph separators should a Foundation not count them as whitespace.
+    private static func isControl(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.properties.generalCategory {
         case .control, .lineSeparator, .paragraphSeparator: return true
-        default: return (0x202A...0x202E).contains(scalar.value) || (0x2066...0x2069).contains(scalar.value)
+        default: return false
         }
     }
 
-    private static func trimSpacesAndDots(_ text: String) -> String {
-        text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+    private static func dropping(_ text: String, where unsafe: (Unicode.Scalar) -> Bool) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.filter { !unsafe($0) }))
+    }
+
+    private static func collapseWhitespace(_ text: String) -> String {
+        text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// Dashes (left by a `/` or `:` at an end), spaces and dots off both ends.
+    private static func trimEnds(_ text: String) -> String {
+        text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".-")))
     }
 }

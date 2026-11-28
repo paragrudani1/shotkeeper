@@ -108,6 +108,11 @@ extension ScreenshotProcessor {
         catch { throw SubfolderProblem.cannotCreate(folder.lastPathComponent, Self.reason(error)) }
         for name in destination.subfolder {
             folder = folder.appendingPathComponent(name, isDirectory: true)
+            // Time of check to time of use: between this check (or the one after `createDirectory` below) and the
+            // move, another process could swap the folder for a link. Nothing here can close that window without
+            // `openat`/`renameatx_np` on directory descriptors. The move itself stays no-replace, so the file can't
+            // overwrite anything; at worst it lands where the link points. Only a process running as the user can
+            // do this, and it can move the file anyway.
             if Self.isRealFolder(folder) { continue }
             if Self.exists(folder) { throw SubfolderProblem.notAFolder(name) }
             do { try fm.createDirectory(at: folder, withIntermediateDirectories: false) }
