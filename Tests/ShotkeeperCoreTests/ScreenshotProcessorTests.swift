@@ -321,11 +321,12 @@ final class ScreenshotProcessorTests: XCTestCase {
         let processor = self.processor(analyzer)
         let requests = UserUploadRequests()
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: FakeClock(), random: { 0.5 },
-                                    jobHandler: { url, request in
+                                    jobHandler: { job, request in
+            guard case .process(let url) = job else { return XCTFail("only file jobs here") }
             _ = try await processor.process(url, userRequest: requests.authorization(for: request))
         })
         let request = try XCTUnwrap(requests.request(for: .cloudflare, madeIn: requests.generation))
-        await queue.enqueue(source, userRequest: request)
+        await queue.enqueue(.process(source), userRequest: request)
         await queue.waitUntilIdle()
         XCTAssertEqual(analyzer.calls.get.count, 2, "retried after the 429")
         let renamed = dir.url.appendingPathComponent("Desktop/Invoice From Acme.png")
@@ -649,8 +650,8 @@ final class ScreenshotProcessorTests: XCTestCase {
         let queue = ProcessingQueue(configuration: .init(requestsPerMinute: 0), clock: clock, random: { 0.5 }) {
             _ = try await processor.process($0)
         }
-        await queue.enqueue(first)
-        await queue.enqueue(second)
+        await queue.enqueue(.process(first))
+        await queue.enqueue(.process(second))
         await queue.waitUntilIdle()
         XCTAssertEqual(clock.sleeps, [1])
         XCTAssertEqual(try dir.names(in: "Desktop"), ["Same Title 2.png", "Same Title.png"])

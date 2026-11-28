@@ -66,11 +66,59 @@ public struct TokenBucket: Sendable, Equatable {
     }
 }
 
+/// One unit of work for `ProcessingQueue`. Two jobs are the same (and the second is ignored) only when kind and key
+/// match: `.process(a)` and `.reanalyze` of the row at `a` are different jobs.
+public enum QueueJob: Hashable, Sendable {
+    /// Process this file: a new screenshot, a "Process Existing Screenshots…" candidate, or interrupted work.
+    case process(URL)
+    /// Analyze this indexed row again ("Analyze Again"). The row is looked up when the job runs.
+    case reanalyze(rowID: Int64)
+
+    /// File URLs compare standardized, so `/a/./b.png` and `/a/b.png` are one job.
+    var standardized: QueueJob {
+        if case .process(let url) = self { return .process(url.standardizedFileURL) }
+        return self
+    }
+
+    /// The file of a `.process` job; nil for `.reanalyze`.
+    var fileURL: URL? {
+        if case .process(let url) = self { return url }
+        return nil
+    }
+}
+
+/// Where a queued or running job is, for per-row UI (Analyze Again: "Waiting to analyze…", "Analyzing…", held).
+public enum QueueJobState: Equatable, Sendable {
+    /// Waiting its turn.
+    case queued
+    /// Started: an attempt is being sent, or it is waiting between attempts (rate limit, 429/5xx backoff).
+    case running
+    /// The queue is held; the job waits for it. An attempt already sent when the user paused stays `.running`.
+    case held(QueueHold)
+}
+
+/// Why the queue is held (the same reasons `QueueStatus` shows in the menu).
+public enum QueueHold: Equatable, Sendable {
+    /// Bad credentials, backend not configured, account state: "Needs attention" with readable text until `resume()`.
+    case needsAttention(String)
+    /// Paused by the user; nil = until resumed.
+    case paused(until: Date?)
+    /// The backend is unreachable; the queue probes with backoff.
+    case offline
+}
+
+/// Why a job failed in the queue itself rather than in its handler.
+public enum QueueJobError: Error, Equatable, Sendable {
+    /// A `.reanalyze` job reached a queue built with a file-only `Handler`.
+    case noReanalyzeHandler
+}
+
 /// What the menu bar shows.
 public enum QueueStatus: Equatable, Sendable {
     case idle
-    /// `remaining` counts queued and other in-flight jobs, not `current`.
-    case processing(current: URL, remaining: Int)
+    /// `remaining` counts queued and other in-flight jobs, not `current`. `current` is the file of the job shown
+    /// (the running one, else the next); nil when that job is a `.reanalyze`, which has no file until it runs.
+    case processing(current: URL?, remaining: Int)
     /// Paused by the user; nil = until resumed.
     case paused(until: Date?)
     /// The backend is unreachable; the queue is held and probing with backoff.

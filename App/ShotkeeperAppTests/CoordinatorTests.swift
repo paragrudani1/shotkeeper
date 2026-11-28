@@ -303,7 +303,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
         coordinator.pauseIndefinitely()
         await waitUntil { coordinator.isPaused }
         let screenshot = directory.appendingPathComponent("Screenshot 2026-11-21 at 10.00.00.png")
-        await queue.enqueue(screenshot)
+        await queue.enqueue(.process(screenshot))
         coordinator.updateSettings { $0.requestsPerMinute = 5 }
         XCTAssertTrue(coordinator.queue === queue)
         var rate = await queue.configuration.requestsPerMinute
@@ -477,7 +477,9 @@ final class CoordinatorPartsTests: TempDirectoryTestCase {
         try index.save(IndexedScreenshot(path: directory.appendingPathComponent("Screenshot failed.png").path,
                                          originalFilename: "f", contentHash: "h3", status: .failed))
         let handled = LockedValue<[URL]>([])
-        let queue = ProcessingQueue(jobHandler: { url, _ in handled.withValue { $0.append(url) } })
+        let queue = ProcessingQueue(jobHandler: { job, _ in
+            if case .process(let url) = job { handled.withValue { $0.append(url) } }
+        })
         let host = CaptureHost()
         host.settings.watchedFolderOverride = directory
         host.index = index
