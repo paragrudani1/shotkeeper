@@ -19,6 +19,10 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 
 - [prefactor-app](prefactor-app.md): app prefactor before the eight features: `AppCoordinator` parts (`FolderCapture`, `FileActions`), search-panel action set, search key table in core (`SearchKeyMap`), shared app test harness and row builder, snapshots per screen, `scripts/lint.sh` in CI (2026-11-28).
 
+- [auto-update](auto-update.md): auto-update spec deviations and implementation notes; Parag's decisions (no
+  approval per release, the N → N+1 test on real releases); ticket 01 `ReleasePlan` seam, error lines, file names
+  (`notes.md`, `Shotkeeper-<version>.html` from Sparkle's `generate_appcast` source) (2026-11-28).
+
 ## Standards
 - [../../CODING_STANDARDS.md](../../CODING_STANDARDS.md): review checklist (2026-11-21).
 

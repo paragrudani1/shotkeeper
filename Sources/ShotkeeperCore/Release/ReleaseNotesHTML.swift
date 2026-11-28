@@ -5,7 +5,8 @@ import Foundation
 /// A deliberately small subset (auto-update spec, "Core seam: `ReleasePlan`"): paragraphs, `- ` bullet lists and
 /// inline `` `code` ``. Everything else is escaped as text, so a stray `<` never becomes markup.
 /// The result has no DOCTYPE or `<body>`, so `generate_appcast` treats it as a fragment and embeds it in the appcast
-/// (Sparkle 2.10.1 `generate_appcast/ArchiveItem.swift:469-471`).
+/// (Sparkle 2.10.1 `generate_appcast/ArchiveItem.swift:475-477`). The release job also passes
+/// `--embed-release-notes`, which embeds it either way.
 enum ReleaseNotesHTML {
     private enum Block {
         case paragraph([String])
