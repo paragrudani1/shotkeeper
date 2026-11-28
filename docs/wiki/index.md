@@ -19,6 +19,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [../../CODING_STANDARDS.md](../../CODING_STANDARDS.md): review checklist (2026-11-21).
 
 ## Process
+- [roadmap-survey](roadmap-survey.md): code state at `295df83` for the eight approved features, hotspots, prefactors, waves (2026-11-28).
 - [workflow](workflow.md): specs stay in `docs/specs/` (2026-11-28); weekly wiki lint on Gemini 4 Hydrogen (2026-11-28).
 
 ## Environment
