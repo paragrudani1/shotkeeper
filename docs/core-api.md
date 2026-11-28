@@ -91,7 +91,7 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     `contentType` chip + optional batch `paths` + optional `date: DateFilter`, AND-combined, `done` rows only; returns
     `rows`, `matchCount` and `totalCount` for the footer. The date filter compares
     `COALESCE(captured_at, processed_at)` (the `screenshots_taken_at` index) with `date.interval(now:calendar:)`, resolved
-    on each call. With a date and no text: newest taken
+    on each call; the app passes the search model's `now()` and `time.calendar`. With a date and no text: newest taken
     first. `searchSQL(_:now:calendar:)` (internal) builds the statements, for query-plan tests.
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
     Text fields: `recognizedText`, `textStatus: TextStatus?` (nil = never requested; `.pending` / `.done` /

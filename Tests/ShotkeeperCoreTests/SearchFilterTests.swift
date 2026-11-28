@@ -270,7 +270,7 @@ final class SearchDatePickerTests: XCTestCase {
         XCTAssertEqual(state.currentDateOption, .customRange)
         XCTAssertFalse(state.applyCustomRange(), "the same range again: no new search")
         XCTAssertNil(state.datePicker)
-        XCTAssertEqual(DatePickerState(today: oct3, current: nil).customTitle, "Custom range…")
+        XCTAssertEqual(DatePickerState(today: oct3, current: nil, calendar: time.calendar).customTitle, "Custom range…")
     }
 
     func testDeleteInTheDateListClearsTheDateAndCloses() {

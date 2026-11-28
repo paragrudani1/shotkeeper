@@ -68,7 +68,8 @@ struct SearchView: View {
                         .accessibilityHidden(true)
                     DatePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
                         .fixedSize(horizontal: false, vertical: true)
-                        .offset(x: pill.maxX - DatePickerPanel.width, y: pill.maxY + 6)
+                        // 6 pt under row 2 (design): the pill's bottom, row 2's 8 pt bottom padding, then the gap.
+                        .offset(x: pill.maxX - DatePickerPanel.width, y: pill.maxY + 8 + 6)
                 }
             }
         }

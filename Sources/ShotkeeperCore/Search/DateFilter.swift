@@ -84,16 +84,17 @@ public enum DateFilter: Hashable, Sendable {
         }
     }
 
-    /// The pill's VoiceOver value: "today", "last 7 days", "October 3 to October 17".
+    /// The pill's VoiceOver value: "today", "last 7 days", "October 3 to October 17", and across years both years
+    /// ("December 28, 2025 to January 4, 2026"), like `takenPhrase`.
     public func spokenValue(now: Date, time: TimeLabel) -> String {
         switch self {
         case .today, .yesterday, .last7Days, .last30Days:
             return label(now: now, time: time).lowercased()
         case .days:
             let days = dayRange(now: now, calendar: time.calendar)
-            let first = time.days(days.lowerBound, days.lowerBound, now: now, spelled: true)
+            let first = time.day(days.lowerBound, now: now, alongside: days.upperBound, spelled: true)
             guard days.lowerBound != days.upperBound else { return first }
-            return "\(first) to \(time.days(days.upperBound, days.upperBound, now: now, spelled: true))"
+            return "\(first) to \(time.day(days.upperBound, now: now, alongside: days.lowerBound, spelled: true))"
         }
     }
 

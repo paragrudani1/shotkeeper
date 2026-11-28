@@ -63,12 +63,11 @@ public struct TimeLabel: Equatable, Sendable {
     }
 
     /// Calendar days for the date filter, with the year only when a day is outside the current year:
-    /// "Oct 3", "Oct 3 – 17", "Dec 28, 2025 – Jan 4, 2026" (`DateIntervalFormatter`, date only). `spelled` uses the full
-    /// month name for VoiceOver ("October 3"). One day when `first == last`.
-    public func days(_ first: CalendarDay, _ last: CalendarDay, now: Date, spelled: Bool = false) -> String {
+    /// "Oct 3", "Oct 3 – 17", "Dec 28, 2025 – Jan 4, 2026" (`DateIntervalFormatter`, date only). One day when
+    /// `first == last`.
+    public func days(_ first: CalendarDay, _ last: CalendarDay, now: Date) -> String {
         let thisYear = calendar.component(.year, from: now)
-        let month = spelled ? "MMMM" : "MMM"
-        let template = first.year == thisYear && last.year == thisYear ? "\(month)d" : "y\(month)d"
+        let template = first.year == thisYear && last.year == thisYear ? "MMMd" : "yMMMd"
         let start = first.start(in: calendar), end = last.start(in: calendar)
         guard first != last else { return format(start, template: template) }
         let formatter = DateIntervalFormatter()
@@ -79,11 +78,13 @@ public struct TimeLabel: Equatable, Sendable {
         return formatter.string(from: start, to: end)
     }
 
-    /// One calendar day, with the year only outside the current year: "Oct 3", "Oct 3, 2025".
-    public func day(_ day: CalendarDay, now: Date, alongside other: CalendarDay? = nil) -> String {
+    /// One calendar day, with the year only when it or `other` (the range's other end) is outside the current year:
+    /// "Oct 3", "Oct 3, 2025". `spelled` uses the full month name for VoiceOver ("October 3", "January 4, 2026").
+    public func day(_ day: CalendarDay, now: Date, alongside other: CalendarDay? = nil, spelled: Bool = false) -> String {
         let thisYear = calendar.component(.year, from: now)
         let sameYear = day.year == thisYear && (other?.year ?? thisYear) == thisYear
-        return format(day.start(in: calendar), template: sameYear ? "MMMd" : "yMMMd")
+        let month = spelled ? "MMMM" : "MMM"
+        return format(day.start(in: calendar), template: sameYear ? "\(month)d" : "y\(month)d")
     }
 
     private enum Day { case today, yesterday, thisWeek, thisYear, older }

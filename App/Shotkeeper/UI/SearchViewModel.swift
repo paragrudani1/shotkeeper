@@ -8,7 +8,9 @@ import ShotkeeperCore
 @MainActor
 @Observable
 final class SearchViewModel {
-    typealias SearchFunction = @Sendable (ScreenshotQuery, Int) throws -> ScreenshotSearchResult
+    /// Query, limit, and the clock and calendar the index resolves the date filter against (the model's `now()` and
+    /// `time.calendar`, so the rows and the date wording agree on what "today" is).
+    typealias SearchFunction = @Sendable (ScreenshotQuery, Int, Date, Calendar) throws -> ScreenshotSearchResult
 
     private(set) var state: SearchWindowState
     /// A short message on the preview image: "✓ Copied" after ⌘C / Copy Image, or a problem (file gone).
@@ -28,7 +30,8 @@ final class SearchViewModel {
     @ObservationIgnored private var pillTask: Task<Void, Never>?
 
     init(debounce: Duration = .milliseconds(150), state: SearchWindowState = SearchWindowState(),
-         now: @escaping () -> Date = Date.init, time: TimeLabel = TimeLabel(), search: @escaping SearchFunction) {
+         now: @escaping () -> Date = Date.init, time: TimeLabel = TimeLabel(calendar: .autoupdatingCurrent),
+         search: @escaping SearchFunction) {
         self.debounce = debounce
         var state = state
         state.now = now()  // date wording (the Date pill, no-match sentences) uses the same clock and calendar
@@ -192,6 +195,7 @@ final class SearchViewModel {
         state.now = now()  // the index resolves "today" when the search runs; the wording follows the same day
         let query = state.query
         let limit = state.resultLimit
+        let (searchNow, calendar) = (state.now, time.calendar)
         let search = searchFunction
         pending = Task { [weak self] in
             if delay > .zero {
@@ -199,7 +203,7 @@ final class SearchViewModel {
             }
             guard !Task.isCancelled else { return }
             let outcome = await Task.detached { () -> SearchOutcome in
-                do { return .found(try search(query, limit)) } catch { return .failed(error) }
+                do { return .found(try search(query, limit, searchNow, calendar)) } catch { return .failed(error) }
             }.value
             guard !Task.isCancelled, let self else { return }
             let applied: Bool

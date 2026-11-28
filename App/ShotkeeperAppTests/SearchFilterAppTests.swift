@@ -9,7 +9,7 @@ import XCTest
 final class SearchDateFilterAppTests: XCTestCase {
     private func makeController() -> (SearchPanelController, LockedValue<[ScreenshotQuery]>) {
         let queries = LockedValue<[ScreenshotQuery]>([])
-        let controller = SearchPanelController(model: SearchViewModel(debounce: .zero) { query, _ in
+        let controller = SearchPanelController(model: SearchViewModel(debounce: .zero) { query, _, _, _ in
             queries.withValue { $0.append(query) }
             return ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 5)
         })

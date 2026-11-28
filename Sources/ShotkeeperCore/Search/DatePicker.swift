@@ -51,7 +51,7 @@ public struct DatePickerState: Equatable, Sendable {
     public internal(set) var through: CalendarDay
 
     /// The picker as it opens, for `today` and the current filter.
-    public init(today: CalendarDay, current: DateFilter?, calendar: Calendar = Calendar(identifier: .gregorian)) {
+    public init(today: CalendarDay, current: DateFilter?, calendar: Calendar) {
         highlighted = DatePickerOption(current)
         if case .days(let from, let through)? = current {
             showsCustomRange = true

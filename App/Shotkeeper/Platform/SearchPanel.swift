@@ -199,7 +199,7 @@ final class SearchPanelController {
     /// Open / copy / reveal on the selected result (the search-panel action set; features add theirs there).
     let resultActions: SearchResultActions
 
-    init(model: SearchViewModel = SearchViewModel(search: { _, _ in ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0) })) {
+    init(model: SearchViewModel = SearchViewModel(search: { _, _, _, _ in ScreenshotSearchResult(rows: [], matchCount: 0, totalCount: 0) })) {
         self.model = model
         self.resultActions = SearchResultActions(model: model)
         resultActions.hidePanel = { [weak self] in self?.hide() }

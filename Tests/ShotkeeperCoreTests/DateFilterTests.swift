@@ -271,6 +271,9 @@ final class DateFilterLabelTests: XCTestCase {
         XCTAssertEqual(DateFilter.last30Days.spokenValue(now: now, time: time), "last 30 days")
         XCTAssertEqual(range((2026, 10, 3), (2026, 10, 17)).spokenValue(now: now, time: time), "October 3 to October 17")
         XCTAssertEqual(range((2026, 10, 3), (2026, 10, 3)).spokenValue(now: now, time: time), "October 3")
+        XCTAssertEqual(range((2025, 12, 28), (2026, 1, 4)).spokenValue(now: now, time: time),
+                       "December 28, 2025 to January 4, 2026", "across years both ends read their year")
+        XCTAssertEqual(range((2025, 10, 3), (2025, 10, 3)).spokenValue(now: now, time: time), "October 3, 2025")
     }
 
     func testTakenPhrases() {

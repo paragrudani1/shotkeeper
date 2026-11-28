@@ -91,7 +91,7 @@ extension Fixtures {
     }
 
     private static func searchView(_ state: SearchWindowState, copied: Bool, problem: String?) -> some View {
-        let model = SearchViewModel(state: state, now: { now }, time: time) { _, _ in throw CancellationError() }
+        let model = SearchViewModel(state: state, now: { now }, time: time) { _, _, _, _ in throw CancellationError() }
         if copied { model.showCopied() }
         if let problem { model.showProblem(problem) }
         return SearchView(model: model, actions: .none, opaqueBackground: true)

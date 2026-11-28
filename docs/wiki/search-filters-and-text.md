@@ -61,8 +61,8 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   `[start of first day, start of the day after the last)` via `Calendar.startOfDay`, so a DST day is one whole local
   day (23 or 25 hours). A reversed custom range is swapped when resolved; the stored filter keeps the user's order.
 - `ScreenshotQuery.date`; `ScreenshotIndex.search(_:limit:now:calendar:)` adds
-  `COALESCE(captured_at, processed_at) >= ? AND < ?` and resolves "today" on each call. The app passes no clock, so
-  the index uses `Date()` and `Calendar.current`, the same calendar as the app's `TimeLabel()`.
+  `COALESCE(captured_at, processed_at) >= ? AND < ?` and resolves "today" on each call. The app passes the search
+  model's `now()` and `time.calendar` (see "one clock and calendar" below).
 - `SearchWindowState`: `date`, `setDateFilter(_:)`, `clearFilters()`, `datePicker` (core `DatePickerState`), the
   Date pill's title/value/tooltip, `noMatchButtons` and `help(for:)`, `Announcement` strings, and `now`/`time` for date
   wording (the view model sets `now` before each search).
@@ -109,6 +109,14 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
 
   Checked that the test fails when the expression is changed to `COALESCE(s.processed_at, s.captured_at)` (plan
   becomes `SCAN s` with a temp B-tree).
+- 2026-11-28: **one clock and calendar for the index and the panel** (review should-fix). `SearchViewModel` passes
+  its `now()` (the same instant it stores in `state.now` for the wording) and `time.calendar` to the search function,
+  which calls `index.search(_:limit:now:calendar:)`. The model's default `TimeLabel` uses
+  `Calendar.autoupdatingCurrent`, so a time-zone change while the app runs moves "today" for the rows and the pill
+  alike. Before, the index used `Calendar.current` per call and the panel a `TimeLabel()` calendar captured at launch.
+- 2026-11-28: a custom range across years reads both years to VoiceOver ("December 28, 2025 to January 4, 2026"),
+  like `takenPhrase`; `TimeLabel.day(_:now:alongside:spelled:)` gives both.
+- 2026-11-28: the date picker hangs 6 pt under row 2 (design): the pill's bottom + row 2's 8 pt bottom padding + 6.
 
 ### Real-Mac checks (CI can't see these)
 - The picker opens without activating Shotkeeper or taking key status from the panel; a click outside it (inside the
@@ -118,5 +126,7 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
 - ⌘D on QWERTY, Dvorak and Russian layouts; ⌫ in the date list clears the date; ⌫ in the field still deletes.
 - `DatePicker(.field)` editing inside the non-activating panel: digits, ↑/↓ on the focused part, Tab From → To →
   Apply, ↩ applies.
+- ↩ applies a value just typed into a date field (type a day, press ↩ at once, without Tab): the range searched is
+  the typed one, not the field's previous value.
 - VoiceOver reads the pill as "Date, any time" / "Date, last 7 days", the ✕ as "Clear date", and announces "Date
   cleared", "Filters cleared" and "Search cleared".
