@@ -148,6 +148,19 @@ final class ReleasePlanTests: XCTestCase {
         XCTAssertEqual(try html("`a` and a lone `"), "<p><code>a</code> and a lone `</p>")
     }
 
+    func testHTMLEscapesMarkupCharactersFollowedByJoiningMarks() throws {
+        // "<" + ZWJ is one Character in Swift; escaping per Character would let it through, and "]]>" + ZWJ would end
+        // the appcast's CDATA section.
+        let zwj = "\u{200D}", acute = "\u{0301}"
+        XCTAssertEqual(try html("]]>\(zwj) <\(zwj)script> &\(acute)amp;"),
+                       "<p>]]&gt;\(zwj) &lt;\(zwj)script&gt; &amp;\(acute)amp;</p>")
+    }
+
+    func testADuplicateChangelogSectionFails() throws {
+        let twice = "# Changelog\n\n## 0.2.0 (2026-11-28)\n\n- First.\n\n## 0.2.0 (2026-11-29)\n\n- Second.\n"
+        XCTAssertEqual(try errorLine(tag: "v0.2.0", changelog: twice), "CHANGELOG.md has more than one section for 0.2.0")
+    }
+
     func testHTMLEscapesEverythingElse() throws {
         XCTAssertEqual(try html("<script>alert(\"hi\")</script>"),
                        "<p>&lt;script&gt;alert(&quot;hi&quot;)&lt;/script&gt;</p>")

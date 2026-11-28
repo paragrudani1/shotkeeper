@@ -74,6 +74,7 @@ public enum ReleasePlanError: Error, Equatable, Sendable {
     case notHigherThanPrevious(tag: String, previous: String)
     case noChangelogSection(String)
     case emptyChangelogSection(String)
+    case duplicateChangelogSection(String)
 
     public var message: String {
         switch self {
@@ -89,6 +90,7 @@ public enum ReleasePlanError: Error, Equatable, Sendable {
         case .notHigherThanPrevious(let tag, let previous): return "\(tag) is not higher than the previous release \(previous)"
         case .noChangelogSection(let version): return "CHANGELOG.md has no section for \(version)"
         case .emptyChangelogSection(let version): return "CHANGELOG.md section \(version) is empty"
+        case .duplicateChangelogSection(let version): return "CHANGELOG.md has more than one section for \(version)"
         }
     }
 }
@@ -134,9 +136,9 @@ enum Changelog {
         // "\r\n" is one Character in Swift, so split on "\n" alone would never see a Windows line ending.
         let lines = changelog.replacingOccurrences(of: "\r\n", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        guard let start = lines.firstIndex(where: { headingVersion($0) == version }) else {
-            throw .noChangelogSection(version)
-        }
+        let starts = lines.indices.filter { headingVersion(lines[$0]) == version }
+        guard let start = starts.first else { throw .noChangelogSection(version) }
+        guard starts.count == 1 else { throw .duplicateChangelogSection(version) }
         let rest = lines[(start + 1)...]
         let body = rest.prefix { headingVersion($0) == nil }
         let text = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)

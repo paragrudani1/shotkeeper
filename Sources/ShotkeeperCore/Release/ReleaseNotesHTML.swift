@@ -53,16 +53,19 @@ enum ReleaseNotesHTML {
         }.joined()
     }
 
+    /// Escapes per Unicode scalar, not per `Character`: a `<`, `>` or `&` followed by a combining mark or a zero-width
+    /// joiner forms one `Character` and would slip past a character match. An unescaped `]]>` would then end the
+    /// CDATA section `generate_appcast` wraps the notes in (2.10.1 `ArchiveItem.swift:475-477`) and break the feed.
     private static func escape(_ text: String) -> String {
         var out = ""
-        for character in text {
-            switch character {
+        for scalar in text.unicodeScalars {
+            switch scalar {
             case "&": out += "&amp;"
             case "<": out += "&lt;"
             case ">": out += "&gt;"
             case "\"": out += "&quot;"
             case "'": out += "&#39;"
-            default: out.append(character)
+            default: out.unicodeScalars.append(scalar)
             }
         }
         return out

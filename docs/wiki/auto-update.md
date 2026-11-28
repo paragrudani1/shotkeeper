@@ -63,3 +63,7 @@ Recorded in [workflow](workflow.md) ("Auto-update spec", 2026-11-28); copied her
 - **Additions beyond the spec** (none change a requirement): `major version is too large` stops an `Int` overflow in
   the build number; it is not a version policy. A malformed previous tag fails with the `Previous release:` prefix.
   `outputFiles` and `githubOutput` live in core rather than the CLI, so the file names and keys are unit-tested.
+- 2026-11-28 (review fix): release-notes HTML escapes per Unicode scalar, not per `Character`. The review showed
+  `<`/`>`/`&` followed by a ZWJ or combining mark slipped through, and an unescaped `]]>` would end the appcast's
+  CDATA (`generate_appcast` 2.10.1 `ArchiveItem.swift:475-477`). A duplicate `## <version>` section now fails the
+  release ("CHANGELOG.md has more than one section for …") instead of silently using the first.
