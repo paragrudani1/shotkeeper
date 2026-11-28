@@ -133,3 +133,9 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   identical added lines merge cleanly. A fix agent was started the same day.
   - **Lesson → environment:** AGENTS.md gained a line saying Linux green does not prove a macOS build; core-only
     changes need `macos-app` green too (commit on `t3/roadmap-2026-11`).
+- 2026-11-28: PR #9 fixes pushed (`bb786fe`; both CI jobs green, runs 46127211459/46127216459); a re-check was started.
+  **PR #10** (prefactor B, head `06d1aea`, both jobs green) opened: `CaptureSources`, `FileActions` (+ one file per
+  feature), `SearchResultActions`, `WorkspaceActions`, `SearchKeyMap` in core, `scripts/lint.sh` with per-line
+  `lint-allow` comments, and per-screen snapshot tests ([prefactor-app](prefactor-app.md) on that branch). Note:
+  `CaptureSources` was designed for feature 7, which Parag had dropped by then; the review was asked to judge it.
+  **PR #11** (OpenRouter `service_tier: "default"` + README refresh, head `7edf4b0`) opened. Reviews of #10 and #11 were started.
