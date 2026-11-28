@@ -307,3 +307,5 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   check, `select-xcode.sh` message, a ticket 09 note to dry-run the real-identity path with a throwaway certificate).
 - 2026-11-28: **PR #22 merged** (`e852070`): the actool step uses absolute paths (root cause of the flake). `main`
   was merged into the three integration branches again.
+- 2026-11-28: **PR #20 merged into `t3/wave2`** (`b12dc4d`, head `93a3dbb`; wave 2 02, migration 4 `title_source`).
+  Wave 2 ticket 06 (`reanalyze` in core) is unblocked and waits for a free slot.
