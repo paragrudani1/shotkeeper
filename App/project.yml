@@ -4,13 +4,13 @@ name: Shotkeeper
 options:
   bundleIdPrefix: dev.shotkeeper
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "15.0"
   createIntermediateGroups: true
   developmentLanguage: en
 
 settings:
   base:
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
@@ -30,7 +30,7 @@ targets:
   Shotkeeper:
     type: application
     platform: macOS
-    deploymentTarget: "14.0"
+    deploymentTarget: "15.0"
     sources:
       - path: Shotkeeper
     dependencies:
@@ -63,7 +63,7 @@ targets:
   ShotkeeperAppTests:
     type: bundle.unit-test
     platform: macOS
-    deploymentTarget: "14.0"
+    deploymentTarget: "15.0"
     sources:
       - path: ShotkeeperAppTests
     dependencies:

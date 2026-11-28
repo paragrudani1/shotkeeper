@@ -17,7 +17,7 @@ macOS menu-bar app that renames, tags and indexes new screenshots using a model 
 - Concurrent callers: set `SCRATCH=.build/linux-<you>`.
 - GitHub: the repo is public since 2026-11-22, so plain `gh` and the T3 PR tools can read it. Push, merge and run commands use `/root/local-dev/shotkeeper-llm/bin/gh-shotkeeper`, which since 2026-11-28 is plain `gh` (the machine's login) with `GH_REPO` set; `git push` uses the global `gh auth git-credential` helper (no repo-local helper).
 - macOS app code compiles only in CI (`.github/workflows/ci.yml`); read failures with `gh-shotkeeper run view <id> --log-failed`.
-- A green Linux run does not prove core builds on macOS: Linux has no availability checks (e.g. `AsyncSequence.Failure` is macOS 15+, the package targets 14). Core-only changes still need the `macos-app` CI job green before you report done.
+- A green Linux run does not prove core builds on macOS: Linux has no availability checks (e.g. `Observations` from Observation is macOS 26+, the package targets 15). Core-only changes still need the `macos-app` CI job green before you report done.
 - `gh-shotkeeper run watch` ends with a 403 "annotations" warning that hides the result: read it with `gh-shotkeeper run view <id> --json conclusion,jobs`.
 - Never install a host Swift toolchain; never use `docker system/image/volume prune`. Keep ≥15 GB disk free.
 

@@ -2,7 +2,7 @@
 
 # Shotkeeper
 
-Shotkeeper is a macOS 14+ menu-bar app. When you take a screenshot, it gives the file a short descriptive name, adds
+Shotkeeper is a macOS 15+ menu-bar app. When you take a screenshot, it gives the file a short descriptive name, adds
 a description and tags, and indexes it so you can search for it later. It does the same job as the app "Blinky". A
 vision model does the analysis. The default is Cloudflare Workers AI's **Clairic**, which runs in your own Cloudflare
 account. You can also use **Inkling 2 Mini** on your Mac (Shotkeeper installs and manages `mlx_lm.server` for it),
@@ -156,7 +156,7 @@ Shotkeeper has not been tested against them.
 
 ## Install the CI build
 
-CI builds the app on every push. To install it:
+CI builds the app on every push. It needs macOS 15 or later. To install it:
 
 1. In the repository's GitHub **Actions** tab, open a green **CI** run and download the `Shotkeeper-unsigned`
    artifact. Artifacts are kept for 14 days.
@@ -258,6 +258,7 @@ charged in `usage.cost` (US dollars); `shotkeeper-cli analyze --backend openrout
 
 ## Known limits
 
+- **Needs macOS 15 or later.** Earlier versions are not supported (decided 2026-11-28).
 - **OpenRouter has not been tested live.** No key was available on 2026-11-22, so the backend is built and tested only
   against responses written from OpenRouter's docs. Unverified until the first live call: that both providers really
   skip reasoning with `effort: "none"`, that they return `logprobs`, how strictly they follow the JSON schema, and the
