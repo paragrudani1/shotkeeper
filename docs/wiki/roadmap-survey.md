@@ -48,6 +48,7 @@ Survey for the eight features Parag approved on 2026-11-28. Every code claim is 
 - (d) This collides directly with CODING_STANDARDS #1, "No code path deletes a user file". It needs explicit user confirmation for every batch and an undo record for each trashed file.
 
 ### 7. More capture types
+*Superseded 2026-11-28: Parag dropped feature 7 (clipboard and screen recordings); see [workflow](workflow.md).*
 - (a) `ScreenshotDetector.imageExtensions` is png, jpg, jpeg, heic and tiff, and only screenshot name prefixes match. `ImagePreparer` (URL → `ImagePayload`, png/jpeg/webp) is the seam. The index key is `path TEXT NOT NULL UNIQUE`.
 - (b) **Recordings** need: `.mov` and localized "Screen Recording" prefixes, frame extraction (AVFoundation, app-only), a frame-choice rule, a cost per frame, a media-kind column, and prompt wording (the prompt currently says "screenshot"). **Clipboard** needs: polling for changes (the app is notified of nothing), and writing the image to a file before the pipeline can see it.
 - (c) Core: the detector and a capture kind. App: a video preparer and a clipboard monitor.

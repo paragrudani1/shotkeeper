@@ -144,3 +144,15 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   badge on the preview image (the one bold choice). Departures from the polish spec: picker fields take focus while
   open, Esc order picker → clear → close, "Clear filters" button. Sent to Parag for approval. Practical note: the
   mockup's 880 px panel overflows the 728 px render frame; it was shown through a `body{zoom:.8}` copy in /tmp.
+- 2026-11-28: Parag **approved the wave 1 design** and left all four polish-spec departures unticked, which accepts
+  them: picker focus, Esc order, "Clear filters", menu bar items.
+- 2026-11-28: **PR #9 merged** (`b5c2984`, head `bb786fe`) after a re-check verdict of "merge". That re-check
+  simulated two column PRs merged with "keep both": the suite fails. Follow-up: `shippedColumns` is a dictionary
+  literal, so a duplicate key crashes the run (signal 4) instead of failing the test. It should become ordered pairs
+  with a uniqueness assert.
+- 2026-11-28: **PR #10 review: fix first**, no blockers. Behaviour is preserved. The lint misses Swift 6 access-level
+  imports (`public import AppKit`), `NSWorkspace.recycle` and POSIX deletes, and accepts a `lint-allow` marker with
+  no reason or one inside a string. The `CaptureSources` docs still describe dropped feature 7; the reviewer advised
+  keeping the type and rewording it. **PR #11 review: fix first**: README overstates shortcut-conflict detection;
+  the research it cites must reach main first (this docs branch); it lacked a wiki line (added to
+  [openrouter-backend](openrouter-backend.md)); `macos-app` failed once in the actool step, probably a flake.
