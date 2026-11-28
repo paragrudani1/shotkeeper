@@ -6,16 +6,18 @@ import SwiftUI
 struct SearchViewActions {
     var open: (URL) -> Void
     var copy: (URL) -> Void
+    /// The Copy Text badge (the same as ⇧⌘C).
+    var copyText: () -> Void
     var reveal: (URL) -> Void
     var quickLook: () -> Void
     var processExisting: () -> Void
 
-    @MainActor static let none = SearchViewActions(open: { _ in }, copy: { _ in }, reveal: { _ in }, quickLook: {},
-                                                   processExisting: {})
+    @MainActor static let none = SearchViewActions(open: { _ in }, copy: { _ in }, copyText: {}, reveal: { _ in },
+                                                   quickLook: {}, processExisting: {})
 }
 
-/// The search window (spec PR 2): 880×540, radius 16. Row 1 field, row 2 type chips, a 330 pt list and a preview,
-/// a 36 pt footer with key hints. The material and the shadow come from the panel; `opaqueBackground` draws the
+/// The search window (spec PR 2): 880×540, radius 16. Row 1 field, row 2 type chips and filter pills
+/// (`SearchFilterViews.swift`), a 330 pt list and a preview, a 36 pt footer with key hints. The material and the shadow come from the panel; `opaqueBackground` draws the
 /// window background instead, for snapshots (offscreen rendering cannot show behind-window blur).
 struct SearchView: View {
     static let size = CGSize(width: 880, height: 540)
@@ -41,11 +43,51 @@ struct SearchView: View {
         .background {
             if opaqueBackground { Color(nsColor: .windowBackgroundColor) }
         }
+        .overlayPreferenceValue(FilterPillAnchorKey.self) { anchors in
+            pickerOverlay(anchors)
+        }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
-        .onAppear { fieldFocused = true }
-        .onChange(of: model.focusRequest) { _, _ in fieldFocused = true }
+        .onAppear { fieldFocused = !model.state.isPickerOpen }
+        .onChange(of: model.focusRequest) { _, _ in fieldFocused = !model.state.isPickerOpen }
+        // A picker takes the focus while it is open and gives it back to the field when it closes (design §6).
+        .onChange(of: model.state.isPickerOpen) { _, open in fieldFocused = !open }
+    }
+
+    // MARK: Picker
+
+    /// The open picker, hung under its pill (right edges aligned), over the list and preview. A click anywhere else
+    /// closes it.
+    @ViewBuilder
+    private func pickerOverlay(_ anchors: [SearchFilterKind: Anchor<CGRect>]) -> some View {
+        if let picker = model.state.datePicker, let anchor = anchors[.date] {
+            hung(under: anchor, width: DatePickerPanel.width) {
+                DatePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
+            }
+        } else if let picker = model.state.sourcePicker, let anchor = anchors[.source] {
+            hung(under: anchor, width: SourcePickerPanel.width) {
+                SourcePickerPanel(model: model, picker: picker, opaqueBackground: opaqueBackground)
+            }
+        }
+    }
+
+    private func hung<Content: View>(under anchor: Anchor<CGRect>, width: CGFloat,
+                                    @ViewBuilder picker: () -> Content) -> some View {
+        let content = picker()
+        return GeometryReader { proxy in
+            let pill = proxy[anchor]
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.closePickers() }
+                    .accessibilityHidden(true)
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                    // 6 pt under row 2 (design): the pill's bottom, row 2's 8 pt bottom padding, then the gap.
+                    .offset(x: pill.maxX - width, y: pill.maxY + 8 + 6)
+            }
+        }
     }
 
     // MARK: Rows 1 and 2
@@ -82,19 +124,23 @@ struct SearchView: View {
 
     private var chipRow: some View {
         HStack(spacing: 6) {
-            ForEach(SearchChip.allCases, id: \.self) { chip in
-                let selected = model.state.chip == chip
-                Button(chip.title) { model.selectChip(chip) }
-                    .buttonStyle(SearchChipStyle(isSelected: selected))
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                    .help(chip.help)
+            HStack(spacing: 6) {
+                ForEach(SearchChip.allCases, id: \.self) { chip in
+                    let selected = model.state.chip == chip
+                    Button(chip.title) { model.selectChip(chip) }
+                        .buttonStyle(SearchChipStyle(isSelected: selected))
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                        .help(chip.help)
+                }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Type")
             Spacer(minLength: 0)
+            DateFilterPill(model: model)
+            SourceFilterPill(model: model)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Type")
     }
 
     // MARK: Body
@@ -117,9 +163,18 @@ struct SearchView: View {
             }
         case .noMatch(let message):
             SearchMessageView(symbol: "magnifyingglass", tint: .secondary, title: message.title, message: message.message) {
-                Button("Clear search") { model.clearSearch() }
-                    .buttonStyle(PanelSecondaryButtonStyle())
-                    .help("Clear the search text and the type")
+                HStack(spacing: 8) {
+                    ForEach(model.state.noMatchButtons, id: \.self) { button in
+                        Button(button.title) {
+                            switch button {
+                            case .clearFilters: model.clearFilters()
+                            case .clearSearch: model.clearSearch()
+                            }
+                        }
+                        .buttonStyle(PanelSecondaryButtonStyle())
+                        .help(model.state.help(for: button))
+                    }
+                }
             }
         case .emptyIndex:
             SearchMessageView(symbol: "viewfinder", tint: Brand.indigo, title: "No screenshots yet",
@@ -249,13 +304,21 @@ struct SearchResultList: View {
                 }
                 .padding(8)
             }
-            .onChange(of: model.state.selected?.id) { _, id in
-                guard let id else { return }
+            // The id and the index: a refresh that re-sorts the list keeps the selected row (followed by path) but
+            // moves it, and the row must stay in view then too.
+            .onChange(of: SelectionPosition(id: model.state.selected?.id, index: model.state.selectedIndex)) { _, position in
+                guard let id = position.id else { return }
                 proxy.scrollTo(id)  // no anchor: scrolls only as far as needed
             }
         }
         .accessibilityLabel("Results")
     }
+}
+
+/// What the result list scrolls to follow: the selected row and where it is in the list.
+private struct SelectionPosition: Equatable {
+    let id: Int64?
+    let index: Int?
 }
 
 struct SearchResultRow: View {
@@ -315,6 +378,7 @@ struct SearchPreview: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     PreviewImageView(path: item.path, title: item.title, pill: model.pill,
+                                     badge: model.state.copyTextBadge, onCopyText: actions.copyText,
                                      onDoubleClick: { actions.open(url) })
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.title)
@@ -398,7 +462,8 @@ struct TagChipStyle: ButtonStyle {
     }
 }
 
-/// The large preview: 220 pt tall, aspect fit, radius 12, thin border, and the "✓ Copied" pill.
+/// The large preview: 220 pt tall, aspect fit, radius 12, thin border, the "✓ Copied" pill, and the Copy Text badge
+/// (`CopyTextBadgeView`) in its bottom-right corner.
 struct PreviewImageView: View {
     static let height: CGFloat = 220
     /// Longest side requested from QuickLook (points); the image is scaled to fit.
@@ -407,6 +472,9 @@ struct PreviewImageView: View {
     let path: String
     let title: String
     let pill: SearchPill?
+    /// nil hides the badge (no text, never read, no selection).
+    var badge: CopyTextBadge?
+    var onCopyText: () -> Void = {}
     var onDoubleClick: () -> Void = {}
     @Environment(\.thumbnailSource) private var source
     @Environment(\.displayScale) private var displayScale
@@ -424,14 +492,15 @@ struct PreviewImageView: View {
             switch pill {
             case .copied?:
                 pillLabel("Copied", symbol: "checkmark")
+            case .textCopied?:
+                pillLabel("Text copied", symbol: "checkmark")
+            case .noText?:
+                pillLabel(SearchWindowState.noTextMessage, symbol: "text.viewfinder")
             case .problem(let message)?:
                 pillLabel(message, symbol: "exclamationmark.triangle.fill")
             case nil:
                 EmptyView()
             }
-        }
-        .overlay {
-            FileDragArea(path: path, dragImage: { loadedImage }, onMouseDown: { if $0 >= 2 { onDoubleClick() } })
         }
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
@@ -442,6 +511,19 @@ struct PreviewImageView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Preview of \(title)")
         .accessibilityAddTraits(.isImage)
+        .overlay(alignment: .bottomTrailing) {
+            // Its own VoiceOver element, outside the image's ignored children.
+            if let badge {
+                CopyTextBadgeView(badge: badge, action: onCopyText).padding(CopyTextBadgeView.inset)
+            }
+        }
+        .overlayPreferenceValue(CopyTextBadgeFrameKey.self) { badgeAnchor in
+            // Topmost, so every click on the image reaches the drag view; it hands a press on the badge to the badge.
+            GeometryReader { proxy in
+                FileDragArea(path: path, dragImage: { loadedImage }, onMouseDown: { if $0 >= 2 { onDoubleClick() } },
+                             badgeFrame: badgeAnchor.map { proxy[$0] }, badgeHelp: badge?.help, onBadgeClick: onCopyText)
+            }
+        }
         .task(id: path) {
             guard source.cached(path, Self.requestSide) == nil else { return }
             if let image = await source.load(path, Self.requestSide, displayScale) { loaded = (path, image) }
@@ -476,6 +558,11 @@ struct FileDragArea: NSViewRepresentable {
     let path: String
     var dragImage: () -> NSImage?
     var onMouseDown: (Int) -> Void
+    /// The Copy Text badge's frame in this view (SwiftUI coordinates, origin top-left); nil when there is none.
+    var badgeFrame: CGRect?
+    /// The badge's tooltip. The drag view lies over the badge, so the badge's own `.help` never gets the hover.
+    var badgeHelp: String?
+    var onBadgeClick: () -> Void = {}
 
     func makeNSView(context: Context) -> FileDragView {
         let view = FileDragView()
@@ -487,14 +574,31 @@ struct FileDragArea: NSViewRepresentable {
         view.path = path
         view.dragImage = dragImage
         view.onMouseDown = onMouseDown
+        view.badgeFrame = badgeFrame
+        view.badgeHelp = badgeHelp
+        view.onBadgeClick = onBadgeClick
     }
 }
 
-final class FileDragView: NSView, NSDraggingSource {
+final class FileDragView: NSView, NSDraggingSource, NSViewToolTipOwner {
     var path = ""
     var dragImage: () -> NSImage? = { nil }
     var onMouseDown: (Int) -> Void = { _ in }
+    /// The Copy Text badge's frame (SwiftUI coordinates, origin top-left). A press there belongs to the badge: it
+    /// never starts a drag, never reports a click, and the next press elsewhere is not its double-click.
+    var badgeFrame: CGRect? {
+        didSet { if badgeFrame != oldValue { updateBadgeToolTip() } }
+    }
+    /// Shown on hover over `badgeFrame`. This view lies over the badge, so AppKit asks it, not the SwiftUI button.
+    var badgeHelp: String? {
+        didSet { if badgeHelp != oldValue { updateBadgeToolTip() } }
+    }
+    var onBadgeClick: () -> Void = {}
+    /// The tooltip rectangle now registered (view coordinates); nil when there is none.
+    private(set) var badgeToolTipRect: NSRect?
     private var mouseDownLocation: NSPoint?
+    private var pressIsOnBadge = false
+    private var lastPressWasOnBadge = false
     /// Points the mouse must move with the button down before a drag starts.
     static let dragThreshold: CGFloat = 4
 
@@ -502,16 +606,58 @@ final class FileDragView: NSView, NSDraggingSource {
     override var mouseDownCanMoveWindow: Bool { false }
 
     override func mouseDown(with event: NSEvent) {
+        pressIsOnBadge = isOnBadge(event)
+        defer { lastPressWasOnBadge = pressIsOnBadge }
+        guard !pressIsOnBadge else {
+            mouseDownLocation = nil
+            return
+        }
         mouseDownLocation = event.locationInWindow
-        onMouseDown(event.clickCount)
+        onMouseDown(lastPressWasOnBadge ? 1 : event.clickCount)
     }
 
     override func mouseUp(with event: NSEvent) {
         mouseDownLocation = nil
+        if pressIsOnBadge, isOnBadge(event) { onBadgeClick() }  // like a button: released on it
+        pressIsOnBadge = false
+    }
+
+    // MARK: The badge's tooltip
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateBadgeToolTip()  // the rectangle is measured from the top, which moves with the height
+    }
+
+    /// The badge's frame in view coordinates (the badge frame's origin is top-left).
+    private var badgeRectInView: NSRect? {
+        guard let badgeFrame else { return nil }
+        return NSRect(x: badgeFrame.minX, y: isFlipped ? badgeFrame.minY : bounds.height - badgeFrame.maxY,
+                      width: badgeFrame.width, height: badgeFrame.height)
+    }
+
+    private func updateBadgeToolTip() {
+        removeAllToolTips()
+        badgeToolTipRect = nil
+        guard badgeHelp?.isEmpty == false, let rect = badgeRectInView, !rect.isEmpty else { return }
+        addToolTip(rect, owner: self, userData: nil)
+        badgeToolTipRect = rect
+    }
+
+    /// AppKit asks on the main thread (as for the dragging source above, the protocol is not main-actor annotated).
+    nonisolated func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
+                          userData data: UnsafeMutableRawPointer?) -> String {
+        MainActor.assumeIsolated { badgeHelp ?? "" }
+    }
+
+    private func isOnBadge(_ event: NSEvent) -> Bool {
+        guard let badgeFrame else { return false }
+        let point = convert(event.locationInWindow, from: nil)
+        return badgeFrame.contains(CGPoint(x: point.x, y: isFlipped ? point.y : bounds.height - point.y))
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let start = mouseDownLocation else { return }
+        guard !pressIsOnBadge, let start = mouseDownLocation else { return }
         let location = event.locationInWindow
         guard hypot(location.x - start.x, location.y - start.y) >= Self.dragThreshold else { return }
         mouseDownLocation = nil

@@ -32,4 +32,14 @@ enum WorkspaceActions {
         pasteboard.clearContents()
         return pasteboard.writeObjects([item])
     }
+
+    /// Copy Text: one pasteboard item with only `.string`, so every app pastes plain text (spec story 33; not
+    /// `writeObjects([text])`, which may add more types). The text is not logged.
+    @discardableResult
+    static func copyText(_ text: String, to pasteboard: NSPasteboard = .general) -> Bool {
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
+    }
 }

@@ -23,3 +23,10 @@
 - 2026-11-21: first complete version on `main` at `c53afa2` (PRs #1 app, #2 app review fixes). CI run 44908642660 green:
   `linux-core` (170 core tests) and `macos-app` (package tests + app tests, artifact `Shotkeeper-unsigned`).
   Not yet verified: a live Clairic call (no credentials), any run on a real Mac, the local MLX runtime.
+- 2026-11-28: **Minimum raised to macOS 15** (Parag, wave 3 decision D1, against the recommendation to keep 14).
+  Source: the 2026-11-28 "Wave 3 decisions" line in [workflow](workflow.md), on branch `t3/roadmap-2026-11` until it
+  merges. Changed: `Package.swift` `.macOS(.v15)`, `App/project.yml` deployment target 15.0, the CI actool
+  `--minimum-deployment-target`, README and the AGENTS.md availability example. No `#available`/`@available(macOS …)`
+  checks existed, so none were removed. Supersedes story 50 of the wave 1 spec ("as a user on macOS 14") and the
+  "Vision runs on macOS 14" check in wave 1 ticket 04: there are no macOS 14 users now. Research notes that say
+  "targets 14.0" are dated snapshots and stay as written.

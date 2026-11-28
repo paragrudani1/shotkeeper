@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.perform(row, reveal: reveal)
         }
         searchPanel.onProcessExisting = { Task { _ = await coordinator.capture.processExistingScreenshots() } }
+        if let index = coordinator.index { searchPanel.indexChanges = { index.changes() } }
         settingsOpener.prepare()
         // Closing Settings commits tokens being typed (the field's onDisappear may not run before the window goes).
         _ = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
@@ -161,10 +162,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let index = coordinator.index
         // The index opens once at launch; when it failed, search shows the error state, never the empty state.
         let problem = coordinator.indexProblem ?? UserFacingProblem(message: "the index is not open")
-        return SearchViewModel { query, limit in
+        return SearchViewModel(search: { query, limit, now, calendar in
             guard let index else { throw IndexUnavailableError(problem: problem) }
-            return try index.search(query, limit: limit)
-        }
+            return try index.search(query, limit: limit, now: now, calendar: calendar)
+        }, sources: {
+            guard let index else { throw IndexUnavailableError(problem: problem) }
+            return try index.sources()
+        })
     }
 }
 

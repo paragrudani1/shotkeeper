@@ -2,7 +2,7 @@
 
 # Shotkeeper
 
-Shotkeeper is a macOS 14+ menu-bar app. When you take a screenshot, it gives the file a short descriptive name, adds
+Shotkeeper is a macOS 15+ menu-bar app. When you take a screenshot, it gives the file a short descriptive name, adds
 a description and tags, and indexes it so you can search for it later. It does the same job as the app "Blinky". A
 vision model does the analysis. The default is Cloudflare Workers AI's **Clairic**, which runs in your own Cloudflare
 account. You can also use **Inkling 2 Mini** on your Mac (Shotkeeper installs and manages `mlx_lm.server` for it),
@@ -60,9 +60,10 @@ App data lives in `~/Library/Application Support/Shotkeeper/`: `settings.json`, 
 - **OpenRouter (cloud):** each screenshot is downscaled on your Mac (longest side 1280 px by default) and sent to
   **OpenRouter** with your OpenRouter API key. OpenRouter passes it to a third-party provider that serves Inkling 2
   Mini, **Prime Intellect or io.net**, under their data policies. With the default model, requests are pinned to
-  exactly those two (`provider.only`). Every request asks OpenRouter for zero data retention (`zdr: true`) and for
-  providers that do not collect data (`data_collection: "deny"`); on 2026-11-22 both providers met both
-  (`docs/research/openrouter.md`). If no provider qualifies, OpenRouter refuses the request
+  exactly those two providers (`provider.only`). On 2026-11-28 Prime Intellect had three endpoints for the model and
+  io.net one; with `service_tier: "default"` requests reach only the standard ones. Every request asks OpenRouter for zero data retention (`zdr: true`) and
+  for providers that do not collect data (`data_collection: "deny"`); on 2026-11-28 every endpoint of the two
+  providers that a request can reach met both (`docs/research/openrouter.md`). If no endpoint qualifies, OpenRouter refuses the request
   instead of sending it elsewhere. OpenRouter itself does not store prompts unless you opt in to logging in your
   OpenRouter account; it keeps request metadata (token counts, latency), and it announced in-flight CSAM screening of
   all requests, ZDR included (planned from 2026-10-27). Read [OpenRouter's privacy policy](https://openrouter.ai/privacy) and the
@@ -155,7 +156,7 @@ Shotkeeper has not been tested against them.
 
 ## Install the CI build
 
-CI builds the app on every push. To install it:
+CI builds the app on every push. It needs macOS 15 or later. To install it:
 
 1. In the repository's GitHub **Actions** tab, open a green **CI** run and download the `Shotkeeper-unsigned`
    artifact. Artifacts are kept for 14 days.
@@ -236,25 +237,28 @@ A full-screen screenshot costs 1,242 + 7 × 1,000 = **8,242 input tokens**. For 
 
 | Price | Per 1,000 full-screen screenshots |
 |---|---|
-| Promo, $0.10 / M input tokens (until 2026-12-01) | 8.242 × $0.10 ≈ **$0.82** |
-| Standard, $0.24 / M input tokens | 8.242 × $0.24 ≈ **$1.98** |
+| Standard, $0.24 / M input tokens (from 2026-12-01; the app quotes this price) | 8.242 × $0.24 ≈ **$1.98** |
+| Launch promo, $0.10 / M input tokens (2026-10-19 until 2026-12-01) | 8.242 × $0.10 ≈ $0.82 |
 
-The earlier estimate from the docs ($0.46 promo / $1.11 standard) assumed 4 image copies per call and was about
-1.8× too low. Screenshots of part of the screen that are smaller than 1280 px cost less, and retries count toward
-`usage.input_tokens`. Setting the longest side to 1024 px cuts a full-screen screenshot to 1,242 + 7 × 640 = 5,722
-tokens ($0.57 promo / $1.37 standard per 1,000), but small text gets harder to read. Each field costs about one image
-copy, so dropping a field (for example `description`) would save roughly an eighth.
+The earlier estimate from the docs ($1.11 standard; $0.46 at the promo price) assumed 4 image copies per call and was
+about 1.8× too low. Screenshots of part of the screen that are smaller than 1280 px cost less, and retries count
+toward `usage.input_tokens`. Setting the longest side to 1024 px cuts a full-screen screenshot to 1,242 + 7 × 640 =
+5,722 tokens ($1.37 per 1,000 at the standard price, $0.57 at the promo price), but small text gets harder to read.
+Each field costs about one image copy, so dropping a field (for example `description`) would save roughly an eighth.
 
 ## Cost (OpenRouter)
 
-**Not measured yet.** OpenRouter's list prices for Inkling 2 Mini on 2026-11-22: Prime Intellect $0.075 per million
-input tokens and $0.30 per million output tokens; io.net $0.08 and $0.35. OpenRouter picks the provider per request.
+**Not measured yet.** OpenRouter's list prices for Inkling 2 Mini on 2026-11-28: Prime Intellect standard $0.06 per
+million input tokens and $0.24 per million output tokens (it was $0.075 and $0.30 on 2026-11-22); io.net $0.08 and
+$0.35 (unchanged). OpenRouter picks the endpoint per request. Every request sends `service_tier: "default"`, so it
+is never served by Prime Intellect's priority `fast` endpoint ($0.15 and $0.60).
 The docs do not say how many input tokens one screenshot costs for this model, so the app shows no price until a live
 test measures it (`OpenRouterPricing.measuredUSDPerThousandScreenshots`). Every response reports what you were
 charged in `usage.cost` (US dollars); `shotkeeper-cli analyze --backend openrouter` prints it.
 
 ## Known limits
 
+- **Needs macOS 15 or later.** Earlier versions are not supported (decided 2026-11-28).
 - **OpenRouter has not been tested live.** No key was available on 2026-11-22, so the backend is built and tested only
   against responses written from OpenRouter's docs. Unverified until the first live call: that both providers really
   skip reasoning with `effort: "none"`, that they return `logprobs`, how strictly they follow the JSON schema, and the
@@ -264,11 +268,11 @@ charged in `usage.cost` (US dollars); `shotkeeper-cli analyze --backend openrout
   receipt). The request was accepted and parsed, and titles came back in sentence case. Small samples: tags can be
   sparse (one tag for the code screenshot), and US-style dates like `11/08/2026` came back invalid
   (`invalid_printed_temporal`), so no date was stored.
-- **Clairic is a preview model.** Cloudflare's terms say they may stop offering it. The promo price ends 2026-12-01.
-- **The macOS app has been built and unit-tested in CI (`macos-latest`) but never run on a real Mac.** None of the
-  following has been tried: menu-bar rendering, window focus, the search panel's keys on a real keyboard, FSEvents on
-  a real Desktop, Keychain prompts on an ad-hoc-signed build, launch at login (`SMAppService`), or the whole local
-  runtime (uv install, `hf download` progress parsing, model loading).
+- **Clairic is a preview model.** Cloudflare's terms say they may stop offering it. Its $0.10 launch promo runs only
+  until 2026-12-01 (`docs/research/clairic/pricing-2026-11-28.md`); the app quotes the standard $0.24 per M input
+  tokens.
+- **The macOS app has had one run on a real Mac so far** (2026-11-28), and nothing looked wrong. It is built and
+  unit-tested in CI (`macos-latest`); that first run was a look, not a full check of every path.
 - **The local runtime depends on an unmerged mlx-lm pull request** (#2086). The 2-bit and 3-bit builds are in
   mlx-vlm format and may need mlx-vlm instead of mlx-lm.
 - **The build is unsigned and not notarized.** It is ad-hoc signed, and you have to remove the quarantine flag
@@ -277,8 +281,10 @@ charged in `usage.cost` (US dollars); `shotkeeper-cli analyze --backend openrout
   comments from `.DS_Store`. Spotlight does index it.
 - The index's content hash is size + modification time + the first 64 KiB of the file. It detects files Shotkeeper
   has already seen, but it is not a security hash.
-- There is a single global search shortcut, ⌥⌘S, and it cannot be changed yet. If another app already uses it, the
-  menu shows "Hotkey ⌥⌘S unavailable".
+- There is a single global search shortcut, ⌥⌘S by default. Change it with the recorder in Settings → General →
+  Search shortcut. If macOS refuses a shortcut, Settings says why next to the recorder and the previous shortcut keeps
+  working. A shortcut that another app also uses may not be detected: it can register and then reach only one of
+  the two apps.
 
 ## Architecture
 

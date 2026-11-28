@@ -26,3 +26,14 @@
   `(set -a; . /root/.t3/projects/shotkeeper/.env.local; set +a; SHOTKEEPER_DOCKER_NETWORK=bridge scripts/test-linux.sh run shotkeeper-cli analyze <png> --raw <out.json>)`.
   `--raw` scrubs both values from the saved JSON. Sample screenshots were made in a throwaway `python:3.12-slim` + Pillow
   container, which was removed afterwards.
+- 2026-11-28: **`git push` via the clone's credential helper failed**: the helper reads
+  `/root/.t3/userdata/secrets/files/32306658849bfc2f7a6de271ace37e97`, which no longer exists. The prefactor A agent
+  pushed once with `gh-shotkeeper`'s token instead (AGENTS.md allows `gh-shotkeeper` for pushes). Reported to Parag;
+  the helper is not fixed as of this date.
+- 2026-11-28 (later): the scoped token file was gone too, so `gh-shotkeeper` had been silently falling back to the
+  machine's general `gh` login (paragrudani1). Two pushes that day used it before anyone noticed (the docs branch, and
+  the prefactor A/B pushes). **Parag decided: use the machine's gh login for Shotkeeper.** Changes: the repo-local
+  `credential.https://github.com.helper` lines were removed from the clone's `.git/config`, so the global
+  `gh auth git-credential` applies to the clone and all its worktrees. `/root/local-dev/shotkeeper-llm/bin/gh-shotkeeper`
+  now runs plain `gh` with `GH_REPO`; the old version is backed up at `/tmp/gh-shotkeeper.bak` (mode 600). AGENTS.md
+  was updated to match.
