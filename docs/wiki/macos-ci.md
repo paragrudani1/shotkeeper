@@ -11,6 +11,8 @@ Workflow: `.github/workflows/ci.yml` (added on branch `app/phase1`, 2026-11-21).
   `brew install xcodegen`; `xcodegen generate --spec App/project.yml`; `xcodebuild build` (Release) and
   `xcodebuild test` (Debug), both `CODE_SIGNING_ALLOWED=NO`; ad-hoc `codesign --sign -` of the Release app;
   `ditto -c -k --keepParent` → artifact `Shotkeeper-unsigned`.
+  2026-11-28 (`t3/ci-lint-on-macos`): first step after checkout "Lint on macOS (bash 3.2, BSD grep/sed)" runs
+  `scripts/lint.sh --self-test` and the rules under `/bin/bash`. Before this the step of that name ran in `linux-core`.
 - Caches: SwiftPM `.build` only (keyed by Xcode version and source hashes). DerivedData is not cached.
 
 ## UI snapshots (added 2026-11-21, UI polish PR 1)
