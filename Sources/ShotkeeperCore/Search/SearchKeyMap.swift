@@ -7,6 +7,8 @@ public enum SearchKey: Hashable, Sendable {
     case dateFilter
     /// ⌫: clears the date when the date list is open; otherwise it deletes in the field (the app passes it on).
     case deleteBackward
+    /// ⇧⌘C: Copy Text for the selected result (spec "Which key copies the text"; `SearchWindowState.copyTextOutcome`).
+    case copyText
 }
 
 /// A key of the search window, as `SearchKeyMap` matches it.
@@ -16,6 +18,9 @@ public enum SearchKeyTrigger: Hashable, Sendable {
     /// ⌘ plus a lower-case ASCII letter or digit. The panel sees these in `performKeyEquivalent`
     /// (docs/wiki/appkit-gotchas.md: ⌘ keys never reach `sendEvent` reliably).
     case command(Character)
+    /// ⇧⌘ plus a lower-case ASCII letter, matched like `command` (seen in `performKeyEquivalent`). Only ⇧⌘C is bound:
+    /// ⇧⌘ plus a digit types a symbol on most layouts, and Shift is otherwise left to the field.
+    case shiftCommand(Character)
 }
 
 /// One row of the search window's key table.
@@ -47,6 +52,7 @@ public enum SearchKeyMap {
         SearchKeyBinding(.command("r"), .reveal),
         SearchKeyBinding(.command("y"), .quickLook),               // ⌘Y, the Finder shortcut
         SearchKeyBinding(.command("d"), .dateFilter),              // D for date (design §6)
+        SearchKeyBinding(.shiftCommand("c"), .copyText),           // "Copy, variant" (spec); ⌘C stays Copy Image
     ] + SearchChip.allCases.map { chip in
         SearchKeyBinding(.command(Character(String(chip.shortcutNumber))), .chip(chip))  // ⌘1…⌘7
     }
@@ -61,20 +67,30 @@ public enum SearchKeyMap {
         return plainKeys[keyCode]
     }
 
-    /// A ⌘ shortcut. The key is the typed character when it is an ASCII letter or digit (QWERTY, Dvorak, …), else
-    /// the physical key (Cyrillic or Greek layouts type other letters; AZERTY types "&" for 1).
+    /// A ⌘ or ⇧⌘ shortcut. The key is the typed character, lowercased, when it is an ASCII letter or digit (QWERTY,
+    /// Dvorak, …; with Shift held AppKit reports "C"), else the physical key (Cyrillic or Greek layouts type other
+    /// letters; AZERTY types "&" for 1).
     public static func command(keyCode: Int, modifiers: HotKeyShortcut.Modifiers, characters: String?) -> SearchKey? {
-        guard modifiers == [.command] else { return nil }
+        let table: [Character: SearchKey]
+        switch modifiers {
+        case [.command]: table = commandKeys
+        case [.command, .shift]: table = shiftCommandKeys
+        default: return nil
+        }
         let typed = characters?.lowercased()
         let ascii = typed.flatMap { $0.count == 1 && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) } ? $0 : nil }
         guard let character = ascii?.first ?? physicalCharacter(keyCode) else { return nil }
-        return commandKeys[character]
+        return table[character]
     }
 
-    /// "⌘C" for `.copyImage`; nil for a key without a ⌘ shortcut.
+    /// "⌘C" for `.copyImage`, "⇧⌘C" for `.copyText`; nil for a key without a ⌘ shortcut.
     public static func commandShortcutText(for key: SearchKey) -> String? {
         for binding in bindings where binding.key == key {
-            if case .command(let character) = binding.trigger { return "⌘" + String(character).uppercased() }
+            switch binding.trigger {
+            case .command(let character): return "⌘" + String(character).uppercased()
+            case .shiftCommand(let character): return "⇧⌘" + String(character).uppercased()
+            case .plain: continue
+            }
         }
         return nil
     }
@@ -98,6 +114,14 @@ public enum SearchKeyMap {
         var table: [Character: SearchKey] = [:]
         for binding in bindings {
             if case .command(let character) = binding.trigger, table[character] == nil { table[character] = binding.key }
+        }
+        return table
+    }()
+
+    private static let shiftCommandKeys: [Character: SearchKey] = {
+        var table: [Character: SearchKey] = [:]
+        for binding in bindings {
+            if case .shiftCommand(let character) = binding.trigger, table[character] == nil { table[character] = binding.key }
         }
         return table
     }()

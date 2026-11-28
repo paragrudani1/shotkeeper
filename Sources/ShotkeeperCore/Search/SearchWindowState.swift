@@ -74,6 +74,12 @@ public struct SearchResultItem: Equatable, Sendable, Identifiable {
     public var contentType: ContentType?
     public var capturedAt: Date?
     public var processedAt: Date?
+    /// The screenshot's text, read on the Mac. It reaches the pasteboard only through Copy Text, never a log.
+    public var recognizedText: String?
+    /// nil = never read (rows indexed before migration 3).
+    public var textStatus: TextStatus?
+    /// Why the read failed (`textStatus == .failed`), e.g. "file missing". Never contains recognized text.
+    public var textError: String?
 
     public init(_ row: IndexedScreenshot) {
         id = row.id
@@ -87,6 +93,9 @@ public struct SearchResultItem: Equatable, Sendable, Identifiable {
         contentType = row.contentType
         capturedAt = row.capturedAt
         processedAt = row.processedAt
+        recognizedText = row.recognizedText
+        textStatus = row.textStatus
+        textError = row.textError
     }
 
     /// The time shown in the row: when it was taken, else when it was processed.
@@ -151,6 +160,100 @@ public enum SearchNoMatchButton: Hashable, Sendable {
     }
 }
 
+/// What Copy Text (⇧⌘C, the badge on the preview image) does for the selected result (spec "What copy does, by text
+/// status"). The app only performs it.
+public enum CopyTextOutcome: Equatable, Sendable {
+    /// `done`: write this text to the pasteboard as plain text.
+    case copy(String)
+    /// Never read (`textStatus` NULL): read row `id` now, ahead of the queue, then copy under the late-copy rule
+    /// (story 36). Ticket 07 performs it; until then the app beeps and the badge is hidden.
+    case readFirst(id: Int64)
+    /// `none`: the screenshot has no text.
+    case noText
+    /// `failed`; `fileMissing` when the file was not at its indexed path when it was read.
+    case failed(fileMissing: Bool)
+    /// `pending`: copy when row `id` has been read, under the late-copy rule (`requestCopyText`).
+    case wait(id: Int64)
+    /// No result is selected.
+    case notAvailable
+
+    /// The problem pill and VoiceOver announcement for `noText` and `failed`; nil otherwise.
+    public var message: String? {
+        switch self {
+        case .noText: return SearchWindowState.noTextMessage
+        case .failed(let fileMissing):
+            return fileMissing ? SearchWindowState.missingFileMessage : SearchWindowState.textFailedMessage
+        case .copy, .readFirst, .wait, .notAvailable: return nil
+        }
+    }
+}
+
+/// The Copy Text badge on the preview image (design §2 "The one bold choice", §5). Hidden (nil) for `none`, without
+/// a selection, and for a never-read row until ticket 07 reads on demand.
+public enum CopyTextBadge: Equatable, Sendable {
+    /// `done`: "Copy Text ⇧⌘C".
+    case copyText
+    /// `pending`: a spinner and "Reading text…".
+    case reading
+    /// `failed`: a warning symbol and "Read text again".
+    case readAgain
+
+    public var title: String {
+        switch self {
+        case .copyText: return "Copy Text"
+        case .reading: return "Reading text…"
+        case .readAgain: return "Read text again"
+        }
+    }
+
+    /// The keycap at the badge's end; only on Copy Text (⇧⌘C on a failed row shows the error, it doesn't re-read).
+    public var shortcut: String? {
+        self == .copyText ? SearchKeyMap.commandShortcutText(for: .copyText) : nil
+    }
+
+    public var help: String {
+        switch self {
+        case .copyText: return "Copy the text in this screenshot (⇧⌘C)"
+        case .reading: return "Reading the text. It's copied when it's ready."
+        case .readAgain: return "The text could not be read. Read it again."
+        }
+    }
+
+    public var accessibilityLabel: String {
+        switch self {
+        case .copyText: return "Copy Text"
+        case .reading: return "Reading text"
+        case .readAgain: return "Read text again"
+        }
+    }
+
+    public var accessibilityHint: String? {
+        self == .readAgain ? "The text could not be read last time." : nil
+    }
+}
+
+/// A Copy Text request waiting for row `id` to be read: the pasteboard's `changeCount` at the key press (late-copy
+/// rule, story 37).
+public struct WaitingTextCopy: Equatable, Sendable {
+    public var id: Int64
+    public var pasteboardChangeCount: Int
+
+    public init(id: Int64, pasteboardChangeCount: Int) {
+        self.id = id
+        self.pasteboardChangeCount = pasteboardChangeCount
+    }
+}
+
+/// What a waiting Copy Text request does after a refresh (`SearchWindowState.resolveWaitingTextCopy`).
+public enum LateTextCopy: Equatable, Sendable {
+    /// The row is still being read.
+    case waiting
+    /// The clipboard changed since the key press: nothing is written. The text stays in the index.
+    case dropped
+    /// The row was read and the panel still shows it: perform `.copy`, `.noText` or `.failed`.
+    case perform(CopyTextOutcome)
+}
+
 /// Everything the search window shows and how it reacts to input, without AppKit. The app renders it and runs the
 /// searches it asks for: when a mutating call returns true, run `query` with `resultLimit` and hand the outcome to
 /// `apply(_:for:)` or `fail(_:for:)`.
@@ -188,6 +291,13 @@ public struct SearchWindowState: Equatable, Sendable {
     public static let missingFileMessage = "This file is no longer there. It was moved or deleted after it was indexed."
     /// Copy Image could not read the image data.
     public static let copyFailedMessage = "The image could not be copied."
+    /// Copy Text on a row whose text status is `none`.
+    public static let noTextMessage = "No text found in this screenshot."
+    /// Copy Text on a row whose text could not be read (`failed`, other than a missing file).
+    public static let textFailedMessage = "The text could not be read."
+    /// `textError` of a row whose file was not at its indexed path when the runner read it (the spec's reason, the
+    /// value ticket 04's `TextRecognitionRunner.fileMissingReason` writes).
+    static let fileMissingReason = "file missing"
 
     /// VoiceOver announcements when something is cleared (design §5). Choosing a value announces nothing: VoiceOver
     /// reads the pill's new value.
@@ -198,6 +308,8 @@ public struct SearchWindowState: Equatable, Sendable {
         public static let filtersCleared = "Filters cleared"
         /// Esc that clears, or the "Clear search" button.
         public static let searchCleared = "Search cleared"
+        /// Copy Text wrote the text to the pasteboard (the pill reads "✓ Text copied").
+        public static let textCopied = "Text copied"
     }
 
     public private(set) var text = ""
@@ -215,6 +327,8 @@ public struct SearchWindowState: Equatable, Sendable {
     public private(set) var failure: SearchMessage?
     /// True after ↑/↓ or a click on a row, false after typing: Space then opens Quick Look instead of typing.
     public private(set) var isBrowsing = false
+    /// A Copy Text request waiting for its row to be read (`requestCopyText`); dropped when the selection moves on.
+    public private(set) var waitingTextCopy: WaitingTextCopy?
     private var lastApplied: ScreenshotQuery?
     /// The clock and calendar for date wording (the Date pill, no-match sentences). The app sets `now` before each
     /// search, the moment the index resolves "today" for that search.
@@ -274,6 +388,67 @@ public struct SearchWindowState: Equatable, Sendable {
     /// the last thing they did was move the selection). Otherwise Space types a space. ⌘Y always opens it.
     public var spaceOpensQuickLook: Bool {
         selected != nil && (text.isEmpty || isBrowsing)
+    }
+
+    // MARK: Copy Text (design §5, "Copy Text: badge, pills, announcements")
+
+    /// What ⇧⌘C or the badge does for the selection now.
+    public var copyTextOutcome: CopyTextOutcome {
+        guard let selected else { return .notAvailable }
+        switch selected.textStatus {
+        case nil: return .readFirst(id: selected.id)
+        case .pending?: return .wait(id: selected.id)
+        case .noText?: return .noText
+        case .failed?: return .failed(fileMissing: selected.textError == Self.fileMissingReason)
+        case .done?:
+            guard let text = selected.recognizedText,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .noText }
+            return .copy(text)
+        }
+    }
+
+    /// The badge on the preview image for the selection.
+    public var copyTextBadge: CopyTextBadge? {
+        switch copyTextOutcome {
+        case .copy: return .copyText
+        case .wait: return .reading
+        case .failed: return .readAgain
+        // Never read: hidden until ticket 07 performs `.readFirst` (then it looks like `.copyText`, design §5).
+        case .readFirst, .noText, .notAvailable: return nil
+        }
+    }
+
+    /// ⇧⌘C or the badge. Returns `copyTextOutcome`; when it is `.wait`, remembers the request with the pasteboard's
+    /// `changeCount` now, replacing an earlier one (only the last waiting request counts).
+    public mutating func requestCopyText(pasteboardChangeCount: Int) -> CopyTextOutcome {
+        let outcome = copyTextOutcome
+        if case .wait(let id) = outcome {
+            waitingTextCopy = WaitingTextCopy(id: id, pasteboardChangeCount: pasteboardChangeCount)
+        }
+        return outcome
+    }
+
+    /// After a refresh (the row's `.updated` change): the late-copy rule. The request is performed only if the panel
+    /// still shows its row (moving on drops it at once) and the pasteboard's `changeCount` is unchanged since the key
+    /// press. Nil when nothing waits.
+    public mutating func resolveWaitingTextCopy(pasteboardChangeCount: Int) -> LateTextCopy? {
+        guard let waiting = waitingTextCopy else { return nil }
+        let outcome = copyTextOutcome
+        switch outcome {
+        case .wait(let id) where id == waiting.id:
+            return .waiting
+        case .copy, .noText, .failed:
+            waitingTextCopy = nil
+            return waiting.pasteboardChangeCount == pasteboardChangeCount ? .perform(outcome) : .dropped
+        case .wait, .readFirst, .notAvailable:
+            waitingTextCopy = nil  // not the row asked for, or saved again as never read
+            return .dropped
+        }
+    }
+
+    /// The selection is no longer the row a copy waits for (↑/↓, a click, a new query, the panel hidden).
+    private mutating func dropWaitingTextCopyIfMovedOn() {
+        if let waiting = waitingTextCopy, selected?.id != waiting.id { waitingTextCopy = nil }
     }
 
     // MARK: Date pill (design §5, "Filter pills")
@@ -429,6 +604,7 @@ public struct SearchWindowState: Equatable, Sendable {
     public mutating func windowHidden() -> Bool {
         isBrowsing = false
         datePicker = nil
+        waitingTextCopy = nil  // the panel no longer shows the row
         guard batchPaths != nil else { return false }
         batchPaths = nil
         return true
@@ -442,6 +618,7 @@ public struct SearchWindowState: Equatable, Sendable {
         let current = selectedIndex ?? (delta > 0 ? -1 : items.count)
         selectedIndex = min(max(current + delta, 0), items.count - 1)
         isBrowsing = true
+        dropWaitingTextCopyIfMovedOn()
     }
 
     /// A click on a row.
@@ -449,6 +626,7 @@ public struct SearchWindowState: Equatable, Sendable {
         guard items.indices.contains(index) else { return }
         selectedIndex = index
         isBrowsing = true
+        dropWaitingTextCopyIfMovedOn()
     }
 
     // MARK: Results
@@ -469,6 +647,7 @@ public struct SearchWindowState: Equatable, Sendable {
         } else {
             selectedIndex = previousPath.flatMap { path in items.firstIndex { $0.path == path } } ?? 0
         }
+        dropWaitingTextCopyIfMovedOn()
         return true
     }
 
@@ -478,6 +657,7 @@ public struct SearchWindowState: Equatable, Sendable {
         guard query == self.query else { return false }
         items = []
         selectedIndex = nil
+        waitingTextCopy = nil
         matchCount = 0
         lastApplied = query
         if let unavailable = error as? IndexUnavailableError {
