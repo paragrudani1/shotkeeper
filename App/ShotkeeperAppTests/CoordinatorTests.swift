@@ -410,6 +410,20 @@ final class ExistingScreenshotScannerTests: TempDirectoryTestCase {
         XCTAssertFalse(check(directory.appendingPathComponent("Screenshot c.png")))
     }
 
+    /// Watching invariant (wave 2 ticket 04): screenshots sorted into subfolders of an organized folder that sits
+    /// inside the watched folder are never found again.
+    func testScreenshotsInSubfoldersAreNotFound() throws {
+        let sorted = directory.appendingPathComponent("Organized/Receipts", isDirectory: true)
+        try FileManager.default.createDirectory(at: sorted, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: sorted.appendingPathComponent("Screenshot 2026-11-20 at 09.00.00.png"))
+        try Data("x".utf8).write(to: directory.appendingPathComponent("Organized/Screenshot 2026-11-20 at 09.00.01.png"))
+        let top = directory.appendingPathComponent("Screenshot 2026-11-21 at 10.00.00.png")
+        try Data("x".utf8).write(to: top)
+        let found = ExistingScreenshotScanner.candidates(in: directory, detector: ScreenshotDetector(),
+                                                         isIndexed: { _ in false }, isStoredLocally: { _ in true })
+        XCTAssertEqual(found.map(\.lastPathComponent), [top.lastPathComponent])
+    }
+
     func testMissingFolderGivesNothing() {
         XCTAssertEqual(ExistingScreenshotScanner.candidates(in: directory.appendingPathComponent("nope"),
                                                             detector: ScreenshotDetector()) { _ in false }, [])

@@ -100,6 +100,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var filenameDatePrefix: Bool = false
     /// The global shortcut that opens Search (Settings → General → "Search shortcut"). Default ⌥⌘S.
     public var searchShortcut: HotKeyShortcut = .defaultSearch
+    /// Sort new screenshots into subfolders of `organizedFolder` (Settings → General, "Sort into subfolders").
+    /// Applies only when `moveEnabled` is on and `organizedFolder` is set (`SubfolderRule`).
+    public var subfolderRule: SubfolderRule = .off
 
     public var filenameStyle: FilenameStyle {
         get { FilenameStyle(casing: filenameCasing, datePrefix: filenameDatePrefix) }
@@ -141,6 +144,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case filenameCasing
         case filenameDatePrefix
         case searchShortcut
+        case subfolderRule
     }
 
     public init(from decoder: Decoder) throws {
@@ -180,6 +184,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         // A stored shortcut that is no longer allowed (rules changed, hand-edited file) falls back to the default.
         let shortcut = value(.searchShortcut, s.searchShortcut)
         s.searchShortcut = HotKeyRules.problem(with: shortcut) == nil ? shortcut : .defaultSearch
+        s.subfolderRule = value(.subfolderRule, s.subfolderRule)
         self = s
     }
 

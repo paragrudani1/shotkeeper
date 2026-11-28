@@ -126,6 +126,12 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(AppSettings.decode(Data("not json".utf8)), AppSettings())
     }
 
+    func testSubfolderRuleIsOffByDefaultAndAnUnknownStoredValueIsOff() {
+        XCTAssertEqual(AppSettings().subfolderRule, .off)
+        XCTAssertEqual(AppSettings.decode(Data(#"{"subfolderRule":"byColor","moveEnabled":true}"#.utf8)).subfolderRule, .off)
+        XCTAssertEqual(AppSettings.decode(Data(#"{"subfolderRule":"bySource"}"#.utf8)).subfolderRule, .bySource)
+    }
+
     /// Fails when a property is missing from `CodingKeys` (it is not encoded) or from `init(from:)` (it decodes as
     /// the default). A new property must get a non-default value in `everyPropertySet`; the first check says so.
     func testEveryPropertyRoundTrips() throws {
@@ -154,6 +160,7 @@ final class SettingsTests: XCTestCase {
         s.filenameCasing = .kebab
         s.filenameDatePrefix = true
         s.searchShortcut = HotKeyShortcut(keyCode: KeyCode.k, modifiers: [.control, .option])
+        s.subfolderRule = .byTypeThenSource
         let everyPropertySet = s
 
         let properties = Mirror(reflecting: everyPropertySet).children.compactMap(\.label)

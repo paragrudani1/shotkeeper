@@ -83,6 +83,9 @@ enum StatusText {
 /// "Process existing screenshots": screenshots in the watched folder (top level only, like the watcher) that
 /// the index does not already hold as done/skipped, and whose data is on this Mac. Files evicted by iCloud Drive
 /// ("Desktop & Documents") or another File Provider are skipped: reading them would download the whole backlog.
+/// Top level only is an invariant (wave 2 spec, "Subfolders in the pipeline"): screenshots sorted into subfolders of
+/// an organized folder inside the watched folder are never processed again. A recursive scan must skip the
+/// organized folder.
 enum ExistingScreenshotScanner {
     static func candidates(in folder: URL, detector: ScreenshotDetector,
                            isIndexed: (URL) -> Bool, isStoredLocally: (URL) -> Bool = ExistingScreenshotScanner.isStoredLocally,

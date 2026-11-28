@@ -207,6 +207,49 @@ final class ReanalyzeTests: XCTestCase {
         XCTAssertEqual(attributes[FinderMetadata.commentAttribute].flatMap(FinderMetadata.decodeComment), "A November invoice")
     }
 
+    /// Wave 2 spec decision 10 (seam 1): Analyze Again applies today's sort setting, so a file whose type changed
+    /// moves to the new type's folder (and, by type then source, the new source's folder inside it).
+    func testAnalyzeAgainMovesToTheNewTypesFolder() async throws {
+        let organized = dir.url.appendingPathComponent("Organized")
+        settings.mutate { $0.organizedFolder = organized; $0.moveEnabled = true; $0.subfolderRule = .byType }
+        let row = try await indexedScreenshot()  // a receipt
+        let inReceipts = organized.appendingPathComponent("Receipts/Invoice From Acme.png").standardizedFileURL
+        XCTAssertEqual(row.path, inReceipts.path)
+
+        let outcome = try await processor(StubAnalyzer(newAnalysis())).reanalyze(rowID: row.id)  // an article
+        let expected = organized.appendingPathComponent("Articles/Acme Invoice For November.png").standardizedFileURL
+        XCTAssertEqual(outcome, .updated(finalURL: expected, renamed: true, moved: true, titleKept: nil,
+                                         suggestedTitle: nil))
+        XCTAssertEqual(read(expected), "png bytes")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: inReceipts.path))
+        XCTAssertEqual(try index.lookup(id: row.id)?.path, expected.path)
+        XCTAssertEqual(try undoLog.records().last?.from, inReceipts.path)
+        XCTAssertEqual(try undoLog.records().last?.to, expected.path)
+
+        settings.mutate { $0.subfolderRule = .byTypeThenSource }
+        let again = try await processor(StubAnalyzer(newAnalysis())).reanalyze(rowID: row.id)
+        let bySource = organized.appendingPathComponent("Articles/Safari/Acme Invoice For November.png")
+            .standardizedFileURL
+        XCTAssertEqual(again, .updated(finalURL: bySource, renamed: false, moved: true, titleKept: nil,
+                                       suggestedTitle: nil))
+    }
+
+    func testAReceiptAlreadyInReceiptsStaysThereWithoutAnUndoRecord() async throws {
+        let organized = dir.url.appendingPathComponent("Organized")
+        settings.mutate { $0.organizedFolder = organized; $0.moveEnabled = true; $0.subfolderRule = .byType }
+        let row = try await indexedScreenshot()
+        let inReceipts = organized.appendingPathComponent("Receipts/Invoice From Acme.png").standardizedFileURL
+        let recordsBefore = try undoLog.records()
+
+        let outcome = try await processor(StubAnalyzer(analysis(title: "Invoice From Acme"))).reanalyze(rowID: row.id)
+        XCTAssertEqual(outcome, .updated(finalURL: inReceipts, renamed: false, moved: false, titleKept: nil,
+                                         suggestedTitle: nil))
+        XCTAssertEqual(read(inReceipts), "png bytes")
+        XCTAssertEqual(try undoLog.records(), recordsBefore)
+        XCTAssertEqual(try index.lookup(id: row.id)?.path, inReceipts.path)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: organized.path), ["Receipts"])
+    }
+
     func testAUserNamedFileKeepsItsNameButMoves() async throws {
         let row = try await indexedScreenshot()
         let p = processor(StubAnalyzer(newAnalysis()))

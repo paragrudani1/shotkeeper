@@ -29,11 +29,15 @@ public struct ProcessingReport: Equatable, Sendable {
     public var outcome: ProcessingOutcome
     /// The undo record written for the rename/move, if any.
     public var undoRecordID: UUID?
+    /// The subfolder below the organized folder the file was moved into (`["Chats", "Slack"]`), for the toast's
+    /// "Sorted into …". Empty when no subfolder was used, also when the fallback put it in the organized folder itself.
+    public var sortedInto: [String]
 
-    public init(originalURL: URL, outcome: ProcessingOutcome, undoRecordID: UUID? = nil) {
+    public init(originalURL: URL, outcome: ProcessingOutcome, undoRecordID: UUID? = nil, sortedInto: [String] = []) {
         self.originalURL = originalURL
         self.outcome = outcome
         self.undoRecordID = undoRecordID
+        self.sortedInto = sortedInto
     }
 }
 
@@ -78,7 +82,7 @@ public struct UndoBatchResult: Equatable, Sendable {
 /// Analyze Again (`reanalyze(rowID:request:)`, in `ScreenshotProcessor+Reanalyze.swift`) goes through the same
 /// `consentedJob` → `send` path, so this file stays the only one that calls `.analyze(` (`scripts/lint.sh`).
 public final class ScreenshotProcessor: Sendable {
-    // Internal, not private, for the extensions in their own files (`+Reanalyze`).
+    // Internal, not private, for the extensions in their own files (`+Subfolders`, `+Reanalyze`).
     let snapshot: @Sendable () -> AnalyzerSnapshot
     let imagePreparer: any ImagePreparer
     let metadataWriter: any FileMetadataWriter
@@ -133,13 +137,14 @@ public final class ScreenshotProcessor: Sendable {
     ///   allowed be sent, only while that destination is still the job's and still allowed (`UploadConsent.decide`).
     public func processWithReport(_ url: URL, userRequest: UserUploadAuthorization? = nil) async throws -> ProcessingReport {
         let original = url.standardizedFileURL
-        var undoRecordID: UUID?
-        let outcome = try await process(original, userRequest: userRequest, undoRecordID: &undoRecordID)
-        return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: undoRecordID)
+        var placed = Placement(url: original)
+        let outcome = try await process(original, userRequest: userRequest, placed: &placed)
+        return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: placed.undoRecordID,
+                                sortedInto: placed.sortedInto)
     }
 
     private func process(_ url: URL, userRequest: UserUploadAuthorization?,
-                         undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
+                         placed: inout Placement) async throws -> ProcessingOutcome {
         let url = url.standardizedFileURL
         let early = self.snapshot().settings
         let fm = FileManager.default
@@ -222,10 +227,8 @@ public final class ScreenshotProcessor: Sendable {
                 notes.append("kept name: title confidence \(Self.format(analysis.titleConfidence)) < \(Self.format(settings.minTitleConfidence))")
             }
         }
-        let folder = destinationFolder(for: analysis, settings: settings)
-        let placed = place(url, stem: stem, into: folder, notes: &notes)
+        placed = place(url, stem: stem, into: destination(for: analysis, settings: settings), notes: &notes)
         let finalURL = placed.url
-        undoRecordID = placed.undoRecordID
         writeFinderMetadata(analysis, to: finalURL, settings: settings, notes: &notes)
 
         entry.note = notes.isEmpty ? nil : notes.joined(separator: "; ")
@@ -267,32 +270,6 @@ public final class ScreenshotProcessor: Sendable {
     /// The one place an image goes to a model (`scripts/lint.sh` rule `analyze`), to the consented pair's analyzer.
     func send(_ payload: ImagePayload, context: AnalysisContext, with job: ConsentedJob) async throws -> ScreenshotAnalysis {
         try await job.analyzer.analyze(payload, context: context)
-    }
-
-    /// The pipeline's move rule: the organized folder when moving is on, else nil (the file stays in its folder).
-    /// `analysis` is for the subfolder rule (ticket 04), which goes here so new screenshots and Analyze Again share it.
-    func destinationFolder(for analysis: ScreenshotAnalysis, settings: AppSettings) -> URL? {
-        settings.moveEnabled ? settings.organizedFolder : nil
-    }
-
-    /// Renames and/or moves `url` through `FileOrganizer` (no-replace) and appends the undo record right after the
-    /// move. A failure keeps the file where it was, or leaves the move without a record, and is noted.
-    func place(_ url: URL, stem: String?, into folder: URL?,
-               notes: inout [String]) -> (url: URL, undoRecordID: UUID?, failed: Bool) {
-        guard stem != nil || folder != nil else { return (url, nil, false) }
-        let finalURL: URL
-        do {
-            finalURL = try organizer.organize(url, stem: stem, into: folder)
-        } catch {
-            notes.append("kept name: rename failed (\(error))")
-            return (url, nil, true)
-        }
-        guard finalURL != url else { return (url, nil, false) }
-        do { return (finalURL, try undoLog.append(from: url, to: finalURL, at: now()).id, false) }
-        catch {
-            notes.append("undo record not written (\(error))")
-            return (finalURL, nil, false)
-        }
     }
 
     /// Finder tags and comment from the analysis, when Settings asks for them. A failure is noted.

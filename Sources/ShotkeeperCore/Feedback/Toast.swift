@@ -18,15 +18,33 @@ public struct RenamedToast: Equatable, Sendable {
     public var undoRecordIDs: [UUID]
     /// False when only the folder changed (rename off, move on).
     public var renamed: Bool
+    /// The subfolder of the organized folder it was sorted into (`["Chats", "Slack"]`); empty when none was used.
+    public var sortedInto: [String]
 
-    public init(originalURL: URL, currentURL: URL, undoRecordIDs: [UUID], renamed: Bool = true) {
+    public init(originalURL: URL, currentURL: URL, undoRecordIDs: [UUID], renamed: Bool = true,
+                sortedInto: [String] = []) {
         self.originalURL = originalURL
         self.currentURL = currentURL
         self.undoRecordIDs = undoRecordIDs
         self.renamed = renamed
+        self.sortedInto = sortedInto
     }
 
-    public var label: String { renamed ? "Renamed" : "Moved" }
+    /// "Sorted into Chats › Slack" when a subfolder was used (design §7: the label carries the place; the view
+    /// truncates it in the middle), else "Renamed" / "Moved".
+    public var label: String {
+        sortedInto.isEmpty ? (renamed ? "Renamed" : "Moved") : "Sorted into \(sortedInto.joined(separator: " › "))"
+    }
+    /// What VoiceOver reads for the label and name: "Renamed and sorted into Receipts: Invoice from Acme."
+    public var accessibilityLabel: String {
+        let what: String
+        if sortedInto.isEmpty {
+            what = label
+        } else {
+            what = renamed ? "Renamed and sorted into \(sortedInto.joined(separator: " › "))" : label
+        }
+        return "\(what): \(name)."
+    }
     /// The new name without extension (also the text the edit field starts with, fully selected).
     public var name: String { Self.stem(currentURL) }
     public var subline: String { "was: \(Self.stem(originalURL))" }
@@ -196,7 +214,8 @@ public struct ToastBatcher: Sendable {
             }
             guard case .processed(let finalURL, let renamed, _) = report.outcome else { return nil } // excluded alone: no toast
             return .renamed(RenamedToast(originalURL: report.originalURL, currentURL: finalURL,
-                                         undoRecordIDs: report.undoRecordID.map { [$0] } ?? [], renamed: renamed))
+                                         undoRecordIDs: report.undoRecordID.map { [$0] } ?? [], renamed: renamed,
+                                         sortedInto: report.sortedInto))
         }
     }
 

@@ -85,8 +85,8 @@ not created twice.
 - 2026-11-28 (`7569cb2`): **one send path.** `.analyze(` stays only in `ScreenshotProcessor.swift`: `process` and
   `reanalyze` both call `consentedJob(capturedAt:userRequest:)` (THE `decide` call on the snapshot it reads) and
   `send(_:context:with:)`, which takes only the `ConsentedJob` that `consentedJob` makes (fileprivate init). No
-  `lint-allow`. They also share `destinationFolder(for:settings:)` (today `moveEnabled ? organizedFolder : nil`):
-  **ticket 04 puts the subfolder rule there**, and whichever of 04/06 merges second adds the "Analyze Again moves to
+  `lint-allow`. They also share `destinationFolder(for:settings:)` (today `moveEnabled ? organizedFolder : nil`;
+  replaced by 04's `destination(for:settings:)` when 04 merged, below): **ticket 04 puts the subfolder rule there**, and whichever of 04/06 merges second adds the "Analyze Again moves to
   the new type's folder" test (04 had not merged, so `testAnalyzeAgainAppliesTodaysMoveSettings` covers the
   organized folder only).
 - 2026-11-28 (`7569cb2`): **choices the spec left open.**
@@ -137,6 +137,79 @@ not created twice.
   notes. Test: `testStaleNotePartsAreReplacedNotAppended`.
 - 2026-11-28 (`d885459`): `UserUploadAuthorization.target` is `public let`, so an issued authorization cannot be
   pointed at another target. Nothing assigned it.
+- 2026-11-28 (ticket 04): **sort new screenshots into subfolders.** `SubfolderRule` (`Files/SubfolderRule.swift`) is
+  `AppSettings.subfolderRule` (default `.off`, unknown stored value → `.off`). The pure router
+  `relativeFolder(contentType:source:existing:)` returns the folders below the organized folder; `existing(parent)`
+  lists the names already there, so reuse is tested without a disk. The pipeline's destination and placement live in
+  `Pipeline/ScreenshotProcessor+Subfolders.swift` (`destination(for:settings:)`, `place(_:stem:into:notes:)`), which
+  Analyze Again must reuse. `ProcessingReport.sortedInto` / `RenamedToast.sortedInto` carry the subfolder to the toast.
+  Tests: `SubfolderRuleTests`, `SubfolderSettingsTextTests`, `ScreenshotProcessorSubfolderTests`, `ToastTests`
+  (`testASortedScreenshotSaysWhereItWent`, `testSortedLabelAndVoiceOver`), `SettingsTests`
+  (`testSubfolderRuleIsOffByDefaultAndAnUnknownStoredValueIsOff`, `testEveryPropertyRoundTrips`).
+- 2026-11-28 (ticket 04): **a new source folder is named from `SourceFacet.displayName`**, as wave 1 ticket 03 requires
+  (`SourceKey.rawValue` is a matching key only), not from this screenshot's own spelling as the spec's "named from the
+  raw spelling" reads: the pipeline looks up the facet with the source's key in `index.sources()` and uses its display
+  name (the most common trimmed spelling), else this screenshot's trimmed spelling when the index has none. Once the
+  folder exists it is reused by key, so the first name given still stays (spec: "the first spelling seen stays"). Test:
+  `testANewSourceFolderIsNamedFromTheIndexDisplayNameNotTheKey`.
+- 2026-11-28 (ticket 04): **folder-name cleaning beyond the spec's list**, for safety: a run of `/` and `:` becomes one
+  " - " ("https://x" → "https - x", not "https - - - x"); runs of whitespace collapse; line separators and the
+  bidirectional embeddings/isolates (U+202A–202E, U+2066–2069) are dropped with the control characters (other
+  invisible format characters such as U+200E got through: fixed in the review of PR #30, below); the 60-character cap
+  is also capped at 255 UTF-8 bytes (60 emoji can be 1500 bytes); a name left with only dashes, dots and spaces
+  ("../.." → "-") counts as unknown, like an empty one (since the review: such a name trims to empty). macOS
+  reserves no names besides `.` and `..`; a name a volume refuses falls back to the
+  organized folder. Tests: `SubfolderRuleTests` "Folder names from hostile sources".
+- 2026-11-28 (ticket 04): **the existing-name listing sees only real folders**: not hidden names, not symbolic links
+  (`attributesOfItem`, which does not follow links), and a subfolder is created one level at a time below the organized
+  folder, never through a link. A link or file with the folder's name → the organized folder itself, note `subfolder not
+  created (“Receipts” is a file, not a folder)`. Type folders are reused in any letter case ("receipts"), like source
+  folders, so Linux tests and case-sensitive volumes behave like APFS. Tests:
+  `testAFileNamedLikeTheSubfolderSendsTheScreenshotToTheOrganizedFolder`,
+  `testALinkNamedLikeTheSubfolderIsNotFollowedOutOfTheOrganizedFolder`, `testATypeFolderIsReusedInAnyLetterCase`.
+- 2026-11-28 (ticket 04): **the fallback also covers a move into the subfolder that fails** after the folder exists
+  (note `subfolder not used (…)`), not only a folder that can't be made: the spec's aim (story 15) is that the move
+  still happens. If the organized folder fails too, today's rule: kept name and place, `kept name: rename failed (…)`.
+  Test: `testWhenTheOrganizedFolderFailsTooTheFileKeepsItsNameAndPlace`. "Permission denied" is not tested on Linux: the
+  Docker tests run as root; it takes the same path as the file in the way (real-Mac check).
+- 2026-11-28 (ticket 04): **watching invariant** is kept by the existing code and now documented on `FolderWatcher` and
+  `ExistingScreenshotScanner` ("a recursive watch/scan must exclude the organized folder"). Tests:
+  `FolderWatcherTests.testEmitsRenamedScreenshotAndIgnoresHiddenAndNested` (existing),
+  `ExistingScreenshotScannerTests.testScreenshotsInSubfoldersAreNotFound` (new, app, CI only).
+- 2026-11-28 (ticket 04): **Settings and toast details the design leaves open.** With renaming off, the example shows
+  the macOS name ("Screenshots › Receipts › Screenshot 2026-11-21 at 16.24.00.png"). A sorted file whose name was kept
+  reads "Sorted into Receipts: <name>." in VoiceOver (no "Renamed and"); unsorted toasts now read "Renamed: <name>." /
+  "Moved: <name>.", the label and name as one element. Copy uses the repo's straight apostrophe ("Can't find").
+  `GeneralSettingsTab(organizedFolderStatus:)` is injectable because the snapshots' organized folder does not exist on
+  the CI Mac. The "Sort Existing Screenshots…" row is left for ticket 05.
+- 2026-11-28 (review of PR #30, merge with 06): **one placement path for `process` and Analyze Again.** Merging
+  `t3/wave2` (PR #27) brought 06's `destinationFolder(for:settings:)` (organized folder only) and a second
+  `place(_:stem:into: URL?, notes:)` returning `(url, undoRecordID, failed)`. Both are gone: `reanalyze` calls 04's
+  `destination(for:settings:)` and `place(_:stem:into: Destination?, notes:)`, and `Placement.failed` carries the
+  "every rename/move failed" signal that `reanalyze` turns into `TitleKeptReason.renameFailed`. So Analyze Again sorts
+  into today's type or source folder (spec decision 10), and a file already in the right subfolder stays put with no
+  undo record (`organize` returns the same URL). The stored properties' comment names both extensions. Tests:
+  `ReanalyzeTests.testAnalyzeAgainMovesToTheNewTypesFolder` (the seam 1 test 06 left open),
+  `testAReceiptAlreadyInReceiptsStaysThereWithoutAnUndoRecord`; the 06 tests (ghost rows, rename failure) pass as is.
+- 2026-11-28 (review of PR #30): **folder names drop every invisible format character** (Unicode category Cf: U+200E/F,
+  U+061C, U+FEFF, U+00AD, U+2060, U+200B, the bidi embeddings and isolates), so "\u{200E}Slack" no longer makes a
+  look-alike second "Slack" folder. U+200C/U+200D stay: emoji ZWJ sequences (👨‍👩‍👧‍👦) and scripts such as Persian
+  need them. Known limits: a ZWJ inside a word ("Sl\u{200D}ack") still gives a look-alike name, and the emoji tag
+  characters (Cf) are dropped, so a subdivision flag such as England's becomes a plain black flag. Order: format
+  characters first (Linux Foundation counts U+200B as whitespace), then whitespace collapses **before** control
+  characters are dropped ("Google\nChrome" → "Google Chrome", not "GoogleChrome"). Dashes are trimmed at both ends
+  with spaces and dots, again after the cut ("Mail:" → "Mail", "../../etc" → "etc").
+  Tests: `SubfolderRuleTests` `testInvisibleFormatCharactersAreDropped`, `testAnLtrMarkBeforeSlackReusesTheSlackFolder`,
+  `testAnEmojiZwjSequenceIsKept`, `testWhitespaceCollapsesBeforeControlCharactersAreDropped`,
+  `testDashesSpacesAndDotsAreTrimmedAtBothEnds`.
+- 2026-11-28 (review of PR #30, for Parag to revisit): **folder reuse inherits `SourceKey`'s top-level-domain drop.**
+  A source folder is reused when its `SourceKey` matches, and `SourceKey` drops the TLD of a two-label host. So "x.ai"
+  lands in an existing "x.com" folder, and a "Mail" screenshot in a user's own "Mail.backup" folder in the organized
+  folder (key "mail"). Kept for now: it is the same merge the source filter makes (wave 1 ticket 03).
+- 2026-11-28 (review of PR #30): **time-of-check window in `makeSubfolder`**, now commented at the real-folder check:
+  another process could swap a checked folder for a link before the move. Closing it needs directory-descriptor calls
+  (`openat`, `renameatx_np`). The move stays no-replace, so nothing is overwritten. Only a process running as the user
+  could do it, and that process could move the file anyway.
 
 ## Verification
 - 2026-11-28 (`1312ab1`, ticket 02): `SCRATCH=.build/linux-w2-02 scripts/test-linux.sh` green, 433 tests;
@@ -162,3 +235,13 @@ not created twice.
   `testARowThatIsNotDoneIsRefusedBeforeOrAfterTheAnalysis`. Appending notes again fails
   `testStaleNotePartsAreReplacedNotAppended`. Resetting `title_source` on a hash change fails
   `testAUserNamedFileWhoseContentChangedKeepsTheUsersName`. The `macos-app` CI job is still pending.
+- 2026-11-28 (ticket 04): `SCRATCH=.build/linux-w2-04 scripts/test-linux.sh` green after merging `t3/wave2` (ticket 03),
+  562 tests; `scripts/lint.sh` ok (no new `lint-allow`). Real-Mac checks (Finder shows the folders; "slack" reused for
+  "Slack" on APFS; Undo from the toast and the menu leaves the empty folder; Settings does not jump) are open for ticket
+  10. Added in the review of PR #30: a folder blocked by macOS privacy settings (organized folder in Documents or
+  Desktop without access) shows the Settings warning, and a screenshot then falls back as described above.
+- 2026-11-28 (review of PR #30, after merging `t3/wave2` with PR #27): `SCRATCH=.build/linux-w2-04f
+  scripts/test-linux.sh` green, 597 tests; `scripts/lint.sh` ok, no new `lint-allow`. Mutation check, restored
+  afterwards: sending Analyze Again to the organized folder only (06's old rule) fails
+  `testAnalyzeAgainMovesToTheNewTypesFolder` and `testAReceiptAlreadyInReceiptsStaysThereWithoutAnUndoRecord`. The
+  `macos-app` CI job is pending.

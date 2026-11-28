@@ -170,7 +170,7 @@ extension ScreenshotProcessor {
         // 8–9. Place, undo record, Finder, index. A restored file is not touched (index only).
         var finalURL = url
         if !row.restoredByUndo {
-            let placed = place(url, stem: stem, into: destinationFolder(for: analysis, settings: settings), notes: &notes)
+            let placed = place(url, stem: stem, into: destination(for: analysis, settings: settings), notes: &notes)
             finalURL = placed.url
             if placed.failed && stem != nil {
                 titleKept = .renameFailed

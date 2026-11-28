@@ -77,7 +77,10 @@ struct ToastView: View {
                     ThumbnailView(path: toast.currentURL.path, side: 52, cornerRadius: 9)
                         .accessibilityLabel("Screenshot preview")
                     VStack(alignment: .leading, spacing: 3) {
-                        brandLabel(toast.label, symbol: "sparkle").padding(.trailing, 22)
+                        // "Sorted into Chats › Slack" is cut in the middle; VoiceOver reads label and name as one
+                        // sentence ("Renamed and sorted into Receipts: …"), so the name below is not read twice.
+                        brandLabel(toast.label, symbol: "sparkle", accessibilityLabel: toast.accessibilityLabel)
+                            .padding(.trailing, 22)
                         if model.isEditing {
                             TextField("Name", text: $model.editText)
                                 .textFieldStyle(.roundedBorder)
@@ -95,6 +98,7 @@ struct ToastView: View {
                                 .font(.system(size: 14, weight: .semibold))
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityHidden(true)
                         }
                         Text(toast.subline)
                             .font(.system(size: 11)).foregroundStyle(Brand.secondaryText)
@@ -183,13 +187,15 @@ struct ToastView: View {
         }
     }
 
-    private func brandLabel(_ text: String, symbol: String) -> some View {
+    private func brandLabel(_ text: String, symbol: String, accessibilityLabel: String? = nil) -> some View {
         HStack(spacing: 4) {
             Image(systemName: symbol).accessibilityHidden(true)
-            Text(text)
+            Text(text).lineLimit(1).truncationMode(.middle)
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(Brand.indigoText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel ?? text)
     }
 
     /// One thumbnail, or a stack of up to three (back to front, offset like a fanned deck).

@@ -97,6 +97,17 @@ final class ToastBatcherTests: XCTestCase {
         XCTAssertEqual(toast.label, "Moved")
     }
 
+    func testASortedScreenshotSaysWhereItWent() {
+        var batcher = ToastBatcher()
+        let event = ScreenshotEvent.processed(ProcessingReport(
+            originalURL: URL(fileURLWithPath: "/d/Screenshot.png"),
+            outcome: .processed(finalURL: URL(fileURLWithPath: "/o/Chats/Slack/Standup.png"), renamed: true, moved: true),
+            undoRecordID: UUID(), sortedInto: ["Chats", "Slack"]))
+        guard case .renamed(let toast)? = batcher.record(event, at: t0) else { return XCTFail() }
+        XCTAssertEqual(toast.label, "Sorted into Chats › Slack")
+        XCTAssertEqual(toast.sortedInto, ["Chats", "Slack"])
+    }
+
     func testExplicitRunIsOneSummaryHoweverSlowAndOtherFilesStaySingle() {
         var batcher = ToastBatcher()
         let runURLs = (0..<3).map { URL(fileURLWithPath: "/d/Screenshot \($0).png") }
@@ -129,6 +140,35 @@ final class ToastBatcherTests: XCTestCase {
 }
 
 final class ToastTextTests: XCTestCase {
+    func testSortedLabelAndVoiceOver() {
+        let original = URL(fileURLWithPath: "/d/Screenshot 2026-11-28 at 09.12.00.png")
+        let sorted = RenamedToast(originalURL: original,
+                                  currentURL: URL(fileURLWithPath: "/o/Receipts/Invoice from Acme.png"),
+                                  undoRecordIDs: [UUID()], sortedInto: ["Receipts"])
+        XCTAssertEqual(sorted.label, "Sorted into Receipts")
+        XCTAssertEqual(sorted.accessibilityLabel, "Renamed and sorted into Receipts: Invoice from Acme.")
+
+        var keptName = sorted
+        keptName.renamed = false
+        keptName.currentURL = URL(fileURLWithPath: "/o/Receipts/Screenshot 2026-11-28 at 09.12.00.png")
+        XCTAssertEqual(keptName.label, "Sorted into Receipts")
+        XCTAssertEqual(keptName.accessibilityLabel, "Sorted into Receipts: Screenshot 2026-11-28 at 09.12.00.")
+
+        // No subfolder (sorting off, or the fallback put it in the organized folder itself): today's labels.
+        let plain = RenamedToast(originalURL: original, currentURL: URL(fileURLWithPath: "/o/Invoice from Acme.png"),
+                                 undoRecordIDs: [])
+        XCTAssertEqual(plain.label, "Renamed")
+        XCTAssertEqual(plain.accessibilityLabel, "Renamed: Invoice from Acme.")
+        var moved = plain
+        moved.renamed = false
+        XCTAssertEqual(moved.label, "Moved")
+        XCTAssertEqual(moved.accessibilityLabel, "Moved: Invoice from Acme.")
+
+        // "Edit name" keeps the place.
+        XCTAssertEqual(sorted.edited(to: URL(fileURLWithPath: "/o/Receipts/Acme.png"), undoRecordID: nil).label,
+                       "Sorted into Receipts")
+    }
+
     func testEditedToastKeepsTheOriginalAndAppendsTheUndoRecord() {
         let first = UUID(), second = UUID()
         let toast = RenamedToast(originalURL: URL(fileURLWithPath: "/d/Screenshot 2026-11-21 at 16.24.11.png"),
