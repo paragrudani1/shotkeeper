@@ -125,8 +125,8 @@ public final class ScreenshotProcessor: Sendable {
 
     /// `process(_:)` plus the original path and the undo record id (for the rename toast).
     /// - Parameter userRequest: the user's request to send this file ("Process Existing Screenshots…", "Analyze
-    ///   Again"), with the destination selected when they asked. It lets a file taken before that destination was allowed be sent,
-    ///   only while that destination is still the job's and still allowed (`UploadConsent.decide`).
+    ///   Again"), with the destination selected when they asked. It lets a file taken before that destination was
+    ///   allowed be sent, only while that destination is still the job's and still allowed (`UploadConsent.decide`).
     public func processWithReport(_ url: URL, userRequest: UserUploadAuthorization? = nil) async throws -> ProcessingReport {
         let original = url.standardizedFileURL
         var undoRecordID: UUID?

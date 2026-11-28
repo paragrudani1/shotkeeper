@@ -36,7 +36,10 @@ public enum UploadTarget: Hashable, Sendable {
 public struct UserUploadAuthorization: Hashable, Sendable {
     public var target: UploadTarget
 
-    public init(target: UploadTarget) {
+    /// Internal on purpose: app code gets an authorization only from `UserUploadRequests.authorization(for:)`, whose
+    /// generation stamp drops the request when the backend, endpoint or grants change. An authorization built at the
+    /// click would skip that check (review of PR #17).
+    init(target: UploadTarget) {
         self.target = target
     }
 }

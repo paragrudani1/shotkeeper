@@ -1,7 +1,7 @@
 # Wave 2: subfolders, Edit name and Analyze Again
 
-Spec `../specs/subfolders-and-retitle-2026-11.md` and design `../design/subfolders-and-retitle.md` (on
-`t3/roadmap-2026-11` until they merge), tickets in `../specs/subfolders-and-retitle-2026-11/tickets/`. Integration
+Spec `../specs/subfolders-and-retitle-2026-11.md`, design `../design/subfolders-and-retitle.md` and tickets in
+`../specs/subfolders-and-retitle-2026-11/tickets/` (all on `t3/roadmap-2026-11` until they merge). Integration
 branch `t3/wave2`. API map: [../core-api.md](../core-api.md). Each ticket appends its dated lines here; the page is
 not created twice.
 
@@ -22,3 +22,10 @@ not created twice.
   `showsProcessExisting`, and app test names such as `testProcessExistingWaitsForSetup`). They name the "Process
   Existing Screenshots…" command, not the authorization, and the ticket keeps the command and changes only type and
   parameter names. `Sources`, `Tests`, `CODING_STANDARDS.md` and `docs/core-api.md` have no match.
+- 2026-11-28 (review of PR #17): `UserUploadAuthorization.init(target:)` is **internal**, so app code can only get an
+  authorization from `UserUploadRequests.authorization(for:)`. An authorization built at the click would skip the
+  generation check, and with it the rules "a request made before the destination was allowed never counts" and
+  "dropped on a backend/endpoint/grant change, even X → Y → X". Left for ticket 08: make
+  `request(for:madeIn:)` refuse a target that is not allowed at the click, so the "asks first" branch cannot be
+  forgotten. Open for Parag: CODING_STANDARDS #2 could add "…and the destination has not changed since", which the
+  code already enforces.
