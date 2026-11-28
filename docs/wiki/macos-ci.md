@@ -75,3 +75,8 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
   annotations, so the cause could not be read; an exhausted Actions minutes/spending limit is suspected (private
   repo, macOS minutes count 10×). Reported to Parag; no workaround per AGENTS.md. Diagnose with the job's
   `runner_name` empty and `steps` length 0 in `gh-shotkeeper api repos/paragrudani1/shotkeeper/actions/runs/<id>/jobs`.
+- 2026-11-28: **CI triggers changed** (branch `t3/ci-triggers`). Every push to a PR branch used to run the
+  workflow twice (`push` and `pull_request`), and docs-only commits queued the slow `macos-app` job, which became the
+  bottleneck when four agents had PRs open. Now: `pull_request` for PR branches, and `push` only for `main` and the
+  integration branches (`t3/wave*`, `t3/auto-update`, `t3/clean-up`). Both skip changes limited to `docs/**` and
+  `*.md`. A branch pushed without a PR gets no CI, so agents open a draft PR to get checks.
