@@ -58,6 +58,13 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `ScreenshotIndex`: `save(_:) -> id` (upsert by path), `updatePath(from:to:)`, `lookup(byPath:)`, `lookup(byHash:)`,
     `recent(limit:)`, `recentProcessed(limit:)` (`done` only), `entries(withStatus:limit:)`, `search(_:limit:)` (empty → recent),
     `stats()`, `markRestoredByUndo(path:)`. Thread-safe. Schema version 2 (adds `restored_by_undo`).
+  - `changes() -> AsyncStream<IndexChange>`: every committed row change from the call on, in commit order (unbounded
+    buffer; one subscription per call; ends when the index is freed). `IndexChange`: `kind` (`.inserted` / `.updated`
+    / `.removed`), `id` (stable across path changes) and `path` (after the change; for `.removed`, the path it had).
+    `save` → inserted or updated; `updatePath` → updated, plus removed for a stale row it replaced; `markRestoredByUndo`
+    → updated. For Spotlight, search refresh and clean-up.
+  - Columns (internal): `ScreenshotIndex.columns` declares each column once (SQL, migration, bind, read). Adding one:
+    an entry with the next `addedIn`, plus `SQLiteMigration(version: n, statements: addColumns(addedIn: n))`.
   - `search(_ query: ScreenshotQuery, limit:) -> ScreenshotSearchResult` (search window): text + `contentType` chip +
     optional batch `paths`, AND-combined, `done` rows only; returns `rows`, `matchCount` and `totalCount` for the footer.
   - `IndexedScreenshot`: one row; `note` explains kept names / non-fatal problems. `ProcessingStatus`: pending/done/failed/skipped.
@@ -122,6 +129,7 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `IconGeometry.appIcon` / `.menuBarGlyph`: unit-square corners and sparkle of the app icon and the menu bar glyph.
 - **Settings/**
   - `AppSettings`: all settings with defaults; `encoded()` / `AppSettings.decode(_:)` (missing/bad keys → defaults).
+    A new setting needs a `CodingKeys` case and an `init(from:)` line; `SettingsTests.testEveryPropertyRoundTrips` checks both.
     `showRenameToast` (default true) and `playRenameSound` (default false) drive the toast and the sound.
     Toggle Finder metadata with `writeFinderMetadata`. Show the Clairic privacy notice until `hasSeenPrivacyNotice`.
   - `filenameCasing`, `filenameDatePrefix` (→ `filenameStyle`), `searchShortcut: HotKeyShortcut` (default ⌥⌘S; a stored
