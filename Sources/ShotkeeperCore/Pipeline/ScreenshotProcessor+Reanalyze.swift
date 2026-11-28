@@ -8,6 +8,9 @@ public enum ReanalysisRefusal: Equatable, Sendable {
     case excluded(ExcludeRules.Rule)
     /// Shotkeeper is paused.
     case paused(until: Date)
+    /// The row is not `done` (pending, failed or skipped), before the analysis or after it: a `process` run may be
+    /// working on that path, and search shows only `done` rows. Ticket 08 needs wording for it; nothing was written.
+    case notDone(ProcessingStatus)
 }
 
 /// Why Analyze Again was skipped (not an error, nothing written).
@@ -51,10 +54,11 @@ extension ScreenshotProcessor {
     /// `.alreadyIndexed`. Keyed on the row id; the row's current path is read at every call, so a rename made while
     /// the job waited does not lose the file.
     ///
-    /// Look up the row (`.refused(.missing)`) → exclude rules and Pause (`.refused`, nothing sent) → fingerprint and
-    /// prepare → `UploadConsent.decide` on the snapshot read once right before `analyze`, with `request`
-    /// (`.skipped(.awaitingConsent)`, nothing written) → `analyze` with the pipeline's `AnalysisContext` → apply to a
-    /// copy of the row → name (restored by Undo, then the user's name, then the pipeline's rename rule) → place (the
+    /// Look up the row (`.refused(.missing)`, `.refused(.notDone)`) → exclude rules and Pause (`.refused`, nothing
+    /// sent) → fingerprint and prepare → `UploadConsent.decide` on the snapshot read once right before `analyze`, with
+    /// `request` (`.skipped(.awaitingConsent)`, nothing written) → `analyze` with the pipeline's `AnalysisContext` →
+    /// look up the row again by id (a rename or Undo made meanwhile counts; gone, not `done` or no file: refused,
+    /// nothing written) → apply to a copy of that row → name (restored by Undo, then the user's name, then the pipeline's rename rule) → place (the
     /// pipeline's move rule with today's settings, not for restored rows) → undo record → Finder → `updatePath` →
     /// `save`.
     ///
@@ -64,8 +68,9 @@ extension ScreenshotProcessor {
     ///   and allowed, `UserUploadRequests.authorization(for:)`). It lifts only "taken before the grant", never
     ///   "destination not allowed".
     public func reanalyze(rowID: Int64, request: UserUploadAuthorization? = nil) async throws -> ReanalysisOutcome {
-        // 1. The row and its file, at the path the row has now.
+        // 1. The row and its file, at the path the row has now. Only `done` rows (search shows only those).
         guard let row = try index.lookup(id: rowID) else { return .refused(.missing) }
+        guard row.status == .done else { return .refused(.notDone(row.status)) }
         let url = URL(fileURLWithPath: row.path).standardizedFileURL
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else { return .refused(.missing) }
@@ -94,18 +99,37 @@ extension ScreenshotProcessor {
         // 3. Fingerprint and prepare. Nothing is written before the analysis succeeds.
         let hash = try ContentFingerprint.compute(for: url)
         let payload = try imagePreparer.prepare(url)
+        // The file may have been replaced while it was prepared: judge it by the earlier of both reads of its dates.
         consentCapturedAt = min(consentCapturedAt, UploadConsent.effectiveCaptureTime(of: url, timeZone: timeZone))
 
         // 4. THE consent decision, on the pair this job then uses.
         guard let job = consentedJob(capturedAt: consentCapturedAt, userRequest: request)
         else { return .skipped(.awaitingConsent) }
-        let settings = job.settings
 
         // 5. The pipeline's context: the original name and the capture time, never recognized text.
         let context = AnalysisContext(originalFilename: row.originalFilename, capturedAt: capturedAt)
         let analysis = try await send(payload, context: context, with: job)
 
-        // 6. Apply to a copy of the row.
+        // The row again, by id: while the model worked the user may have renamed the file (Edit name), undone a
+        // rename, or a `process` run may have taken the path. `save` upserts by path, so writing the row read before
+        // `send` would leave a second row at the old path with no file (review of PR #27). Everything below uses
+        // only this fresh row; when it is gone, no longer `done`, or its file is gone, nothing is written.
+        guard let current = try index.lookup(id: rowID) else { return .refused(.missing) }
+        guard current.status == .done else { return .refused(.notDone(current.status)) }
+        guard fm.fileExists(atPath: URL(fileURLWithPath: current.path).standardizedFileURL.path)
+        else { return .refused(.missing) }
+        return try update(current, with: analysis, hash: hash, capturedAt: capturedAt, settings: job.settings)
+    }
+
+    /// Steps 6–9 on `row`, the row as it is after `analyze`: apply, name, place, undo record, Finder, `updatePath`,
+    /// `save`. The name rules read this row, so a name typed or restored while the model worked is respected.
+    private func update(_ row: IndexedScreenshot, with analysis: ScreenshotAnalysis, hash: String, capturedAt: Date,
+                        settings: AppSettings) throws -> ReanalysisOutcome {
+        let url = URL(fileURLWithPath: row.path).standardizedFileURL
+
+        // 6. Apply to a copy of the row. A content change keeps `title_source` (unlike `process`): the user asked to
+        // analyze this file again, and a name they typed stays theirs; the model's title is offered as the
+        // suggestion (wiki, review of PR #27).
         var entry = row
         entry.apply(analysis)
         entry.status = .done
@@ -156,8 +180,7 @@ extension ScreenshotProcessor {
             writeFinderMetadata(analysis, to: finalURL, settings: settings, notes: &notes)
         }
 
-        let earlier = (row.note?.components(separatedBy: "; ") ?? []).filter { $0 != Self.analyzedAgainNote }
-        entry.note = (earlier + notes + [Self.analyzedAgainNote]).joined(separator: "; ")
+        entry.note = Self.note(after: row.note, adding: notes, touchedFile: !row.restoredByUndo)
         if finalURL != url {
             try index.updatePath(from: url.path, to: finalURL.path)
             entry.path = finalURL.path
@@ -168,5 +191,18 @@ extension ScreenshotProcessor {
         let moved = finalURL.deletingLastPathComponent().path != url.deletingLastPathComponent().path
         return .updated(finalURL: finalURL, renamed: renamed, moved: moved, titleKept: titleKept,
                         suggestedTitle: suggestedTitle)
+    }
+
+    /// The row's note after a re-analysis: earlier parts, minus the ones this run makes stale, then this run's
+    /// notes, then one "analyzed again". Stale: an earlier run's "kept name: …" (it described the old analysis or a
+    /// rename that is tried again; "kept name: rename failed (…)" too, from `place`) and, when this run wrote Finder
+    /// metadata again, an earlier "Finder metadata not written (…)" (`writeFinderMetadata`). Other parts, such as
+    /// "renamed by the user" or "undo record not written", describe things that still hold and stay.
+    static func note(after earlier: String?, adding notes: [String], touchedFile: Bool) -> String {
+        let stalePrefixes = ["kept name:"] + (touchedFile ? ["Finder metadata not written"] : [])
+        let kept = (earlier?.components(separatedBy: "; ") ?? []).filter { part in
+            part != analyzedAgainNote && !stalePrefixes.contains { part.hasPrefix($0) }
+        }
+        return (kept + notes + [analyzedAgainNote]).joined(separator: "; ")
     }
 }

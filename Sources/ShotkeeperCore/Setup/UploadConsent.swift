@@ -34,7 +34,7 @@ public enum UploadTarget: Hashable, Sendable {
 /// Screenshots…", "Analyze Again"). It lifts only the time rule, and only while `target` is still the job's target
 /// and still allowed (`UploadConsent.decide`). It carries no reason: `decide` never branches on why the user asked.
 public struct UserUploadAuthorization: Hashable, Sendable {
-    public var target: UploadTarget
+    public let target: UploadTarget
 
     /// Internal on purpose: app code gets an authorization only from `UserUploadRequests.authorization(for:)`, whose
     /// generation stamp drops the request when the backend, endpoint or grants change. An authorization built at the

@@ -142,8 +142,9 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
       the model's.
     - `reanalyze(rowID:request:) -> ReanalysisOutcome` (Analyze Again, `ScreenshotProcessor+Reanalyze.swift`): the
       only way past `.alreadyIndexed`. Keyed on the row id (`ScreenshotIndex.lookup(id:)`), the path read at each
-      call. `.refused(.missing | .excluded(rule) | .paused(until:))` and `.skipped(.awaitingConsent)` send and write
-      nothing. `.updated(finalURL:renamed:moved:titleKept:suggestedTitle:)`: analysis applied to the row (still
+      call, and again by id after `analyze` (the name rules apply to that fresh row, so a rename or Undo made meanwhile
+      counts). `.refused(.missing | .notDone(status) | .excluded(rule) | .paused(until:))` and
+      `.skipped(.awaitingConsent)` write nothing (`.missing`/`.notDone` can also come after the send). `.updated(finalURL:renamed:moved:titleKept:suggestedTitle:)`: analysis applied to the row (still
       `done`, note gains "analyzed again", `textStatus = .pending` only when the content hash changed), today's
       rename and move rules, undo record, Finder, `updatePath`, `save`. `TitleKeptReason`: `.restoredByUndo` (index
       only, checked first), `.yourName` (with `suggestedTitle`, not stored; pass it to

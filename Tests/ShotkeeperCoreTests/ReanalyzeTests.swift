@@ -29,7 +29,7 @@ final class ReanalyzeTests: XCTestCase {
 
     override func tearDown() { dir = nil }
 
-    private func processor(_ analyzer: StubAnalyzer, now: Date? = nil,
+    private func processor(_ analyzer: any ScreenshotAnalyzer, now: Date? = nil,
                            preparer: any ImagePreparer = PassthroughImagePreparer()) -> ScreenshotProcessor {
         let settings = self.settings!
         let now = now ?? self.now
@@ -269,6 +269,103 @@ final class ReanalyzeTests: XCTestCase {
                                          suggestedTitle: nil))
     }
 
+    // MARK: Changes while the model works (review of PR #27)
+
+    /// Every row's file exists and each file has one row: no ghost row at a path without a file.
+    private func assertIndexMatchesDisk(_ expectedPaths: [String], file: StaticString = #filePath, line: UInt = #line) throws {
+        let rows = try index.recent(limit: 100)
+        XCTAssertEqual(Set(rows.map(\.path)), Set(expectedPaths), file: file, line: line)
+        XCTAssertEqual(rows.count, expectedPaths.count, file: file, line: line)
+        for row in rows {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: row.path), "no file at \(row.path)", file: file, line: line)
+        }
+    }
+
+    /// The user renames the file by hand while the model works: their name is kept and the model's title becomes the
+    /// suggestion, on the one row that follows the file.
+    func testARenameByHandDuringTheAnalysisKeepsTheTypedName() async throws {
+        let row = try await indexedScreenshot()
+        let analyzer = HookedAnalyzer(newAnalysis())
+        let p = processor(analyzer, now: later)
+        let typed = desktop("Acme March.png")
+        analyzer.hook.set { _ = try p.rename(URL(fileURLWithPath: row.path), to: "Acme March") }
+        let recordsBefore = try undoLog.records().count
+
+        let outcome = try await p.reanalyze(rowID: row.id)
+        XCTAssertEqual(outcome, .updated(finalURL: typed, renamed: false, moved: false, titleKept: .yourName,
+                                         suggestedTitle: "Acme Invoice For November"))
+        XCTAssertEqual(read(typed), "png bytes")
+        try assertIndexMatchesDisk([typed.path])
+        let updated = try XCTUnwrap(index.lookup(id: row.id))
+        XCTAssertEqual(updated.path, typed.path)
+        XCTAssertEqual(updated.title, "Acme March")
+        XCTAssertEqual(updated.titleSource, .user)
+        XCTAssertEqual(updated.description, "A November invoice")
+        XCTAssertEqual(updated.note, "renamed by the user; analyzed again")
+        XCTAssertEqual(try undoLog.records().count, recordsBefore + 1, "only the hand rename")
+    }
+
+    /// The user undoes the rename while the model works: the file stays where Undo put it (index only).
+    func testAnUndoDuringTheAnalysisLeavesTheFileWhereUndoPutIt() async throws {
+        let row = try await indexedScreenshot()
+        let analyzer = HookedAnalyzer(newAnalysis())
+        let p = processor(analyzer, now: later)
+        analyzer.hook.set { _ = try p.undoLast() }
+        settings.mutate { $0.organizedFolder = self.dir.url.appendingPathComponent("Organized"); $0.moveEnabled = true }
+        let finderBefore = writer.attributes.get
+        let restored = desktop(shotName)
+
+        let outcome = try await p.reanalyze(rowID: row.id)
+        XCTAssertEqual(outcome, .updated(finalURL: restored, renamed: false, moved: false, titleKept: .restoredByUndo,
+                                         suggestedTitle: nil))
+        XCTAssertEqual(read(restored), "png bytes")
+        try assertIndexMatchesDisk([restored.path])
+        let updated = try XCTUnwrap(index.lookup(id: row.id))
+        XCTAssertEqual(updated.path, restored.path)
+        XCTAssertTrue(updated.restoredByUndo)
+        XCTAssertEqual(updated.description, "A November invoice")
+        XCTAssertEqual(writer.attributes.get, finderBefore, "a restored file is not touched")
+        XCTAssertEqual(try undoLog.records().count, 0, "the one record was undone; nothing new")
+    }
+
+    /// The file is moved away outside Shotkeeper while the model works (the index cannot follow): nothing is written,
+    /// so no row is left pointing at the old path with a new analysis.
+    func testAFileMovedAwayDuringTheAnalysisIsNotWritten() async throws {
+        let row = try await indexedScreenshot()
+        let analyzer = HookedAnalyzer(newAnalysis())
+        let away = dir.url.appendingPathComponent("elsewhere.png")
+        let path = row.path
+        analyzer.hook.set { try FileManager.default.moveItem(atPath: path, toPath: away.path) }
+        let outcome = try await processor(analyzer, now: later).reanalyze(rowID: row.id)
+        XCTAssertEqual(outcome, .refused(.missing))
+        XCTAssertEqual(try index.lookup(id: row.id), row, "nothing written")
+        XCTAssertEqual(try index.stats().count, 1)
+        XCTAssertEqual(try undoLog.records().count, 1)
+        XCTAssertEqual(read(away), "png bytes")
+    }
+
+    /// Only `done` rows are analyzed again, checked before the send and again after it (a `process` run may have
+    /// taken the path meanwhile). Nothing is written either way.
+    func testARowThatIsNotDoneIsRefusedBeforeOrAfterTheAnalysis() async throws {
+        let row = try await indexedScreenshot()
+        var failed = row
+        failed.status = .failed
+        try index.save(failed)
+        let analyzer = HookedAnalyzer(newAnalysis())
+        let p = processor(analyzer, now: later)
+        let before = try await p.reanalyze(rowID: row.id)
+        XCTAssertEqual(before, .refused(.notDone(.failed)))
+        XCTAssertEqual(try index.lookup(id: row.id), failed)
+
+        try index.save(row)
+        let pending: IndexedScreenshot = { var copy = row; copy.status = .pending; return copy }()
+        let index = self.index!
+        analyzer.hook.set { try index.save(pending) }
+        let after = try await p.reanalyze(rowID: row.id)
+        XCTAssertEqual(after, .refused(.notDone(.pending)))
+        XCTAssertEqual(try index.lookup(id: row.id), pending, "nothing written over the other job's row")
+    }
+
     // MARK: Failure, refusals, text, feed
 
     func testAFailedAnalysisLeavesTheRowIdentical() async throws {
@@ -340,6 +437,47 @@ final class ReanalyzeTests: XCTestCase {
         XCTAssertEqual(changed.textStatus, .pending)
         XCTAssertEqual(changed.contentHash, try ContentFingerprint.compute(for: URL(fileURLWithPath: row.path)))
         XCTAssertNotEqual(changed.contentHash, row.contentHash)
+    }
+
+    /// Unlike `process`, a content change keeps a typed name the user's: they asked to analyze this file again, so
+    /// its name is not replaced unasked; the model's title is the suggestion (wiki, review of PR #27).
+    func testAUserNamedFileWhoseContentChangedKeepsTheUsersName() async throws {
+        let row = try await indexedScreenshot()
+        let p = processor(StubAnalyzer(newAnalysis()), now: later)
+        let typed = try p.rename(URL(fileURLWithPath: row.path), to: "Acme March").finalURL
+        try Data("edited png bytes".utf8).write(to: typed)
+
+        let outcome = try await p.reanalyze(rowID: row.id)
+        XCTAssertEqual(outcome, .updated(finalURL: typed, renamed: false, moved: false, titleKept: .yourName,
+                                         suggestedTitle: "Acme Invoice For November"))
+        let updated = try XCTUnwrap(index.lookup(id: row.id))
+        XCTAssertEqual(updated.titleSource, .user)
+        XCTAssertEqual(updated.title, "Acme March")
+        XCTAssertEqual(updated.contentHash, try ContentFingerprint.compute(for: typed))
+        XCTAssertEqual(updated.textStatus, .pending)
+    }
+
+    /// An earlier run's "kept name: …" and "Finder metadata not written (…)" parts are replaced by this run's, not
+    /// piled up; parts that still hold ("renamed by the user") stay.
+    func testStaleNotePartsAreReplacedNotAppended() async throws {
+        var row = try await indexedScreenshot()
+        row.note = "kept name: title confidence 0.20 < 0.50; Finder metadata not written (EIO); undo record not written (EIO)"
+        try index.save(row)
+        let failing = FileOrganizer(renameNoReplace: { _, _ in EACCES })
+        let settings = self.settings!
+        let now = self.now
+        let p = ScreenshotProcessor(analyzer: StubAnalyzer(newAnalysis()), imagePreparer: PassthroughImagePreparer(),
+                                    index: index, organizer: failing, undoLog: undoLog, settings: { settings.get },
+                                    now: { now })
+        _ = try await p.reanalyze(rowID: row.id)
+        _ = try await p.reanalyze(rowID: row.id)
+        let note = try XCTUnwrap(index.lookup(id: row.id)?.note)
+        XCTAssertEqual(note.components(separatedBy: "kept name:").count - 1, 1, note)
+        XCTAssertTrue(note.hasPrefix("undo record not written (EIO); kept name: rename failed ("), note)
+        XCTAssertTrue(note.hasSuffix("); analyzed again"), note)
+
+        _ = try await processor(StubAnalyzer(newAnalysis())).reanalyze(rowID: row.id)
+        XCTAssertEqual(try index.lookup(id: row.id)?.note, "undo record not written (EIO); analyzed again")
     }
 
     func testTheAnalyzerRequestCarriesNoRecognizedText() async throws {
@@ -441,6 +579,27 @@ final class ReanalyzeTests: XCTestCase {
         XCTAssertEqual(carried, 0, "dropped when the job ended")
     }
 
+    /// `ScreenshotProcessorTests.testAFileReplacedWhilePreparingIsJudgedByItsOwnDates`, for Analyze Again: the dates
+    /// are read again after preparing, and the earlier read wins.
+    func testAFileReplacedWhilePreparingIsJudgedByItsOwnDates() async throws {
+        let row = try await indexedScreenshot()  // original name 2026-01-13, file dates now
+        // Granted before every date the file claims when the job starts.
+        settings.mutate { $0.uploadGrants = [.init(destination: .cloudflare,
+                                                   grantedAt: Date(timeIntervalSince1970: 1_700_000_000))] }
+        let old = Date(timeIntervalSince1970: 1_600_000_000)
+        let path = row.path
+        let analyzer = StubAnalyzer(newAnalysis())
+        let preparer = HookedPreparer {
+            // Replaced by an older file (e.g. extracted from an archive), keeping the modification date.
+            try? Data("older".utf8).write(to: URL(fileURLWithPath: path))
+            try? FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: path)
+        }
+        let outcome = try await processor(analyzer, preparer: preparer).reanalyze(rowID: row.id)
+        XCTAssertEqual(outcome, .skipped(.awaitingConsent))
+        XCTAssertEqual(analyzer.calls.get.count, 0)
+        XCTAssertEqual(try index.lookup(id: row.id), row, "nothing written")
+    }
+
     /// A renamed file has lost the time in its name; its original name still counts for consent (fails closed).
     func testARenamedFileIsJudgedByItsOriginalNameToo() async throws {
         let row = try await indexedScreenshot()  // now "Invoice From Acme.png", originally named 2026-01-13
@@ -454,6 +613,20 @@ final class ReanalyzeTests: XCTestCase {
         let outcome = try await processor(analyzer).reanalyze(rowID: row.id)
         XCTAssertEqual(outcome, .skipped(.awaitingConsent))
         XCTAssertEqual(analyzer.calls.get.count, 0)
+    }
+}
+
+/// Returns `analysis`, running `hook` first: the user acts (renames, undoes) while the model works.
+final class HookedAnalyzer: ScreenshotAnalyzer, @unchecked Sendable {
+    let backendID = "stub"
+    let analysis: ScreenshotAnalysis
+    let hook = Locked<(@Sendable () throws -> Void)?>(nil)
+
+    init(_ analysis: ScreenshotAnalysis) { self.analysis = analysis }
+
+    func analyze(_ image: ImagePayload, context: AnalysisContext) async throws -> ScreenshotAnalysis {
+        try hook.get?()
+        return analysis
     }
 }
 
