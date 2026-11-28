@@ -77,8 +77,8 @@ not created twice.
   so that is the handler's call shape changing, not a weaker test.
 - 2026-11-28 (ticket 04): **sort new screenshots into subfolders.** `SubfolderRule` (`Files/SubfolderRule.swift`) is
   `AppSettings.subfolderRule` (default `.off`, unknown stored value → `.off`). The pure router
-  `relativeFolder(contentType:source:existing:)` returns the folders below the organized folder; `existing(parent)` lists
-  the names already there, so reuse is tested without a disk. The pipeline's destination and placement live in
+  `relativeFolder(contentType:source:existing:)` returns the folders below the organized folder; `existing(parent)`
+  lists the names already there, so reuse is tested without a disk. The pipeline's destination and placement live in
   `Pipeline/ScreenshotProcessor+Subfolders.swift` (`destination(for:settings:)`, `place(_:stem:into:notes:)`), which
   Analyze Again must reuse. `ProcessingReport.sortedInto` / `RenamedToast.sortedInto` carry the subfolder to the toast.
   Tests: `SubfolderRuleTests`, `SubfolderSettingsTextTests`, `ScreenshotProcessorSubfolderTests`, `ToastTests`
@@ -88,26 +88,26 @@ not created twice.
   (`SourceKey.rawValue` is a matching key only), not from this screenshot's own spelling as the spec's "named from the
   raw spelling" reads: the pipeline looks up the facet with the source's key in `index.sources()` and uses its display
   name (the most common trimmed spelling), else this screenshot's trimmed spelling when the index has none. Once the
-  folder exists it is reused by key, so the first name given still stays (spec: "the first spelling seen stays").
-  Test: `testANewSourceFolderIsNamedFromTheIndexDisplayNameNotTheKey`.
+  folder exists it is reused by key, so the first name given still stays (spec: "the first spelling seen stays"). Test:
+  `testANewSourceFolderIsNamedFromTheIndexDisplayNameNotTheKey`.
 - 2026-11-28 (ticket 04): **folder-name cleaning beyond the spec's list**, for safety: a run of `/` and `:` becomes one
-  " - " ("https://x" → "https - x", not "https - - - x"); runs of whitespace collapse; line separators and
-  bidirectional controls (U+202A–202E, U+2066–2069) are dropped with the control characters; the 60-character cap is
-  also capped at 255 UTF-8 bytes (60 emoji can be 1500 bytes); a name left with only dashes, dots and spaces
-  ("../.." → "-") counts as unknown, like an empty one. macOS reserves no names besides `.` and `..`; a name a volume
-  refuses falls back to the organized folder. Tests: `SubfolderRuleTests` "Folder names from hostile sources".
+  " - " ("https://x" → "https - x", not "https - - - x"); runs of whitespace collapse; line separators and bidirectional
+  controls (U+202A–202E, U+2066–2069) are dropped with the control characters; the 60-character cap is also capped at
+  255 UTF-8 bytes (60 emoji can be 1500 bytes); a name left with only dashes, dots and spaces ("../.." → "-") counts as
+  unknown, like an empty one. macOS reserves no names besides `.` and `..`; a name a volume refuses falls back to the
+  organized folder. Tests: `SubfolderRuleTests` "Folder names from hostile sources".
 - 2026-11-28 (ticket 04): **the existing-name listing sees only real folders**: not hidden names, not symbolic links
   (`attributesOfItem`, which does not follow links), and a subfolder is created one level at a time below the organized
-  folder, never through a link. A link or file with the folder's name → the organized folder itself, note
-  `subfolder not created (“Receipts” is a file, not a folder)`. Type folders are reused in any letter case ("receipts"),
-  like source folders, so Linux tests and case-sensitive volumes behave like APFS. Tests:
+  folder, never through a link. A link or file with the folder's name → the organized folder itself, note `subfolder not
+  created (“Receipts” is a file, not a folder)`. Type folders are reused in any letter case ("receipts"), like source
+  folders, so Linux tests and case-sensitive volumes behave like APFS. Tests:
   `testAFileNamedLikeTheSubfolderSendsTheScreenshotToTheOrganizedFolder`,
   `testALinkNamedLikeTheSubfolderIsNotFollowedOutOfTheOrganizedFolder`, `testATypeFolderIsReusedInAnyLetterCase`.
 - 2026-11-28 (ticket 04): **the fallback also covers a move into the subfolder that fails** after the folder exists
   (note `subfolder not used (…)`), not only a folder that can't be made: the spec's aim (story 15) is that the move
   still happens. If the organized folder fails too, today's rule: kept name and place, `kept name: rename failed (…)`.
-  Test: `testWhenTheOrganizedFolderFailsTooTheFileKeepsItsNameAndPlace`. "Permission denied" is not tested on Linux:
-  the Docker tests run as root; it takes the same path as the file in the way (real-Mac check).
+  Test: `testWhenTheOrganizedFolderFailsTooTheFileKeepsItsNameAndPlace`. "Permission denied" is not tested on Linux: the
+  Docker tests run as root; it takes the same path as the file in the way (real-Mac check).
 - 2026-11-28 (ticket 04): **watching invariant** is kept by the existing code and now documented on `FolderWatcher` and
   `ExistingScreenshotScanner` ("a recursive watch/scan must exclude the organized folder"). Tests:
   `FolderWatcherTests.testEmitsRenamedScreenshotAndIgnoresHiddenAndNested` (existing),
@@ -118,11 +118,11 @@ not created twice.
   "Moved: <name>.", the label and name as one element. Copy uses the repo's straight apostrophe ("Can't find").
   `GeneralSettingsTab(organizedFolderStatus:)` is injectable because the snapshots' organized folder does not exist on
   the CI Mac. The "Sort Existing Screenshots…" row is left for ticket 05.
-- 2026-11-28 (ticket 04): **interplay with 06.** PR #27 (06, open) splits `process` into `destinationFolder(for:settings:)`
-  and `place(_:stem:into:notes:)` in `ScreenshotProcessor.swift`. Whichever merges second keeps 04's
-  `destination(for:settings:)` and `place(_:stem:into:notes:)` (`+Subfolders`) as the one helper and adds the seam 1
-  test "Analyze Again moves to the new type's folder". Both make the stored properties internal (one comment line
-  differs).
+- 2026-11-28 (ticket 04): **interplay with 06.** PR #27 (06, open) splits `process` into
+  `destinationFolder(for:settings:)` and `place(_:stem:into:notes:)` in `ScreenshotProcessor.swift`. Whichever merges
+  second keeps 04's `destination(for:settings:)` and `place(_:stem:into:notes:)` (`+Subfolders`) as the one helper and
+  adds the seam 1 test "Analyze Again moves to the new type's folder". Both make the stored properties internal (one
+  comment line differs).
 
 ## Verification
 - 2026-11-28 (`1312ab1`, ticket 02): `SCRATCH=.build/linux-w2-02 scripts/test-linux.sh` green, 433 tests;
@@ -134,6 +134,7 @@ not created twice.
   (`testAnAttemptThatFailsAfterAPauseShowsAsHeldNotRunning`). `waitUntil` in the queue tests now fails loudly on
   timeout. For ticket 08: always pass `atFront: true` (a job already waiting at the back is not promoted), and look
   up `.process` jobs by standardized URL.
-- 2026-11-28 (ticket 04): `SCRATCH=.build/linux-w2-04 scripts/test-linux.sh` green after merging `t3/wave2`
-  (ticket 03), 562 tests; `scripts/lint.sh` ok (no new `lint-allow`). Real-Mac checks (Finder shows the folders; "slack" reused for "Slack" on APFS; Undo from the
-  toast and the menu leaves the empty folder; Settings does not jump) are open for ticket 10.
+- 2026-11-28 (ticket 04): `SCRATCH=.build/linux-w2-04 scripts/test-linux.sh` green after merging `t3/wave2` (ticket 03),
+  562 tests; `scripts/lint.sh` ok (no new `lint-allow`). Real-Mac checks (Finder shows the folders; "slack" reused for
+  "Slack" on APFS; Undo from the toast and the menu leaves the empty folder; Settings does not jump) are open for ticket
+  10.
