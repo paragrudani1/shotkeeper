@@ -123,3 +123,7 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   `primeintellect/fp4`, `io-net/nvfp4` and the priority tier `primeintellect/fast`, all ZDR. The `fast` tier bills
   2.5× ($0.15/$0.60 per M), and `service_tier: "default"` would keep requests off it. Planned as a small PR together
   with the out-of-date README/wiki prices (Prime Intellect standard is now $0.06/$0.24) and the Clairic promo wording.
+- 2026-11-28: Parag **confirmed the wave 1 test seams** and left all of the spec's judgement calls unticked, which
+  accepts them: OCR always on with no setting, and Pause does not stop it; ⇧⌘C copies the text; OCR text is in the
+  search match, weighted far below the title; Copy Text reads a never-read screenshot on demand; one source at a
+  time; type filter = the seven chips; a tag click clears all filters.
