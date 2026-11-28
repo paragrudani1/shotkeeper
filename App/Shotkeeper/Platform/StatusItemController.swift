@@ -126,7 +126,7 @@ final class StatusItemController: NSObject {
         }
         guard pulseTask == nil, let button = statusItem.button else { return }
         button.image = Self.icon(for: coordinator.queueStatus)
-        let summary = MenuText.status(queue: coordinator.queueStatus, watchedFolderName: coordinator.watchedFolder?.lastPathComponent,
+        let summary = MenuText.status(queue: coordinator.queueStatus, watchedFolderName: coordinator.capture.watchedFolder?.lastPathComponent,
                                       indexedCount: coordinator.indexedCount, failure: coordinator.failureText, now: Date())
         button.toolTip = "Shotkeeper: \(summary.detail)"
     }

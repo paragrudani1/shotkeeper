@@ -2,21 +2,6 @@ import ShotkeeperCore
 import XCTest
 @testable import Shotkeeper
 
-/// Temp folder per test.
-class TempDirectoryTestCase: XCTestCase {
-    var directory: URL!
-
-    override func setUpWithError() throws {
-        directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(type(of: self))-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: directory)
-    }
-}
-
 final class SettingsStoreTests: TempDirectoryTestCase {
     func testMissingFileGivesDefaults() {
         let store = SettingsStore(fileURL: directory.appendingPathComponent("settings.json"))
@@ -253,18 +238,7 @@ final class AnalyzerFactoryTests: XCTestCase {
 final class AppCoordinatorTests: TempDirectoryTestCase {
     private func makeCoordinator(credentials: InMemoryCredentialStore = InMemoryCredentialStore(),
                                  memoryGB: UInt64 = 16) -> AppCoordinator {
-        AppCoordinator(supportDirectory: directory.appendingPathComponent("support"), credentials: credentials,
-                       physicalMemoryBytes: memoryGB * 1_073_741_824,
-                       applicationSupport: directory, logDirectory: directory.appendingPathComponent("logs"))
-    }
-
-    /// Status reaches the coordinator through an AsyncStream task; give it up to 5 s.
-    private func waitUntil(_ condition: () -> Bool) async {
-        var tries = 0
-        while !condition(), tries < 500 {
-            tries += 1
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        .forTesting(in: directory, credentials: credentials, memoryGB: memoryGB)
     }
 
     func testOpensIndexAndDefaultsToUnconfiguredClairic() {
@@ -369,7 +343,7 @@ final class AppCoordinatorTests: TempDirectoryTestCase {
 
     func testUndoWithNothingToUndoReportsInsteadOfThrowing() {
         let coordinator = makeCoordinator()
-        coordinator.undoLastRename()
+        coordinator.fileActions.undoLast()
         XCTAssertNotNil(coordinator.lastMessage)
     }
 
@@ -439,5 +413,40 @@ final class ExistingScreenshotScannerTests: TempDirectoryTestCase {
     func testMissingFolderGivesNothing() {
         XCTAssertEqual(ExistingScreenshotScanner.candidates(in: directory.appendingPathComponent("nope"),
                                                             detector: ScreenshotDetector()) { _ in false }, [])
+    }
+}
+
+/// The coordinator's parts work against their small host protocols (2026-11-28 prefactor).
+@MainActor
+final class CoordinatorPartsTests: TempDirectoryTestCase {
+    private final class FakeHost: FileActionsHost {
+        var lastMessage: String?
+        var cleared = 0, refreshed = 0
+        var toasts: [ToastContent] = []
+        func clearMessageAfterSuccess() { cleared += 1 }
+        func refreshHistory() { refreshed += 1 }
+        func showToast(_ content: ToastContent) { toasts.append(content) }
+    }
+
+    func testFileActionsWithoutAnIndexSayWhy() {
+        let host = FakeHost()
+        let actions = FileActions()
+        actions.host = host
+        guard case .error(let error) = actions.undo(ids: [UUID()]) else { return XCTFail() }
+        XCTAssertEqual(error.problem, FileActions.indexNotOpen)
+        let toast = RenamedToast(originalURL: URL(fileURLWithPath: "/d/a.png"), currentURL: URL(fileURLWithPath: "/d/b.png"),
+                                 undoRecordIDs: [UUID()])
+        XCTAssertEqual(actions.rename(toast, to: "c"), .failure(FileActions.indexNotOpen))
+        actions.undoLast()
+        XCTAssertEqual(host.cleared, 0)
+        XCTAssertEqual(host.toasts, [])
+    }
+
+    func testTheCoordinatorWiresItsParts() {
+        let coordinator = AppCoordinator.forTesting(in: directory)
+        XCTAssertNotNil(coordinator.fileActions.processor, "the index opened, so file actions can work")
+        XCTAssertTrue(coordinator.fileActions.host === coordinator)
+        XCTAssertTrue(coordinator.capture.host === coordinator)
+        XCTAssertFalse(coordinator.capture.isWatching, "unit tests never start services")
     }
 }

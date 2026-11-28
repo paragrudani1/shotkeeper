@@ -54,7 +54,7 @@ struct MenuViewState {
         let isError: Bool = { if case .error = coordinator.queueStatus { return true } else { return false } }()
         return MenuViewState(
             status: MenuText.status(queue: coordinator.queueStatus,
-                                    watchedFolderName: coordinator.watchedFolder?.lastPathComponent,
+                                    watchedFolderName: coordinator.capture.watchedFolder?.lastPathComponent,
                                     indexedCount: coordinator.indexedCount, failure: coordinator.failureText,
                                     notWatchingReason: coordinator.notWatchingReason,
                                     skippingForConsent: coordinator.isSkippingForConsent, now: now),
@@ -71,7 +71,7 @@ struct MenuViewState {
             isPaused: coordinator.isPaused,
             searchShortcut: coordinator.activeSearchShortcut?.display,
             version: version,
-            showsPauseResume: coordinator.isWatching || coordinator.isPaused,
+            showsPauseResume: coordinator.capture.isWatching || coordinator.isPaused,
             showsProcessExisting: coordinator.readiness == .ready)
     }
 

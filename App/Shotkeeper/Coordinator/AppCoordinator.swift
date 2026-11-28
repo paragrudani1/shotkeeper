@@ -2,8 +2,14 @@ import Foundation
 import Observation
 import ShotkeeperCore
 
-/// Wires core to the platform: settings file, index, undo log, the active analyzer, processing queue, folder
-/// watcher, and the managed local model server. Everything the menu, setup, settings and search UI do goes through here.
+/// Wires core to the platform: settings file, index, undo log, the active analyzer, processing queue, and the managed
+/// local model server. Everything the menu, setup, settings and search UI do goes through here.
+///
+/// The coordinator is the wiring point; behaviour that grows with features lives in its parts:
+/// - `capture` (`CaptureSources`): the watched folder and Process Existing; new capture sources go there.
+/// - `fileActions` (`FileActions`): undo and rename of processed files; re-sort, Bin and re-analyse go there.
+/// - Test Connection is in `ConnectionTest.swift`.
+/// New parts follow the same shape: their own file, a small host protocol the coordinator implements.
 ///
 /// `startServices()` is separate from `init` so unit tests can build a coordinator (temp folder, in-memory
 /// credentials) without watching folders or registering anything with the system.
@@ -30,11 +36,6 @@ final class AppCoordinator {
         }
     }
     private var message = ExpiringMessage()
-    private(set) var watchedFolder: URL?
-    /// The folder watcher runs. It starts only once the backend is usable (core `BackendGate`): nothing is queued,
-    /// and later uploaded, before the user chose where screenshots go. Once started it keeps running for the
-    /// session, so a token removed later shows the "Needs attention" hold instead of silently ignoring screenshots.
-    private(set) var isWatching = false
     /// Whether the chosen backend may analyze screenshots now. Updated on every settings or secret change.
     private(set) var readiness: BackendReadiness = .notConfigured("Starting")
     /// The menu's "Recent" rows (last 5 processed), the "Undo: <title>" target and the index count.
@@ -73,9 +74,6 @@ final class AppCoordinator {
     /// prepares its image cannot send that job to a backend the decision did not cover.
     @ObservationIgnored private let analyzerBox: LockedValue<AnalyzerSnapshot>
     @ObservationIgnored private var statusTask: Task<Void, Never>?
-    @ObservationIgnored private var watcher: FolderWatcher?
-    @ObservationIgnored private var watchTask: Task<Void, Never>?
-    @ObservationIgnored private var detector = ScreenshotDetector()
     @ObservationIgnored private var servicesStarted = false
     @ObservationIgnored private var messageExpiryTask: Task<Void, Never>?
     @ObservationIgnored private var toastBatcher = ToastBatcher()
@@ -84,8 +82,10 @@ final class AppCoordinator {
     /// Issues "Process Existing Screenshots…" requests (the destination selected at the click). The queue carries each
     /// with its job for the whole job; all are invalidated when the backend, endpoint or grants change.
     @ObservationIgnored let processExistingRequests = ProcessExistingRequests()
-    /// Called on the main actor after Process Existing's folder scan (tests change the destination here).
-    @ObservationIgnored var afterProcessExistingScan: (() -> Void)?
+    /// The watched folder and Process Existing (observable: the menu reads `watchedFolder` and `isWatching`).
+    let capture: CaptureSources
+    /// Undo and rename of processed files.
+    @ObservationIgnored let fileActions: FileActions
     /// Extra listeners for pipeline events (setup's "Try it now" step), keyed by the id `addEventObserver` returned.
     @ObservationIgnored private var eventObservers: [UUID: @MainActor (ScreenshotEvent) -> Void] = [:]
     /// Shows a toast (set by the app delegate; nil in unit tests unless a test sets it).
@@ -106,6 +106,8 @@ final class AppCoordinator {
         self.settings = store.current
         self.analyzerBox = LockedValue(AnalyzerSnapshot(analyzer: UnconfiguredAnalyzer(backendID: "none", reason: "Starting"),
                                                         settings: store.current))
+        self.capture = CaptureSources()
+        self.fileActions = FileActions()
 
         let phaseSink = LockedValue<(@MainActor @Sendable (RuntimePhase) -> Void)?>(nil)
         let bytesSink = LockedValue<(@MainActor @Sendable (Int64) -> Void)?>(nil)
@@ -115,6 +117,8 @@ final class AppCoordinator {
                                               onDownloadBytes: { bytes in Task { @MainActor in bytesSink.value?(bytes) } })
         phaseSink.value = { [weak self] phase in self?.applyRuntimePhase(phase) }
         bytesSink.value = { [weak self] bytes in self?.recordDownloadBytes(bytes) }
+        capture.host = self
+        fileActions.host = self
 
         openStorage()
         rebuildAnalyzer()
@@ -166,11 +170,11 @@ final class AppCoordinator {
     /// The menu's second line while the folder is not watched because no backend is usable ("Not watching yet"),
     /// nil while watching or about to start.
     var notWatchingReason: String? {
-        isWatching ? nil : BackendGate.statusReason(for: readiness)
+        capture.isWatching ? nil : BackendGate.statusReason(for: readiness)
     }
 
     /// Watching, but the selected backend's destination is not allowed: new screenshots are skipped.
-    var isSkippingForConsent: Bool { isWatching && readiness == .needsConsent }
+    var isSkippingForConsent: Bool { capture.isWatching && readiness == .needsConsent }
 
     var statusLine: String {
         if let startupError { return "Error: \(startupError)" }
@@ -205,11 +209,13 @@ final class AppCoordinator {
             let box = analyzerBox
             self.index = index
             self.undoLog = undoLog
-            self.processor = ScreenshotProcessor(
+            let processor = ScreenshotProcessor(
                 snapshot: { box.value },
                 imagePreparer: SettingsDrivenImagePreparer(settings: { store.current }),
                 metadataWriter: XattrMetadataWriter(),
                 index: index, undoLog: undoLog)
+            self.processor = processor
+            fileActions.processor = processor
         } catch {
             indexProblem = UserFacingError.problem(for: error)
             startupError = "Could not open the index: \(StatusText.describe(error))"
@@ -226,17 +232,12 @@ final class AppCoordinator {
 
     /// Starts the watcher (and re-queues interrupted work) once services run and the backend is usable.
     private func startWatchingIfReady() {
-        guard servicesStarted, !isWatching, readiness == .ready else { return }
-        isWatching = true
-        restartWatcher()
-        if let index, let queue, let pending = try? index.entries(withStatus: .pending) {
-            Task { for entry in pending { await queue.enqueue(URL(fileURLWithPath: entry.path)) } }
-        }
+        guard servicesStarted, readiness == .ready else { return }
+        capture.startWatching()
     }
 
     func stopServices() {
-        watchTask?.cancel()
-        watcher?.stop()
+        capture.stop()
         Task { await localRuntime.stop() }
     }
 
@@ -270,7 +271,7 @@ final class AppCoordinator {
             let rate = max(1, new.requestsPerMinute)
             Task { await queue.setRequestsPerMinute(rate) }
         }
-        if new.watchedFolderOverride != old.watchedFolderOverride, isWatching { restartWatcher() }
+        if new.watchedFolderOverride != old.watchedFolderOverride { capture.watchedFolderSettingChanged() }
         if new.idleTimeoutMinutes != old.idleTimeoutMinutes {
             let minutes = new.idleTimeoutMinutes
             Task { await localRuntime.setIdleTimeout(minutes: minutes) }
@@ -469,53 +470,6 @@ final class AppCoordinator {
         if let queue { Task { await queue.resume() } }
     }
 
-    /// The menu's "Undo: <title>" (⌘Z): the most recent rename. Shows the "restored" toast.
-    func undoLastRename() {
-        guard let processor else { return }
-        do {
-            let record = try processor.undoLast()
-            message.clearAfterSuccess()
-            refreshHistory()
-            showToast(.restored(RestoredToast(restoredPaths: [record.from])))
-        } catch {
-            lastMessage = StatusText.describe(error)
-        }
-    }
-
-    /// The toast's Undo / Undo All. Returns the toast to show next.
-    func undoFromToast(ids: [UUID]) -> ToastContent {
-        guard let processor else { return .error(ErrorToast(.undo, UserFacingProblem(message: "the index is not open"))) }
-        defer { refreshHistory() }
-        if ids.count == 1 {
-            do {
-                let record = try processor.undo(id: ids[0])
-                message.clearAfterSuccess()
-                return .restored(RestoredToast(restoredPaths: [record.from]))
-            } catch {
-                return .error(ErrorToast(.undo, UserFacingError.problem(for: error)))
-            }
-        }
-        let result = processor.undo(ids: ids)
-        if result.restored.isEmpty {
-            return .error(ErrorToast(.undo, UserFacingProblem(message: "the files were moved or renamed since")))
-        }
-        message.clearAfterSuccess()
-        return .restored(RestoredToast(restoredPaths: result.restored.map(\.from), failedCount: result.failed.count))
-    }
-
-    /// The toast's "Edit name": rename through the pipeline's rules, update the index, write an undo record.
-    func renameFromToast(_ toast: RenamedToast, to name: String) -> Result<RenamedToast, UserFacingProblem> {
-        guard let processor else { return .failure(UserFacingProblem(message: "the index is not open")) }
-        do {
-            let result = try processor.rename(toast.currentURL, to: name)
-            message.clearAfterSuccess()
-            refreshHistory()
-            return .success(toast.edited(to: result.finalURL, undoRecordID: result.undoRecordID))
-        } catch {
-            return .failure(UserFacingError.problem(for: error))
-        }
-    }
-
     // MARK: Pipeline events (toast, recents, sound, pulse)
 
     /// One pipeline event, on the main actor. Internal so tests can drive it without a model.
@@ -540,10 +494,15 @@ final class AppCoordinator {
         }
     }
 
-    private func showToast(_ content: ToastContent) {
+    /// Shows `content`, or with rename toasts off, a restored file's line as the menu message.
+    func showToast(_ content: ToastContent) {
         if settings.showRenameToast { onToast?(content) } else if case .restored(let restored) = content {
             lastMessage = "\(restored.label): \(restored.title)"
         }
+    }
+
+    func clearMessageAfterSuccess() {
+        message.clearAfterSuccess()
     }
 
     /// Re-reads the recent list, the undo target and the index count.
@@ -561,67 +520,6 @@ final class AppCoordinator {
             try? await Task.sleep(nanoseconds: UInt64(ExpiringMessage.lifetime * 1_000_000_000) + 50_000_000)
             guard !Task.isCancelled else { return }
             self?.message.expire(at: Date())
-        }
-    }
-
-    /// Queues every screenshot in the watched folder that the index does not hold yet.
-    func processExistingScreenshots() async -> Int {
-        guard let index, let queue else { return 0 }
-        // Queued files would be analyzed (uploaded) as soon as a backend became usable: not before setup.
-        guard readiness == .ready else {
-            if case .notConfigured(let reason) = readiness {
-                lastMessage = "Finish setup first: \(reason)"
-            } else {
-                lastMessage = "Finish setup first"
-            }
-            return 0
-        }
-        // The destination the user is asking for: the one selected now, at the click.
-        let target = UploadTarget(settings: settings)
-        let generation = processExistingRequests.generation
-        let folder = watchedFolder ?? currentWatchedFolder().folder
-        let detector = self.detector
-        let candidates = await Task.detached {
-            ExistingScreenshotScanner.candidates(in: folder, detector: detector,
-                                                 isIndexed: ExistingScreenshotScanner.indexedCheck(index))
-        }.value
-        afterProcessExistingScan?()
-        // The processor honours it only while that destination is selected and allowed. A backend, endpoint or grant
-        // change during the scan: nothing is queued, the user asks again for the destination now selected.
-        guard let request = processExistingRequests.request(for: target, madeIn: generation) else {
-            lastMessage = "The destination changed. Run Process Existing again."
-            return 0
-        }
-        toastBatcher.beginRun(candidates)
-        for url in candidates { await queue.enqueue(url, processExisting: request) }
-        lastMessage = candidates.isEmpty ? "No unprocessed screenshots in \(folder.lastPathComponent)"
-            : "Queued \(candidates.count) screenshot\(candidates.count == 1 ? "" : "s")"
-        return candidates.count
-    }
-
-    // MARK: Watching
-
-    private func currentWatchedFolder() -> (folder: URL, prefix: String?) {
-        let location = ScreenshotLocation.current()
-        let prefix = location.namePrefix == ScreenshotLocation.defaultNamePrefix ? nil : location.namePrefix
-        return (settings.watchedFolderOverride ?? location.folder, prefix)
-    }
-
-    private func restartWatcher() {
-        watchTask?.cancel()
-        watcher?.stop()
-        let (folder, prefix) = currentWatchedFolder()
-        detector = ScreenshotDetector(customPrefix: prefix)
-        watchedFolder = folder
-        let watcher = FolderWatcher(folder: folder)
-        self.watcher = watcher
-        watcher.start()
-        watchTask = Task { [weak self] in
-            for await event in watcher.events {
-                guard !Task.isCancelled, let self else { break }
-                guard self.detector.isScreenshot(event.url), let queue = self.queue else { continue }
-                await queue.enqueue(event.url)
-            }
         }
     }
 
@@ -733,37 +631,6 @@ final class AppCoordinator {
         try? index?.lookup(byPath: path)
     }
 
-    /// Runs one analysis of a generated image with the given (unsaved) settings and secrets.
-    func testConnection(settings candidate: AppSettings, secrets: [CredentialKey: String]) async -> Result<String, AnalyzerFailure> {
-        let store = InMemoryCredentialStore()
-        for key in [CredentialKey.cloudflareAPIToken, .customEndpointAPIKey, .openRouterAPIKey] {
-            let override = secrets[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let override, !override.isEmpty {
-                try? store.setSecret(override, for: key)
-            } else if let saved = (try? credentials.secret(for: key)) ?? nil {
-                try? store.setSecret(saved, for: key)
-            }
-        }
-        // Only a generated image is sent here, never a user file, so the consent gate does not apply. The grants
-        // live on this copy only; nothing is saved.
-        var candidate = candidate
-        candidate = BackendGate.granting(.cloudflare, in: candidate, at: .distantPast)
-        candidate = BackendGate.granting(.openRouter,
-                                         expectedOpenRouterModel: OpenRouterBackend.effectiveModel(candidate.openRouterModel),
-                                         in: candidate, at: .distantPast)
-        candidate = BackendGate.granting(.customEndpoint, expectedEndpoint: CustomEndpointIdentity(url: candidate.customEndpointURL),
-                                         in: candidate, at: .distantPast)
-        let analyzer = AnalyzerFactory.make(settings: candidate, credentials: store, localRuntime: localRuntime,
-                                            physicalMemoryBytes: physicalMemoryBytes)
-        do {
-            let payload = try ConnectionTestImage.payload()
-            let analysis = try await analyzer.analyze(payload, context: ConnectionTestImage.context)
-            return .success(ConnectionTestImage.summary(analysis))
-        } catch {
-            return .failure(AnalyzerFailure(message: ConnectionTestText.failure(error, backend: candidate.backend)))
-        }
-    }
-
     /// Free space on the volume of `url` (or its nearest existing parent), nil when unknown.
     nonisolated static func freeDiskBytes(near url: URL) -> Int64? {
         var candidate = url
@@ -822,10 +689,6 @@ extension AppCoordinator {
     }
 }
 
-struct AnalyzerFailure: Error, Equatable {
-    var message: String
-}
-
 /// Reads committed values for the keys being typed and the Keychain for the rest. Read-only.
 private struct CommittedCredentialStore: CredentialStore {
     let base: any CredentialStore
@@ -838,4 +701,10 @@ private struct CommittedCredentialStore: CredentialStore {
 
     func setSecret(_ value: String, for key: CredentialKey) throws {}
     func removeSecret(for key: CredentialKey) throws {}
+}
+
+extension AppCoordinator: CaptureSourcesHost, FileActionsHost {
+    func beginProcessExistingRun(_ files: [URL]) {
+        toastBatcher.beginRun(files)
+    }
 }
