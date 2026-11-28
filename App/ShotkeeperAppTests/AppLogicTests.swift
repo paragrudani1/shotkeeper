@@ -186,7 +186,7 @@ final class SearchKeyTranslationTests: XCTestCase {
         XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command], characters: "c"), .copyImage)
         XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command, .capsLock], characters: "C"), .copyImage)
         XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command], characters: "с"), .copyImage, "Russian layout")
-        XCTAssertNil(SearchKeyMap.command(keyCode: 8, flags: [.command, .shift], characters: "c"))
+        XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command, .shift], characters: "c"), .copyText, "⇧⌘C copies the text (wave 1 ticket 06)")
         XCTAssertNil(SearchKeyMap.command(keyCode: 8, flags: [], characters: "c"))
     }
 
