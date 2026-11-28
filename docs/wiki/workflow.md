@@ -118,3 +118,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **Prefactor A** opened as PR #9 (`e09b0eb`): `ScreenshotIndex.columns`, frozen-schema migration test,
   settings round-trip test, `changes()` feed, `IndexedScreenshot.testRow`. Details: [prefactor-index](prefactor-index.md)
   (on that branch).
+- 2026-11-28: **OpenRouter re-check** ("Re-check 2026-11-28" in [../research/openrouter.md](../research/openrouter.md)):
+  the consent text is still accurate and no privacy change is needed. The `provider.only` pin reaches
+  `primeintellect/fp4`, `io-net/nvfp4` and the priority tier `primeintellect/fast`, all ZDR. The `fast` tier bills
+  2.5× ($0.15/$0.60 per M), and `service_tier: "default"` would keep requests off it. Planned as a small PR together
+  with the out-of-date README/wiki prices (Prime Intellect standard is now $0.06/$0.24) and the Clairic promo wording.
