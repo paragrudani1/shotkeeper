@@ -10,9 +10,9 @@ public enum SkipReason: Equatable, Sendable {
     /// The user restored this file's original name with Undo; Shotkeeper leaves it alone from then on.
     case restoredByUndo
     /// `UploadConsent.decide` refused: the job's backend sends screenshots off this Mac and its destination is not
-    /// allowed, or the file was taken before it was (and no Process Existing request for that destination covers
-    /// it). Skipped like Pause, not held, and decided on every run, so neither a resumed queue nor a later file event
-    /// uploads a screenshot taken before the consent.
+    /// allowed, or the file was taken before it was (and no user request for that destination covers it:
+    /// `UserUploadAuthorization`). Skipped like Pause, not held, and decided on every run, so neither a resumed queue
+    /// nor a later file event uploads a screenshot taken before the consent.
     case awaitingConsent
 }
 
@@ -119,22 +119,22 @@ public final class ScreenshotProcessor: Sendable {
     }
 
     /// Suitable as a `ProcessingQueue` handler: `{ _ = try await processor.process($0) }`.
-    public func process(_ url: URL, processExisting: ProcessExistingAuthorization? = nil) async throws -> ProcessingOutcome {
-        try await processWithReport(url, processExisting: processExisting).outcome
+    public func process(_ url: URL, userRequest: UserUploadAuthorization? = nil) async throws -> ProcessingOutcome {
+        try await processWithReport(url, userRequest: userRequest).outcome
     }
 
     /// `process(_:)` plus the original path and the undo record id (for the rename toast).
-    /// - Parameter processExisting: the user's "Process Existing Screenshots…" request for this file, with the
-    ///   destination selected when they asked. It lets a file taken before that destination was allowed be sent,
-    ///   only while that destination is still the job's and still allowed (`UploadConsent.decide`).
-    public func processWithReport(_ url: URL, processExisting: ProcessExistingAuthorization? = nil) async throws -> ProcessingReport {
+    /// - Parameter userRequest: the user's request to send this file ("Process Existing Screenshots…", "Analyze
+    ///   Again"), with the destination selected when they asked. It lets a file taken before that destination was
+    ///   allowed be sent, only while that destination is still the job's and still allowed (`UploadConsent.decide`).
+    public func processWithReport(_ url: URL, userRequest: UserUploadAuthorization? = nil) async throws -> ProcessingReport {
         let original = url.standardizedFileURL
         var undoRecordID: UUID?
-        let outcome = try await process(original, processExisting: processExisting, undoRecordID: &undoRecordID)
+        let outcome = try await process(original, userRequest: userRequest, undoRecordID: &undoRecordID)
         return ProcessingReport(originalURL: original, outcome: outcome, undoRecordID: undoRecordID)
     }
 
-    private func process(_ url: URL, processExisting: ProcessExistingAuthorization?,
+    private func process(_ url: URL, userRequest: UserUploadAuthorization?,
                          undoRecordID: inout UUID?) async throws -> ProcessingOutcome {
         let url = url.standardizedFileURL
         let early = self.snapshot().settings
@@ -152,7 +152,7 @@ public final class ScreenshotProcessor: Sendable {
         case nil: break
         }
         // Early out only (no file read, no index row); the decision that counts is the one right before `analyze`.
-        guard UploadConsent.decide(settings: early, capturedAt: consentCapturedAt, processExisting: processExisting) == .allow
+        guard UploadConsent.decide(settings: early, capturedAt: consentCapturedAt, userRequest: userRequest) == .allow
         else { return .skipped(.awaitingConsent) }
 
         let rowAtPath = try index.lookup(byPath: url.path)
@@ -189,7 +189,7 @@ public final class ScreenshotProcessor: Sendable {
         let job = self.snapshot()
         let settings = job.settings
         guard UploadConsent.decide(settings: settings, capturedAt: consentCapturedAt,
-                                   processExisting: processExisting) == .allow else { return .skipped(.awaitingConsent) }
+                                   userRequest: userRequest) == .allow else { return .skipped(.awaitingConsent) }
 
         try index.save(entry)
         let analysis: ScreenshotAnalysis

@@ -68,10 +68,10 @@ final class UploadConsentTests: XCTestCase {
         XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [openRouter], capturedAt: before),
                        .skip(.takenBeforeGrant(grantedAt: grantedAt)), "the time rule applies as for Cloudflare")
         XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [openRouter], capturedAt: before,
-                                            processExisting: ProcessExistingAuthorization(target: defaultModel)), .allow)
+                                            userRequest: UserUploadAuthorization(target: defaultModel)), .allow)
         XCTAssertEqual(UploadConsent.decide(target: defaultModel, grants: [openRouter], capturedAt: before,
-                                            processExisting: ProcessExistingAuthorization(target: .cloudflare)),
-                       .skip(.takenBeforeGrant(grantedAt: grantedAt)), "Process Existing for another target lifts nothing")
+                                            userRequest: UserUploadAuthorization(target: .cloudflare)),
+                       .skip(.takenBeforeGrant(grantedAt: grantedAt)), "a user request for another target lifts nothing")
     }
 
     /// S1: an OpenRouter grant covers one model; another model has other providers and needs its own "Allow…".
@@ -115,10 +115,10 @@ final class UploadConsentTests: XCTestCase {
         let modelless = AppSettings.UploadGrant(destination: .openRouter, grantedAt: .distantPast)
         XCTAssertEqual(UploadConsent.decide(target: .openRouter(model: OpenRouterBackend.defaultModel), grants: [modelless],
                                             capturedAt: after), .skip(.destinationNotAllowed))
-        // Process Existing for one model lifts nothing for another.
+        // A user request for one model lifts nothing for another.
         XCTAssertEqual(UploadConsent.decide(target: .openRouter(model: "vendor/other-model"), grants: settings.uploadGrants,
                                             capturedAt: .distantPast,
-                                            processExisting: ProcessExistingAuthorization(target: .openRouter(
+                                            userRequest: UserUploadAuthorization(target: .openRouter(
                                                 model: OpenRouterBackend.defaultModel))),
                        .skip(.takenBeforeGrant(grantedAt: later)))
     }
@@ -211,53 +211,119 @@ final class UploadConsentTests: XCTestCase {
         XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [cloudflare], capturedAt: after), .allow)
         XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [], capturedAt: after), .skip(.destinationNotAllowed))
         XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [], capturedAt: after,
-                                            processExisting: .init(target: .cloudflare)), .skip(.destinationNotAllowed))
+                                            userRequest: .init(target: .cloudflare)), .skip(.destinationNotAllowed))
     }
 
-    // MARK: Process Existing
+    // MARK: User upload requests ("Process Existing Screenshots…", "Analyze Again")
 
-    func testProcessExistingLiftsOnlyTheTimeRuleForItsOwnTarget() {
-        let request = ProcessExistingAuthorization(target: .cloudflare)
+    func testAUserRequestLiftsOnlyTheTimeRuleForItsOwnTarget() {
+        let request = UserUploadAuthorization(target: .cloudflare)
         XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [cloudflare], capturedAt: .distantPast,
-                                            processExisting: request), .allow)
+                                            userRequest: request), .allow)
         XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [], capturedAt: .distantPast,
-                                            processExisting: request), .skip(.destinationNotAllowed),
+                                            userRequest: request), .skip(.destinationNotAllowed),
                        "never the destination rule")
     }
 
     /// Review 3 B1, path 1: Process Existing on Local (held "not installed"), then setup → Clairic → Continue.
     func testARequestMadeOnLocalNeverCoversCloudflare() {
-        let onLocal = ProcessExistingAuthorization(target: .thisMac)
+        let onLocal = UserUploadAuthorization(target: .thisMac)
         XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [cloudflare], capturedAt: before,
-                                            processExisting: onLocal), .skip(.takenBeforeGrant(grantedAt: grantedAt)))
+                                            userRequest: onLocal), .skip(.takenBeforeGrant(grantedAt: grantedAt)))
     }
 
     /// Review 3 B1, path 2: a Cloudflare backlog draining to a custom endpoint allowed later.
     func testARequestMadeForCloudflareNeverCoversACustomEndpoint() {
-        let forCloudflare = ProcessExistingAuthorization(target: .cloudflare)
+        let forCloudflare = UserUploadAuthorization(target: .cloudflare)
         let grants = [cloudflare, custom(endpointA, at: after)]
         XCTAssertEqual(UploadConsent.decide(target: .customEndpoint(endpointA), grants: grants, capturedAt: before,
-                                            processExisting: forCloudflare),
+                                            userRequest: forCloudflare),
                        .skip(.takenBeforeGrant(grantedAt: after)))
-        let forA = ProcessExistingAuthorization(target: .customEndpoint(endpointA))
+        let forA = UserUploadAuthorization(target: .customEndpoint(endpointA))
         XCTAssertEqual(UploadConsent.decide(target: .customEndpoint(endpointB), grants: [custom(endpointB)], capturedAt: before,
-                                            processExisting: forA), .skip(.takenBeforeGrant(grantedAt: grantedAt)),
+                                            userRequest: forA), .skip(.takenBeforeGrant(grantedAt: grantedAt)),
                        "nor one endpoint's request another endpoint")
         XCTAssertEqual(UploadConsent.decide(target: .customEndpoint(endpointA), grants: [custom(endpointA)], capturedAt: before,
-                                            processExisting: forA), .allow)
+                                            userRequest: forA), .allow)
     }
 
     func testRequestsAreInvalidatedTogether() {
-        let requests = ProcessExistingRequests()
+        let requests = UserUploadRequests()
         let clicked = requests.generation
         let request = try! XCTUnwrap(requests.request(for: .cloudflare, madeIn: clicked))
-        XCTAssertEqual(requests.authorization(for: request), ProcessExistingAuthorization(target: .cloudflare))
+        XCTAssertEqual(requests.authorization(for: request), UserUploadAuthorization(target: .cloudflare))
         XCTAssertNil(requests.authorization(for: nil))
         requests.invalidateAll()
         XCTAssertNil(requests.authorization(for: request), "a destination change: every earlier request counts as none")
         XCTAssertNil(requests.request(for: .cloudflare, madeIn: clicked), "changed during the scan: no request")
         let again = try! XCTUnwrap(requests.request(for: .cloudflare, madeIn: requests.generation))
         XCTAssertNotNil(requests.authorization(for: again))
+    }
+
+    /// Parag, 2026-11-28: a user request counts "only if the current backend's destination is allowed".
+    func testAUserRequestNeverLiftsDestinationNotAllowed() {
+        let openRouter = AppSettings.UploadGrant(destination: .openRouter, grantedAt: grantedAt,
+                                                 openRouterModel: OpenRouterBackend.defaultModel)
+        let cases: [(UploadTarget, [AppSettings.UploadGrant])] = [
+            (.cloudflare, []),
+            (.cloudflare, [custom(endpointA), openRouter]),
+            (.customEndpoint(endpointB), [custom(endpointA), cloudflare]),
+            (.openRouter(model: "vendor/other-model"), [openRouter]),
+            (.unidentifiedEndpoint, [cloudflare, custom(endpointA), openRouter]),
+        ]
+        for (target, grants) in cases {
+            for date in [Date.distantPast, before, after] {
+                XCTAssertEqual(UploadConsent.decide(target: target, grants: grants, capturedAt: date,
+                                                    userRequest: UserUploadAuthorization(target: target)),
+                               .skip(.destinationNotAllowed), "\(target) at \(date)")
+            }
+        }
+    }
+
+    func testAUserRequestForAnotherTargetDoesNotCount() {
+        let grants = [cloudflare, custom(endpointA), custom(endpointB)]
+        let others: [(UploadTarget, UploadTarget)] = [
+            (.cloudflare, .customEndpoint(endpointA)),
+            (.customEndpoint(endpointA), .cloudflare),
+            (.customEndpoint(endpointA), .customEndpoint(endpointB)),
+            (.customEndpoint(endpointA), .thisMac),
+            (.customEndpoint(endpointA), .unidentifiedEndpoint),
+            (.cloudflare, .openRouter(model: OpenRouterBackend.defaultModel)),
+        ]
+        for (target, requested) in others {
+            XCTAssertEqual(UploadConsent.decide(target: target, grants: grants, capturedAt: before,
+                                                userRequest: UserUploadAuthorization(target: requested)),
+                           .skip(.takenBeforeGrant(grantedAt: grantedAt)), "\(requested) for \(target)")
+        }
+    }
+
+    /// A backend, endpoint or grant change between the click and the attempt: the request counts as none.
+    func testAnInvalidatedUserRequestCountsAsNone() {
+        let requests = UserUploadRequests()
+        let request = requests.request(for: .cloudflare, madeIn: requests.generation)
+        XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [cloudflare], capturedAt: before,
+                                            userRequest: requests.authorization(for: request)), .allow)
+        requests.invalidateAll()
+        XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [cloudflare], capturedAt: before,
+                                            userRequest: requests.authorization(for: request)),
+                       .skip(.takenBeforeGrant(grantedAt: grantedAt)))
+        XCTAssertEqual(UploadConsent.decide(target: .cloudflare, grants: [cloudflare], capturedAt: after,
+                                            userRequest: requests.authorization(for: request)), .allow,
+                       "a new file needs no request")
+    }
+
+    /// Analyze Again (or Process Existing) on a file taken before the grant.
+    func testAFileTakenBeforeTheGrantIsAllowedOnlyWithAUserRequest() {
+        for target in [UploadTarget.cloudflare, .customEndpoint(endpointA)] {
+            let grants = [cloudflare, custom(endpointA)]
+            for date in [Date.distantPast, before, grantedAt.addingTimeInterval(-0.001)] {
+                XCTAssertEqual(UploadConsent.decide(target: target, grants: grants, capturedAt: date),
+                               .skip(.takenBeforeGrant(grantedAt: grantedAt)), "\(target) without a request")
+                XCTAssertEqual(UploadConsent.decide(target: target, grants: grants, capturedAt: date,
+                                                    userRequest: UserUploadAuthorization(target: target)),
+                               .allow, "\(target) with a request")
+            }
+        }
     }
 
     /// Review 4 nit: an extracted archive or `rsync -t` copy keeps the modification date.

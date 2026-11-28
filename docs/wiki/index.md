@@ -18,6 +18,8 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [search-filters-and-text](search-filters-and-text.md): wave 1 (search filters, recognized text): one index
   migration (3) for the text columns, FTS rebuild and filter indexes, a deviation from the spec's two; `ftsColumns`
   and weights; the conditional text write (2026-11-28).
+- [subfolders-and-retitle](subfolders-and-retitle.md): wave 2 (subfolders, Edit name, Analyze Again): consent
+  generalized as `UserUploadAuthorization`, CODING_STANDARDS #2 reworded (2026-11-28).
 - [ui-polish](ui-polish.md): UI polish PRs (spec `../specs/ui-polish-2026-11.md`): toast batching, restored-by-undo rule, status item menu, focus, deviations; PR 2 search window rules, Quick Look, batch view; PR 3 setup steps, consent and watch gate, computed Clairic cost, icon geometry (2026-11-21); the consent choke point `UploadConsent.decide` (2026-11-22); PR 4 Settings scene, shortcut recorder, filename style, contrast; app icon: one geometry source, SVG + asset catalog + Icon Composer `.icon` (shipped on every macOS, Parag's decision), glyph stays code-drawn (2026-11-22).
 
 - [prefactor-app](prefactor-app.md): app prefactor before the eight features: `AppCoordinator` parts (`FolderCapture`, `FileActions`), search-panel action set, search key table in core (`SearchKeyMap`), shared app test harness and row builder, snapshots per screen, `scripts/lint.sh` in CI (2026-11-28).
