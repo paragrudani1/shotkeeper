@@ -333,3 +333,9 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   `t3/auto-update` needed a hand resolution (`96e720a`): the old misnamed lint step was dropped from `linux-core`, the
   fake-codesign self-test kept, main's macOS lint step placed before Xcode selection, and both `lint.sh` header notes
   kept. YAML parses, and lint and its self-test pass. CI on the push run verifies the result.
+- 2026-11-28: **PR #23 merged into `t3/wave1-search`** (`5bf635b`, head `94a055c`; wave 1 03, source filter). The fix
+  agent resolved the build error and the `SourceKey` width/whitespace/URL issues, and checked the snapshots. The chief
+  of staff read the `SourceKey` diff before merging. **Left open:** the Source pill always fills its 180 pt limit
+  (`.frame(maxWidth:)` at `SearchFilterViews.swift:82`) instead of fitting its text, against the design. It is queued
+  as a small polish fix before wave 1 merges to main. `t3/wave1-search` was then merged into `t3/wave2`
+  (510 Linux tests pass; the wiki index conflict was combined), so wave 2 ticket 04 can use `SourceKey`.
