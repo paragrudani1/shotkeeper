@@ -289,3 +289,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   itself showed one run per job instead of two. `main` was merged into `t3/wave1-search` (`d63be6a`), `t3/wave2`
   (`fce1069`) and `t3/auto-update` (`cf37f0d`) so their PRs get the new triggers. All were clean merges, done with
   `merge-if-green` for the PR.
+- 2026-11-28: **actool flake: root cause found, in our script.** The step passed relative paths, and actool forwards
+  the call to a long-lived `ibtoold` server. When the server that xcodebuild started (cwd `App/`) was still alive,
+  it resolved the paths from `App/`, giving `App/App/Shotkeeper/AppIcon.icon`. Calls taking 0.03–0.2 s show the
+  server was reused in the failing runs; 2–3 s calls show a new server in the passing one. Fix: absolute
+  `$GITHUB_WORKSPACE/...` paths, no retries (PR #22, `7e839a2`). Evidence is in `macos-ci.md` on that branch.
