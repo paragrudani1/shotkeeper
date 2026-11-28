@@ -236,3 +236,9 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   the integration branch, so one agent resolves them and applies the review fixes on #16's branch.
   - **Pattern:** parallel tickets that each create the same wiki page (here `search-filters-and-text.md`) always
     conflict. Next time the first ticket creates the page and later tickets only append to it.
+- 2026-11-28: **Wave 2 tickets** (10, `docs/specs/subfolders-and-retitle-2026-11/tickets/`): 01 consent
+  (`UserUploadAuthorization` + CODING_STANDARDS #2), 02 `title_source` migration (version 4), 03 queue job kinds,
+  04 sort new screenshots, 05 Sort Existing, 06 `reanalyze` in core, 07 Edit name, 08 Analyze Again, 09 Analyze
+  Again asks first, 10 integration + real-Mac pass. The integration branch **`t3/wave2` is cut from
+  `t3/wave1-search`**, not from main: migration 4 must sit on top of wave 1's migration 3, and the versions test
+  requires contiguous numbers. `t3/wave2` takes wave 1's tip as it moves.
