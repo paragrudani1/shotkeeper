@@ -107,6 +107,30 @@ public struct ScreenshotSearchResult: Equatable, Sendable {
     }
 }
 
+/// One change to a row of the index, published by `ScreenshotIndex.changes()` after it is committed.
+public struct IndexChange: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        /// `save(_:)` added a row.
+        case inserted
+        /// `save(_:)` replaced a row's fields, `updatePath(from:to:)` moved it, or `markRestoredByUndo(path:)` flagged it.
+        case updated
+        /// The row is gone (today only a stale row that `updatePath(from:to:)` replaced).
+        case removed
+    }
+
+    public var kind: Kind
+    /// The row id: stable for the life of the row, also across path changes.
+    public var id: Int64
+    /// The row's path after the change; for `.removed`, the path it had.
+    public var path: String
+
+    public init(_ kind: Kind, id: Int64, path: String) {
+        self.kind = kind
+        self.id = id
+        self.path = path
+    }
+}
+
 public struct IndexStats: Equatable, Sendable {
     public var count: Int
     public var done: Int
@@ -118,6 +142,9 @@ public struct IndexStats: Equatable, Sendable {
 public final class ScreenshotIndex: @unchecked Sendable {
     private let db: SQLiteDatabase
     private let lock = NSLock()
+    /// `changes()` subscribers. Own lock: a stream's `onTermination` may run on any thread, also during a write.
+    private let subscribersLock = NSLock()
+    private var subscribers: [UUID: AsyncStream<IndexChange>.Continuation] = [:]
 
     /// Opens (creating if needed) the index at `fileURL` and migrates it. In WAL mode.
     public convenience init(fileURL: URL) throws {
@@ -133,19 +160,44 @@ public final class ScreenshotIndex: @unchecked Sendable {
         try db.migrate(Self.migrations)
     }
 
+    deinit {
+        for continuation in subscribersLock.withLock({ subscribers.values }) { continuation.finish() }
+    }
+
     public var schemaVersion: Int32 { (try? lock.withLock { try db.userVersion }) ?? 0 }
+
+    /// Every committed row change from now on, in commit order, for as long as the caller iterates (unbounded
+    /// buffer, so a slow subscriber misses nothing). Each call is an independent subscription. The stream finishes
+    /// when the index is deallocated. A write that throws publishes nothing.
+    public func changes() -> AsyncStream<IndexChange> {
+        let (stream, continuation) = AsyncStream.makeStream(of: IndexChange.self)
+        let id = UUID()
+        subscribersLock.withLock { subscribers[id] = continuation }
+        continuation.onTermination = { [weak self] _ in self?.removeSubscriber(id) }
+        return stream
+    }
+
+    /// Called with `lock` held, after the write committed, so subscribers see changes in commit order.
+    private func publish(_ changes: [IndexChange]) {
+        guard !changes.isEmpty else { return }
+        for continuation in subscribersLock.withLock({ Array(subscribers.values) }) {
+            for change in changes { continuation.yield(change) }
+        }
+    }
+
+    private func removeSubscriber(_ id: UUID) {
+        _ = subscribersLock.withLock { subscribers.removeValue(forKey: id) }
+    }
 
     /// Inserts, or updates the row with the same path. Returns the row id.
     @discardableResult
     public func save(_ entry: IndexedScreenshot) throws -> Int64 {
         try lock.withLock {
+            var existed = false
+            try db.query("SELECT 1 FROM screenshots WHERE path = ? LIMIT 1", [.text(entry.path)]) { _ in existed = true }
             var id: Int64 = 0
-            try db.query("""
-                INSERT INTO screenshots (\(Self.writableColumns.joined(separator: ", ")))
-                VALUES (\(Array(repeating: "?", count: Self.writableColumns.count).joined(separator: ", ")))
-                ON CONFLICT(path) DO UPDATE SET \(Self.writableColumns.dropFirst().map { "\($0) = excluded.\($0)" }.joined(separator: ", "))
-                RETURNING id
-                """, Self.bindings(entry)) { id = $0.int64(0) }
+            try db.query(Self.upsertSQL, Self.columns.map { $0.bind(entry) }) { id = $0.int64(0) }
+            publish([IndexChange(existed ? .updated : .inserted, id: id, path: entry.path)])
             return id
         }
     }
@@ -156,15 +208,22 @@ public final class ScreenshotIndex: @unchecked Sendable {
     @discardableResult
     public func updatePath(from oldPath: String, to newPath: String) throws -> Bool {
         try lock.withLock {
-            try db.transaction {
-                var exists = false
-                try db.query("SELECT 1 FROM screenshots WHERE path = ? LIMIT 1", [.text(oldPath)]) { _ in exists = true }
-                guard exists else { return false }
+            var changes: [IndexChange] = []
+            let updated = try db.transaction {
+                var id: Int64?
+                try db.query("SELECT id FROM screenshots WHERE path = ? LIMIT 1", [.text(oldPath)]) { id = $0.int64(0) }
+                guard let id else { return false }
                 if oldPath == newPath { return true }
-                try db.run("DELETE FROM screenshots WHERE path = ?", [.text(newPath)])
-                try db.run("UPDATE screenshots SET path = ? WHERE path = ?", [.text(newPath), .text(oldPath)])
-                return db.changes > 0
+                try db.query("DELETE FROM screenshots WHERE path = ? RETURNING id", [.text(newPath)]) {
+                    changes.append(IndexChange(.removed, id: $0.int64(0), path: newPath))
+                }
+                try db.run("UPDATE screenshots SET path = ? WHERE id = ?", [.text(newPath), .int(id)])
+                guard db.changes > 0 else { return false }
+                changes.append(IndexChange(.updated, id: id, path: newPath))
+                return true
             }
+            publish(changes)
+            return updated
         }
     }
 
@@ -191,8 +250,12 @@ public final class ScreenshotIndex: @unchecked Sendable {
     @discardableResult
     public func markRestoredByUndo(path: String) throws -> Bool {
         try lock.withLock {
-            try db.run("UPDATE screenshots SET restored_by_undo = 1 WHERE path = ?", [.text(path)])
-            return db.changes > 0
+            var changes: [IndexChange] = []
+            try db.query("UPDATE screenshots SET restored_by_undo = 1 WHERE path = ? RETURNING id", [.text(path)]) {
+                changes.append(IndexChange(.updated, id: $0.int64(0), path: path))
+            }
+            publish(changes)
+            return !changes.isEmpty
         }
     }
 
@@ -288,31 +351,52 @@ public final class ScreenshotIndex: @unchecked Sendable {
     /// FTS column order: title, tags, description, key_text, source_app_or_site.
     static let bm25Weights = "10.0, 6.0, 3.0, 1.0, 2.0"
 
+    /// Every column except `id`, in table order. The one place a column is declared: `CREATE TABLE` (migration 1),
+    /// `ALTER TABLE ... ADD COLUMN` (later migrations), the upsert, its bindings and the row read all come from here.
+    ///
+    /// Adding a column (2026-11-28): append one entry with the next `addedIn` version, and add
+    /// `SQLiteMigration(version: n, statements: addColumns(addedIn: n))` to `migrations`. That migration line claims
+    /// the version number; when two PRs claim the same one, the second to merge renumbers (the migration tests fail
+    /// until it does). Never edit or reorder a shipped entry: existing databases were created from it.
+    static let columns: [IndexColumn] = [
+        // `path` first: it is the upsert key.
+        IndexColumn("path", "TEXT NOT NULL UNIQUE", bind: { .text($0.path) }, read: { $0.path = $1.text ?? "" }),
+        IndexColumn("original_filename", "TEXT NOT NULL",
+                    bind: { .text($0.originalFilename) }, read: { $0.originalFilename = $1.text ?? "" }),
+        IndexColumn("content_hash", "TEXT NOT NULL", bind: { .text($0.contentHash) }, read: { $0.contentHash = $1.text ?? "" }),
+        IndexColumn("captured_at", "REAL", bind: { .optional($0.capturedAt) }, read: { $0.capturedAt = $1.date }),
+        IndexColumn("processed_at", "REAL", bind: { .optional($0.processedAt) }, read: { $0.processedAt = $1.date }),
+        IndexColumn("title", "TEXT", bind: { .optional($0.title) }, read: { $0.title = $1.text }),
+        IndexColumn("title_confidence", "REAL",
+                    bind: { .optional($0.titleConfidence) }, read: { $0.titleConfidence = $1.double }),
+        IndexColumn("source_app_or_site", "TEXT",
+                    bind: { .optional($0.sourceAppOrSite) }, read: { $0.sourceAppOrSite = $1.text }),
+        IndexColumn("content_type", "TEXT", bind: { .optional($0.contentType?.rawValue) },
+                    read: { $0.contentType = $1.text.flatMap(ContentType.init(rawValue:)) }),
+        IndexColumn("description", "TEXT", bind: { .optional($0.description) }, read: { $0.description = $1.text }),
+        IndexColumn("tags", "TEXT NOT NULL DEFAULT '[]'", bind: { .text(tagsJSON($0.tags)) },
+                    read: { $0.tags = $1.text.flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? [] }),
+        IndexColumn("key_text", "TEXT", bind: { .optional($0.keyText) }, read: { $0.keyText = $1.text }),
+        IndexColumn("date_mentioned", "TEXT", bind: { .optional($0.dateMentioned) }, read: { $0.dateMentioned = $1.text }),
+        IndexColumn("produced_by", "TEXT", bind: { .optional($0.producedBy) }, read: { $0.producedBy = $1.text }),
+        IndexColumn("billed_input_tokens", "INTEGER",
+                    bind: { .optional($0.billedInputTokens) }, read: { $0.billedInputTokens = $1.int }),
+        IndexColumn("status", "TEXT NOT NULL DEFAULT 'pending'", bind: { .text($0.status.rawValue) },
+                    read: { $0.status = $1.text.flatMap(ProcessingStatus.init(rawValue:)) ?? .pending }),
+        IndexColumn("last_error", "TEXT", bind: { .optional($0.lastError) }, read: { $0.lastError = $1.text }),
+        IndexColumn("note", "TEXT", bind: { .optional($0.note) }, read: { $0.note = $1.text }),
+        // 2026-11-21 (UI polish PR 1): a file the user restored with Undo is never processed again, even after a
+        // restart or when its content fingerprint changes.
+        IndexColumn("restored_by_undo", "INTEGER NOT NULL DEFAULT 0", addedIn: 2,
+                    bind: { .int($0.restoredByUndo ? 1 : 0) }, read: { $0.restoredByUndo = ($1.int ?? 0) != 0 }),
+    ]
+
+    /// Applied in order by `SQLiteDatabase.migrate`; `user_version` is the last one applied. Versions are 1, 2, 3, ...
+    /// with no gaps (tested). Shipped steps are history: never change what they produce.
     static let migrations: [SQLiteMigration] = [
         SQLiteMigration(version: 1, statements: [
-            """
-            CREATE TABLE screenshots (
-                id INTEGER PRIMARY KEY,
-                path TEXT NOT NULL UNIQUE,
-                original_filename TEXT NOT NULL,
-                content_hash TEXT NOT NULL,
-                captured_at REAL,
-                processed_at REAL,
-                title TEXT,
-                title_confidence REAL,
-                source_app_or_site TEXT,
-                content_type TEXT,
-                description TEXT,
-                tags TEXT NOT NULL DEFAULT '[]',
-                key_text TEXT,
-                date_mentioned TEXT,
-                produced_by TEXT,
-                billed_input_tokens INTEGER,
-                status TEXT NOT NULL DEFAULT 'pending',
-                last_error TEXT,
-                note TEXT
-            )
-            """,
+            "CREATE TABLE screenshots (\n    id INTEGER PRIMARY KEY,\n"
+                + columns(addedIn: 1).map { "    \($0.name) \($0.definition)" }.joined(separator: ",\n") + "\n)",
             "CREATE INDEX screenshots_content_hash ON screenshots(content_hash)",
             "CREATE INDEX screenshots_processed_at ON screenshots(processed_at)",
             """
@@ -342,44 +426,39 @@ public final class ScreenshotIndex: @unchecked Sendable {
             END
             """,
         ]),
-        // 2026-11-21 (UI polish PR 1): a file the user restored with Undo is never processed again, even after a
-        // restart or when its content fingerprint changes.
-        SQLiteMigration(version: 2, statements: [
-            "ALTER TABLE screenshots ADD COLUMN restored_by_undo INTEGER NOT NULL DEFAULT 0",
-        ]),
+        SQLiteMigration(version: 2, statements: addColumns(addedIn: 2)),
     ]
 
-    /// Every column except id, in insert order. `path` first: it is the upsert key.
-    private static let writableColumns = [
-        "path", "original_filename", "content_hash", "captured_at", "processed_at", "title", "title_confidence",
-        "source_app_or_site", "content_type", "description", "tags", "key_text", "date_mentioned", "produced_by",
-        "billed_input_tokens", "status", "last_error", "note", "restored_by_undo",
-    ]
+    /// Upsert by path; returns the row id.
+    private static let upsertSQL = """
+        INSERT INTO screenshots (\(columns.map(\.name).joined(separator: ", ")))
+        VALUES (\(Array(repeating: "?", count: columns.count).joined(separator: ", ")))
+        ON CONFLICT(path) DO UPDATE SET \(columns.dropFirst().map { "\($0.name) = excluded.\($0.name)" }.joined(separator: ", "))
+        RETURNING id
+        """
 
-    private static func selectColumns(_ alias: String) -> String {
-        (["id"] + writableColumns).map { "\(alias).\($0)" }.joined(separator: ", ")
+    static func columns(addedIn version: Int32) -> [IndexColumn] { columns.filter { $0.addedIn == version } }
+
+    /// `ALTER TABLE` statements for the columns a later migration adds (SQLite appends them, so table order = `columns`).
+    static func addColumns(addedIn version: Int32) -> [String] {
+        columns(addedIn: version).map { "ALTER TABLE screenshots ADD COLUMN \($0.name) \($0.definition)" }
     }
 
-    private static func bindings(_ e: IndexedScreenshot) -> [SQLiteValue] {
-        let tagsJSON = (try? JSONEncoder().encode(e.tags)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        return [
-            .text(e.path), .text(e.originalFilename), .text(e.contentHash), .optional(e.capturedAt), .optional(e.processedAt),
-            .optional(e.title), .optional(e.titleConfidence), .optional(e.sourceAppOrSite), .optional(e.contentType?.rawValue),
-            .optional(e.description), .text(tagsJSON), .optional(e.keyText), .optional(e.dateMentioned),
-            .optional(e.producedBy), .optional(e.billedInputTokens), .text(e.status.rawValue), .optional(e.lastError),
-            .optional(e.note), .int(e.restoredByUndo ? 1 : 0),
-        ]
+    private static func tagsJSON(_ tags: [String]) -> String {
+        (try? JSONEncoder().encode(tags)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+    }
+
+    /// `id` then every column, so `row(_:)` finds each value at the position its column has in this list.
+    private static func selectColumns(_ alias: String) -> String {
+        (["id"] + columns.map(\.name)).map { "\(alias).\($0)" }.joined(separator: ", ")
     }
 
     private static func row(_ s: SQLiteStatement) -> IndexedScreenshot {
-        let tags = s.text(11).flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
-        return IndexedScreenshot(
-            id: s.int64(0), path: s.text(1) ?? "", originalFilename: s.text(2) ?? "", contentHash: s.text(3) ?? "",
-            capturedAt: s.optionalDate(4), processedAt: s.optionalDate(5), title: s.text(6), titleConfidence: s.optionalDouble(7),
-            sourceAppOrSite: s.text(8), contentType: s.text(9).flatMap(ContentType.init(rawValue:)), description: s.text(10),
-            tags: tags, keyText: s.text(12), dateMentioned: s.text(13), producedBy: s.text(14),
-            billedInputTokens: s.optionalInt(15), status: s.text(16).flatMap(ProcessingStatus.init(rawValue:)) ?? .pending,
-            lastError: s.text(17), note: s.text(18), restoredByUndo: s.int64(19) != 0)
+        var entry = IndexedScreenshot(id: s.int64(0), path: "", originalFilename: "", contentHash: "")
+        for (offset, column) in columns.enumerated() {
+            column.read(&entry, SQLiteColumnValue(statement: s, index: Int32(offset + 1)))
+        }
+        return entry
     }
 
     private func select(_ clause: String, _ bindings: [SQLiteValue]) throws -> [IndexedScreenshot] {
@@ -390,5 +469,27 @@ public final class ScreenshotIndex: @unchecked Sendable {
             }
             return rows
         }
+    }
+}
+
+/// One column of `screenshots` (not `id`): its SQL, how a row is bound to it and how it is read back.
+/// The list is `ScreenshotIndex.columns`.
+struct IndexColumn: Sendable {
+    let name: String
+    /// Type and constraints, as in `CREATE TABLE` / `ADD COLUMN`.
+    let definition: String
+    /// The migration that adds it (1 = the original `CREATE TABLE`).
+    let addedIn: Int32
+    let bind: @Sendable (IndexedScreenshot) -> SQLiteValue
+    let read: @Sendable (inout IndexedScreenshot, SQLiteColumnValue) -> Void
+
+    init(_ name: String, _ definition: String, addedIn: Int32 = 1,
+         bind: @escaping @Sendable (IndexedScreenshot) -> SQLiteValue,
+         read: @escaping @Sendable (inout IndexedScreenshot, SQLiteColumnValue) -> Void) {
+        self.name = name
+        self.definition = definition
+        self.addedIn = addedIn
+        self.bind = bind
+        self.read = read
     }
 }
