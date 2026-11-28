@@ -229,3 +229,10 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **PR #15 review: fix first** (one should-fix). Release-notes escaping went per `Character`, so `<`+ZWJ and
   `]]>`+ZWJ slipped through and could break the appcast's CDATA. The chief of staff fixed it (`089ef62`: per-scalar
   escaping and a duplicate-section error, two tests, 439 Linux tests pass). Merge into `t3/auto-update` once CI is green.
+- 2026-11-28: **PR #16 review: merge into integration**, no blockers. Should-fix: the index search and the panel
+  could use different clocks and calendars after a time-zone change (pass `now`/`calendar` into `index.search`, use
+  `Calendar.autoupdatingCurrent`). Nits: cross-year VoiceOver range, default calendar in `DatePicker`, picker 2 pt
+  too high. All three new snapshots match the design. The merge was blocked by conflicts with tickets 01/05 now on
+  the integration branch, so one agent resolves them and applies the review fixes on #16's branch.
+  - **Pattern:** parallel tickets that each create the same wiki page (here `search-filters-and-text.md`) always
+    conflict. Next time the first ticket creates the page and later tickets only append to it.
