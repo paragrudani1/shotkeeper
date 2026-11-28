@@ -11,7 +11,7 @@ import Foundation
 /// - `AnalyzerError.unauthorized` / `.notConfigured`: the queue holds in `.error(message)` until `resume()`;
 ///   the job is kept, not failed, so nothing is lost while the user fixes credentials.
 /// - Any other error fails the job at once.
-/// - A job may carry a `ProcessExistingRequest` (`enqueue(_:processExisting:)`): every attempt of that job gets it,
+/// - A job may carry a `UserUploadRequest` (`enqueue(_:userRequest:)`): every attempt of that job gets it,
 ///   retries and holds included, and it is dropped when the job ends.
 public actor ProcessingQueue {
     public struct Configuration: Sendable, Equatable {
@@ -31,8 +31,8 @@ public actor ProcessingQueue {
     }
 
     public typealias Handler = @Sendable (URL) async throws -> Void
-    /// A handler that also gets the job's Process Existing request (nil for watcher jobs).
-    public typealias JobHandler = @Sendable (URL, ProcessExistingRequest?) async throws -> Void
+    /// A handler that also gets the job's user upload request (nil for watcher jobs).
+    public typealias JobHandler = @Sendable (URL, UserUploadRequest?) async throws -> Void
 
     public private(set) var configuration: Configuration
     private let clock: QueueClock
@@ -41,8 +41,8 @@ public actor ProcessingQueue {
     private let handler: JobHandler
 
     private var pending: [URL] = []
-    /// The Process Existing request each pending or running job carries, for the whole job.
-    private var carried: [URL: ProcessExistingRequest] = [:]
+    /// The user upload request each pending or running job carries, for the whole job.
+    private var carried: [URL: UserUploadRequest] = [:]
     private var inFlight: [URL] = []
     private var activeWorkers = 0
     private var bucket: TokenBucket
@@ -87,19 +87,19 @@ public actor ProcessingQueue {
     // MARK: - Public API
 
     /// Adds a job unless the URL is already queued or running.
-    /// - Parameter processExisting: the user's Process Existing request for this file. A job still waiting takes it
-    ///   on; a running job does not (its attempts already started without it), and nothing is kept for later.
-    public func enqueue(_ url: URL, processExisting: ProcessExistingRequest? = nil) {
+    /// - Parameter userRequest: the user's request to send this file (`UserUploadRequest`). A job still waiting takes
+    ///   it on; a running job does not (its attempts already started without it), and nothing is kept for later.
+    public func enqueue(_ url: URL, userRequest: UserUploadRequest? = nil) {
         let url = url.standardizedFileURL
         guard !inFlight.contains(url) else { return }
-        if let processExisting { carried[url] = processExisting }
+        if let userRequest { carried[url] = userRequest }
         guard !pending.contains(url) else { return }
         pending.append(url)
         spawnWorkers()
         publish()
     }
 
-    /// Process Existing requests carried by queued or running jobs (tests).
+    /// User upload requests carried by queued or running jobs (tests).
     public var carriedRequestCount: Int { carried.count }
 
     public var queuedCount: Int { pending.count + inFlight.count }

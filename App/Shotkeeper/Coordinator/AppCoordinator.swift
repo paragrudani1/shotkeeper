@@ -79,9 +79,10 @@ final class AppCoordinator {
     @ObservationIgnored private var toastBatcher = ToastBatcher()
     @ObservationIgnored private var lastSoundAt: Date?
     @ObservationIgnored private let eventSink = LockedValue<(@MainActor @Sendable (ScreenshotEvent) -> Void)?>(nil)
-    /// Issues "Process Existing Screenshots…" requests (the destination selected at the click). The queue carries each
-    /// with its job for the whole job; all are invalidated when the backend, endpoint or grants change.
-    @ObservationIgnored let processExistingRequests = ProcessExistingRequests()
+    /// Issues the user's upload requests ("Process Existing Screenshots…"; the destination selected at the click). The
+    /// queue carries each with its job for the whole job; all are invalidated when the backend, endpoint or grants
+    /// change.
+    @ObservationIgnored let userUploadRequests = UserUploadRequests()
     /// The watched folder and Process Existing (observable: the menu reads `watchedFolder` and `isWatching`).
     let capture: FolderCapture
     /// Undo and rename of processed files.
@@ -254,8 +255,8 @@ final class AppCoordinator {
         let destinationChanged = new.backend != old.backend || new.customEndpointURL != old.customEndpointURL
             || new.uploadGrants != old.uploadGrants
             || OpenRouterBackend.effectiveModel(new.openRouterModel) != OpenRouterBackend.effectiveModel(old.openRouterModel)
-        // A Process Existing request was for the destination selected then: never carried to another one.
-        if destinationChanged { processExistingRequests.invalidateAll() }
+        // A user upload request was for the destination selected then: never carried to another one.
+        if destinationChanged { userUploadRequests.invalidateAll() }
         if destinationChanged || new.clairicAccountID != old.clairicAccountID || new.customModelName != old.customModelName
             || new.openRouterModel != old.openRouterModel
             || new.localModelVariantID != old.localModelVariantID { // consent un-holds cloud backends
@@ -426,12 +427,12 @@ final class AppCoordinator {
         let configuration = ProcessingQueue.Configuration(concurrency: 1,
                                                           requestsPerMinute: max(1, settings.requestsPerMinute))
         let sink = eventSink
-        let requests = processExistingRequests
+        let requests = userUploadRequests
         let queue = ProcessingQueue(configuration: configuration, jobHandler: { url, request in
             // Checked on every attempt: a destination change since the click makes it count as none.
-            let processExisting = requests.authorization(for: request)
+            let userRequest = requests.authorization(for: request)
             do {
-                let report = try await processor.processWithReport(url, processExisting: processExisting)
+                let report = try await processor.processWithReport(url, userRequest: userRequest)
                 await MainActor.run { sink.value?(.processed(report)) }
             } catch {
                 if UserFacingError.shouldNotify(error) {

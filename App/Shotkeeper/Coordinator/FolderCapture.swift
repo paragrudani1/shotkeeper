@@ -9,7 +9,7 @@ protocol FolderCaptureHost: AnyObject {
     var readiness: BackendReadiness { get }
     var index: ScreenshotIndex? { get }
     var queue: ProcessingQueue? { get }
-    var processExistingRequests: ProcessExistingRequests { get }
+    var userUploadRequests: UserUploadRequests { get }
     /// The menu's last message.
     var lastMessage: String? { get set }
     /// Process Existing queued `files`: the toast summarizes them as one run.
@@ -97,7 +97,7 @@ final class FolderCapture {
         }
         // The destination the user is asking for: the one selected now, at the click.
         let target = UploadTarget(settings: host.settings)
-        let requests = host.processExistingRequests
+        let requests = host.userUploadRequests
         let generation = requests.generation
         let folder = watchedFolder ?? currentWatchedFolder().folder
         let detector = self.detector
@@ -113,7 +113,7 @@ final class FolderCapture {
             return 0
         }
         host.beginProcessExistingRun(candidates)
-        for url in candidates { await queue.enqueue(url, processExisting: request) }
+        for url in candidates { await queue.enqueue(url, userRequest: request) }
         host.lastMessage = candidates.isEmpty ? "No unprocessed screenshots in \(folder.lastPathComponent)"
             : "Queued \(candidates.count) screenshot\(candidates.count == 1 ? "" : "s")"
         return candidates.count

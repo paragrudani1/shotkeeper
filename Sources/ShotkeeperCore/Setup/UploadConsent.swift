@@ -30,10 +30,10 @@ public enum UploadTarget: Hashable, Sendable {
     }
 }
 
-/// "Process Existing Screenshots…" for one file: the user asked, while `target` was selected and allowed, to send
-/// screenshots that already exist. It lifts only the time rule, and only while `target` is still the job's target
-/// and still allowed (`UploadConsent.decide`).
-public struct ProcessExistingAuthorization: Hashable, Sendable {
+/// The user asked, while `target` was selected and allowed, to send these particular files ("Process Existing
+/// Screenshots…", "Analyze Again"). It lifts only the time rule, and only while `target` is still the job's target
+/// and still allowed (`UploadConsent.decide`). It carries no reason: `decide` never branches on why the user asked.
+public struct UserUploadAuthorization: Hashable, Sendable {
     public var target: UploadTarget
 
     public init(target: UploadTarget) {
@@ -49,7 +49,7 @@ public enum UploadDecision: Equatable, Sendable {
 public enum UploadSkipReason: Equatable, Sendable {
     /// No grant covers the target (for a custom endpoint: this endpoint), or the endpoint has no identity.
     case destinationNotAllowed
-    /// The file was taken before the target was allowed, and no Process Existing request for this target covers it.
+    /// The file was taken before the target was allowed, and no user request for this target covers it.
     case takenBeforeGrant(grantedAt: Date)
 }
 
@@ -80,23 +80,25 @@ public enum UploadConsent {
     ///   - target: where the job's analyzer sends the file.
     ///   - grants: the user's grants with their times (`AppSettings.uploadGrants`, from the same snapshot).
     ///   - capturedAt: the file's effective capture time (`effectiveCaptureTime`), `.distantPast` when unknown.
-    ///   - processExisting: the user's "Process Existing Screenshots…" request for this file, if any.
+    ///   - userRequest: the user's request to send this file ("Process Existing Screenshots…", "Analyze Again"),
+    ///     still valid (`UserUploadRequests.authorization(for:)`), if any.
     /// - Returns: `.allow` for the local model; for a cloud target only when a grant covers it AND (the file was
-    ///   taken at or after `grantedAt`, OR a Process Existing request was made for this very target).
+    ///   taken at or after `grantedAt`, OR the user asked to send it while this very target was selected and
+    ///   allowed). A user request never lifts `.destinationNotAllowed`.
     public static func decide(target: UploadTarget, grants: [AppSettings.UploadGrant], capturedAt: Date,
-                              processExisting: ProcessExistingAuthorization? = nil) -> UploadDecision {
+                              userRequest: UserUploadAuthorization? = nil) -> UploadDecision {
         if target == .thisMac { return .allow }
         guard let grant = grant(for: target, in: grants) else { return .skip(.destinationNotAllowed) }
         if capturedAt >= grant.grantedAt { return .allow }
-        if let processExisting, processExisting.target == target { return .allow }
+        if let userRequest, userRequest.target == target { return .allow }
         return .skip(.takenBeforeGrant(grantedAt: grant.grantedAt))
     }
 
     /// `decide` for the backend selected in `settings`, with its grants.
     public static func decide(settings: AppSettings, capturedAt: Date,
-                              processExisting: ProcessExistingAuthorization? = nil) -> UploadDecision {
+                              userRequest: UserUploadAuthorization? = nil) -> UploadDecision {
         decide(target: UploadTarget(settings: settings), grants: settings.uploadGrants, capturedAt: capturedAt,
-               processExisting: processExisting)
+               userRequest: userRequest)
     }
 
     /// The earliest moment the file can claim: the earliest of its creation date, its modification date and the time
@@ -131,37 +133,38 @@ public struct AnalyzerSnapshot: Sendable {
     }
 }
 
-/// One "Process Existing Screenshots…" click: the target selected then, stamped with the
-/// `ProcessExistingRequests.generation` it was made in. `ProcessingQueue` carries it with each job it was enqueued
-/// for, for the whole job (every retry and hold), and drops it when the job ends.
-public struct ProcessExistingRequest: Equatable, Sendable {
-    public let authorization: ProcessExistingAuthorization
+/// One user request to send particular files ("Process Existing Screenshots…", "Analyze Again"): the target selected
+/// then, stamped with the `UserUploadRequests.generation` it was made in. `ProcessingQueue` carries it with each job
+/// it was enqueued for, for the whole job (every retry and hold), and drops it when the job ends.
+public struct UserUploadRequest: Equatable, Sendable {
+    public let authorization: UserUploadAuthorization
     public let generation: Int
 }
 
-/// Issues Process Existing requests and invalidates them all at once. The app calls `invalidateAll()` whenever the
+/// Issues user upload requests and invalidates them all at once. The app calls `invalidateAll()` whenever the
 /// backend, endpoint or grants change; from then on every earlier request, wherever it is (a queued job, a job being
 /// retried), counts as none (`authorization(for:)`). Synchronous, so a change applies before the next attempt starts.
-public final class ProcessExistingRequests: @unchecked Sendable {
+public final class UserUploadRequests: @unchecked Sendable {
     private let lock = NSLock()
     private var current = 0
 
     public init() {}
 
-    /// Read it when the user clicks; pass it to `request(for:madeIn:)` after the folder scan.
+    /// Read it when the user asks; pass it to `request(for:madeIn:)` once the files are known (for Process Existing,
+    /// after the folder scan).
     public var generation: Int { lock.withLock { current } }
 
     /// A request for `target`, or nil when `invalidateAll()` ran since `generation` was read (the destination
-    /// changed during the scan).
-    public func request(for target: UploadTarget, madeIn generation: Int) -> ProcessExistingRequest? {
+    /// changed in between, e.g. during the folder scan).
+    public func request(for target: UploadTarget, madeIn generation: Int) -> UserUploadRequest? {
         lock.withLock {
-            generation == current ? ProcessExistingRequest(authorization: ProcessExistingAuthorization(target: target),
-                                                           generation: generation) : nil
+            generation == current ? UserUploadRequest(authorization: UserUploadAuthorization(target: target),
+                                                      generation: generation) : nil
         }
     }
 
     /// What a job attempt may pass to the processor: the request's authorization while it is still valid.
-    public func authorization(for request: ProcessExistingRequest?) -> ProcessExistingAuthorization? {
+    public func authorization(for request: UserUploadRequest?) -> UserUploadAuthorization? {
         guard let request else { return nil }
         return lock.withLock { request.generation == current ? request.authorization : nil }
     }
