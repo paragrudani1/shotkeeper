@@ -115,3 +115,12 @@ Recorded in [workflow](workflow.md) ("Auto-update spec", 2026-11-28); copied her
   `codesign --verify --deep --strict --verbose=2`.
 - **Not done here**: the Info.plist key check (feed URL, public key, automatic checks off) needs Sparkle's keys, so it
   lands with ticket 07/08, as the spec's seam 3 lists it next to the signing script.
+- **First CI run** (2026-11-28, run 46139669834, head `805c9c7`, both jobs green): Xcode selection logged
+  "Selected Xcode: /Applications/Xcode_26.6.0.app", Xcode 26.6 build 17F113, the same version and build as the inline
+  step before (run 46132676249). The self-test ran under "GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)":
+  the real `codesign` signed the throwaway bundle in Sparkle order, `Hardened Runtime on (flags: adhoc,runtime)` for
+  the five Sparkle items, `off (flags: adhoc)` for the app, and "Downloader.xpc kept its entitlements". The real app:
+  "skip: Sparkle.framework is not in the bundle", "valid on disk", "satisfies its Designated Requirement", DR
+  `cdhash H"…"`, "DR shape check skipped". The downloaded `Shotkeeper-unsigned` (CFBundleVersion 1) was
+  "valid on disk" after `ditto -x -k`. Note: the Release app arrives already linker-signed (codesign prints
+  "replacing existing signature"), as it did before this ticket.
