@@ -180,3 +180,11 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   - The spec's other calls stand (two jobs, build without secrets / sign without build tools; Sparkle pinned
     2.10.1; `SUAllowsAutomaticUpdates = false`; no design pass, since the UI is one menu row).
   - Before the app work: Parag must create the self-signed certificate and Sparkle's EdDSA keys (spec checklist P1/P2).
+- 2026-11-28: **Wave 1 ticket 01** opened as draft PR #13 into `t3/wave1-search` (`3e6fb13`): migration 3
+  (four text columns, FTS rebuilt with `recognized_text`, weights 10/6/3/1/2/0.5, three indexes),
+  `setRecognizedText(…ifContentHash:)`, `newestPendingTextRow()`. Review started.
+  - The worktree came from the parent's docs branch, not the integration branch; the brief's `git switch` step
+    caught it. Keep that step in every implementer brief.
+- 2026-11-28: **Bottleneck: macOS CI.** PRs #10, #12 and #13 all waited on `macos-app` at once, and every docs push
+  to #12 restarted its run. Rule from now on: batch docs pushes to an open docs PR. Candidate improvement (after
+  #10 merges, since it edits `ci.yml`): skip `macos-app` for docs-only changes (`paths-ignore` for `docs/**`, `*.md`).
