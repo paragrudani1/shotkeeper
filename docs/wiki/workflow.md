@@ -379,3 +379,12 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   behaviour is unchanged (`ConsentedJob` has a `fileprivate` init). Should-fix: a hand rename or Undo during the
   analysis leaves a ghost row, because `save` upserts by path (proven with a probe); and the post-prepare consent date
   re-read is untested. Also make `UserUploadAuthorization.target` a `let`. A fix agent started.
+- 2026-11-28: **Wave 3 decisions (Parag):** D2 = **rely on macOS** (no Shotkeeper items in system Spotlight; Shortcuts
+  actions only), so D3/D4 are moot. D1 = **require macOS 15**, against the recommendation to keep 14: the app's minimum
+  rises to macOS 15 (package, project, README, AGENTS.md availability note), and `FileEntity`/`IndexedEntity` become
+  available. Probe: Parag said **"use my mac agent to do this yourself"**, so the real-Mac probe runs on Parag's MacBook
+  Air through T3 linked environment `244d7f38-…` ("Parag’s MacBook Air", full access). The repo was cloned there to
+  `/Users/paragrudani/Projects/shotkeeper` and registered as T3 project `mcp:e9fb7d29-…`.
+  - **Environment, big change:** agents can now run real-Mac checks themselves. Use it carefully: it is Parag's
+    personal Mac. Agents work only in the project folder and temporary folders, change no system settings, never touch
+    Parag's own screenshots or files without asking, and clean up anything they install.
