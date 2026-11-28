@@ -169,6 +169,9 @@ public final class ScreenshotIndex: @unchecked Sendable {
     /// Every committed row change from now on, in commit order, for as long as the caller iterates (unbounded
     /// buffer, so a slow subscriber misses nothing). Each call is an independent subscription. The stream finishes
     /// when the index is deallocated. A write that throws publishes nothing.
+    ///
+    /// The buffer has no limit: a stream that is held but not iterated keeps every change in memory. Iterate it, or
+    /// drop it (or cancel the task iterating it), which ends the subscription.
     public func changes() -> AsyncStream<IndexChange> {
         let (stream, continuation) = AsyncStream.makeStream(of: IndexChange.self)
         let id = UUID()
@@ -189,7 +192,11 @@ public final class ScreenshotIndex: @unchecked Sendable {
         _ = subscribersLock.withLock { subscribers.removeValue(forKey: id) }
     }
 
+    /// Live `changes()` subscriptions (tests check that a dropped or cancelled stream unsubscribes).
+    var subscriberCount: Int { subscribersLock.withLock { subscribers.count } }
+
     /// Inserts, or updates the row with the same path. Returns the row id.
+    /// Publishes `.inserted` or `.updated`; `.updated` also when the saved row equals the stored one (no diffing).
     @discardableResult
     public func save(_ entry: IndexedScreenshot) throws -> Int64 {
         try lock.withLock {
@@ -354,10 +361,12 @@ public final class ScreenshotIndex: @unchecked Sendable {
     /// Every column except `id`, in table order. The one place a column is declared: `CREATE TABLE` (migration 1),
     /// `ALTER TABLE ... ADD COLUMN` (later migrations), the upsert, its bindings and the row read all come from here.
     ///
-    /// Adding a column (2026-11-28): append one entry with the next `addedIn` version, and add
-    /// `SQLiteMigration(version: n, statements: addColumns(addedIn: n))` to `migrations`. That migration line claims
-    /// the version number; when two PRs claim the same one, the second to merge renumbers (the migration tests fail
-    /// until it does). Never edit or reorder a shipped entry: existing databases were created from it.
+    /// Adding a column (2026-11-28): append one entry with the next `addedIn` version, add
+    /// `SQLiteMigration(version: n, statements: addColumns("new_column"))` to `migrations`, and add `n: ["new_column"]`
+    /// to the test's `shippedColumns`. The migration line names its columns, so two PRs that both take version n add
+    /// different lines at the same spot and git reports a conflict; keeping both lines fails the versions test, and a
+    /// column moved to the wrong migration fails the `addedIn` and `shippedColumns` tests. The second PR to merge
+    /// renumbers. Never edit or reorder a shipped entry: existing databases were created from it.
     static let columns: [IndexColumn] = [
         // `path` first: it is the upsert key.
         IndexColumn("path", "TEXT NOT NULL UNIQUE", bind: { .text($0.path) }, read: { $0.path = $1.text ?? "" }),
@@ -426,7 +435,7 @@ public final class ScreenshotIndex: @unchecked Sendable {
             END
             """,
         ]),
-        SQLiteMigration(version: 2, statements: addColumns(addedIn: 2)),
+        SQLiteMigration(version: 2, statements: addColumns("restored_by_undo")),
     ]
 
     /// Upsert by path; returns the row id.
@@ -439,9 +448,15 @@ public final class ScreenshotIndex: @unchecked Sendable {
 
     static func columns(addedIn version: Int32) -> [IndexColumn] { columns.filter { $0.addedIn == version } }
 
-    /// `ALTER TABLE` statements for the columns a later migration adds (SQLite appends them, so table order = `columns`).
-    static func addColumns(addedIn version: Int32) -> [String] {
-        columns(addedIn: version).map { "ALTER TABLE screenshots ADD COLUMN \($0.name) \($0.definition)" }
+    /// `ALTER TABLE` statements adding the named `columns` entries, in that order (SQLite appends them, so the
+    /// table order is the order of the migrations). Tests check each name's `addedIn` is the migration it is in.
+    static func addColumns(_ names: String...) -> [String] {
+        names.map { name in
+            guard let column = columns.first(where: { $0.name == name }) else {
+                preconditionFailure("addColumns: no column named \(name) in ScreenshotIndex.columns")
+            }
+            return "ALTER TABLE screenshots ADD COLUMN \(column.name) \(column.definition)"
+        }
     }
 
     private static func tagsJSON(_ tags: [String]) -> String {

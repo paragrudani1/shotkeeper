@@ -164,7 +164,7 @@ final class ScreenshotIndexTests: XCTestCase {
                        [.text("/v1.png"), .text("Screenshot.png"), .text("h")])
         }
         let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: path))
-        XCTAssertEqual(index.schemaVersion, 2)
+        XCTAssertEqual(index.schemaVersion, ScreenshotIndex.migrations.last?.version)
         let row = try XCTUnwrap(index.lookup(byPath: "/v1.png"))
         XCTAssertFalse(row.restoredByUndo)
     }
@@ -184,6 +184,32 @@ final class ScreenshotIndexTests: XCTestCase {
         // ADD COLUMN appends, so the table order is the order columns were added in.
         XCTAssertEqual(ScreenshotIndex.columns.map(\.addedIn), ScreenshotIndex.columns.map(\.addedIn).sorted())
     }
+
+    /// Each migration adds exactly the columns whose `addedIn` names it, and exactly the columns it shipped with.
+    /// A column moved into a version that is already out (and so never reruns on a user's database) fails here.
+    func testEachMigrationAddsItsShippedColumns() {
+        XCTAssertEqual(Set(Self.shippedColumns.keys), Set(ScreenshotIndex.migrations.map(\.version)),
+                       "add `n: [columns]` to shippedColumns with each new migration")
+        for migration in ScreenshotIndex.migrations {
+            let declared = ScreenshotIndex.columns(addedIn: migration.version).map(\.name)
+            XCTAssertEqual(declared, Self.shippedColumns[migration.version] ?? [],
+                           "columns with addedIn: \(migration.version) differ from what that version shipped")
+            guard migration.version > 1 else { continue }
+            let prefix = "ALTER TABLE screenshots ADD COLUMN "
+            let added = migration.statements.filter { $0.hasPrefix(prefix) }
+                .map { String($0.dropFirst(prefix.count).prefix { $0 != " " }) }
+            XCTAssertEqual(added, declared, "migration \(migration.version) adds other columns than their addedIn says")
+        }
+    }
+
+    /// The columns each migration adds, as shipped. Append `n: [...]` with each new migration; never edit a line:
+    /// a database already at that version will not run it again.
+    private static let shippedColumns: [Int32: [String]] = [
+        1: ["path", "original_filename", "content_hash", "captured_at", "processed_at", "title", "title_confidence",
+            "source_app_or_site", "content_type", "description", "tags", "key_text", "date_mentioned", "produced_by",
+            "billed_input_tokens", "status", "last_error", "note"],
+        2: ["restored_by_undo"],
+    ]
 
     /// The migrated table has exactly the declared columns, in order: a column without its migration (or the other
     /// way round) fails here, not at the first save on a user's Mac.
@@ -227,9 +253,9 @@ final class ScreenshotIndexTests: XCTestCase {
         }
     }
 
-    /// A database created by the build at `295df83` (schema version 2) opens without a migration, keeps every row
-    /// and every value, and has exactly the schema a new database gets.
-    func testDatabaseAtCurrentVersionOpensUnchanged() throws {
+    /// A database created by the build at `295df83` (schema version 2) opens, runs only the migrations after 2, keeps
+    /// every row and every value, and has exactly the schema a new database gets.
+    func testDatabaseFrom295df83OpensWithEveryValueKept() throws {
         let dir = try TempDir()
         let legacyPath = dir.url.appendingPathComponent("legacy.sqlite").path
         do {
@@ -244,9 +270,10 @@ final class ScreenshotIndexTests: XCTestCase {
                     'done', NULL, 'kept', 1)
                 """)
             try db.run("INSERT INTO screenshots (path, original_filename, content_hash) VALUES ('/pending.png', 'p.png', 'h')")
+            XCTAssertEqual(try db.userVersion, 2, "the frozen schema")
         }
         let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: legacyPath))
-        XCTAssertEqual(index.schemaVersion, 2)
+        XCTAssertEqual(index.schemaVersion, ScreenshotIndex.migrations.last?.version)
         let old = try XCTUnwrap(index.lookup(byPath: "/old.png"))
         XCTAssertEqual(old, IndexedScreenshot(
             id: old.id, path: "/old.png", originalFilename: "Screenshot.png", contentHash: "v1:1:2:3",
@@ -352,14 +379,38 @@ final class ScreenshotIndexTests: XCTestCase {
 
     // MARK: - Change feed
 
-    private func collect<S: AsyncSequence>(_ sequence: S) async -> [S.Element] where S.Failure == Never {
-        var elements: [S.Element] = []
-        for await element in sequence { elements.append(element) }
-        return elements
+    /// Awaits `operation`. After `seconds` it fails the test with a message naming `what`, and returns nil instead of
+    /// hanging (the operation need not react to cancellation).
+    private func awaitResult<T: Sendable>(_ what: String, seconds: Double = 10, file: StaticString = #filePath,
+                                          line: UInt = #line, _ operation: @escaping @Sendable () async -> T) async -> T? {
+        let work = Task { await operation() }
+        let timer = Locked<Task<Void, Never>?>(nil)
+        let result: T? = await withCheckedContinuation { continuation in
+            let resumed = Locked(false)
+            let finish: @Sendable (T?) -> Void = { value in
+                if resumed.mutate({ done in defer { done = true }; return !done }) { continuation.resume(returning: value) }
+            }
+            Task { finish(await work.value) }
+            timer.set(Task { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)); finish(nil) })
+        }
+        timer.get?.cancel()
+        work.cancel()
+        if result == nil { XCTFail("timed out after \(seconds) s waiting for \(what)", file: file, line: line) }
+        return result
+    }
+
+    /// Everything `stream` yields until it finishes. Free the index first: that is what finishes it.
+    private func collect(_ stream: AsyncStream<IndexChange>, file: StaticString = #filePath,
+                         line: UInt = #line) async -> [IndexChange] {
+        await awaitResult("the change stream to finish (it ends when the index is freed)", file: file, line: line) {
+            var changes: [IndexChange] = []
+            for await change in stream { changes.append(change) }
+            return changes
+        } ?? []
     }
 
     func testChangesReportInsertUpdateAndRemoveInCommitOrder() async throws {
-        let index = try ScreenshotIndex.inMemory()
+        var index: ScreenshotIndex! = try ScreenshotIndex.inMemory()
         let stale = try index.save(.testRow("/b.png"))
         let changes = index.changes()
 
@@ -372,8 +423,12 @@ final class ScreenshotIndexTests: XCTestCase {
         try index.updatePath(from: "/missing.png", to: "/c.png")
         try index.updatePath(from: "/b.png", to: "/b.png")
         try index.updatePath(from: "/b.png", to: "/c.png")
+        // An identical row is still reported (save does not diff).
+        let current = try XCTUnwrap(index.lookup(byPath: "/c.png"))
+        try index.save(current)
+        index = nil
 
-        let received = await collect(changes.prefix(6))
+        let received = await collect(changes)
         XCTAssertEqual(received, [
             IndexChange(.inserted, id: a, path: "/a.png"),
             IndexChange(.updated, id: a, path: "/a.png"),
@@ -381,14 +436,15 @@ final class ScreenshotIndexTests: XCTestCase {
             IndexChange(.removed, id: stale, path: "/b.png"),
             IndexChange(.updated, id: a, path: "/b.png"),
             IndexChange(.updated, id: a, path: "/c.png"),
+            IndexChange(.updated, id: a, path: "/c.png"),
         ])
     }
 
     func testEverySubscriberGetsEveryChangeAndStreamsEndWithTheIndex() async throws {
-        var index: ScreenshotIndex? = try ScreenshotIndex.inMemory()
-        let first = try XCTUnwrap(index).changes()
-        let second = try XCTUnwrap(index).changes()
-        let id = try XCTUnwrap(index).save(.testRow("/a.png"))
+        var index: ScreenshotIndex! = try ScreenshotIndex.inMemory()
+        let first = index.changes()
+        let second = index.changes()
+        let id = try index.save(.testRow("/a.png"))
         index = nil
         let expected = [IndexChange(.inserted, id: id, path: "/a.png")]
         let firstReceived = await collect(first)
@@ -400,22 +456,47 @@ final class ScreenshotIndexTests: XCTestCase {
     func testAFailedWritePublishesNothing() async throws {
         let dir = try TempDir()
         let url = dir.url.appendingPathComponent("index.sqlite")
-        let index = try ScreenshotIndex(fileURL: url)
+        var index: ScreenshotIndex! = try ScreenshotIndex(fileURL: url)
         try index.save(.testRow("/a.png"))
         let changes = index.changes()
-        try index.save(.testRow("/b.png"))
+        let b = try index.save(.testRow("/b.png"))
         // Makes the UPDATE fail after the stale row's DELETE, so the transaction rolls back.
         try SQLiteDatabase(path: url.path).execute("""
             CREATE TRIGGER fail_update BEFORE UPDATE OF path ON screenshots BEGIN SELECT RAISE(ABORT, 'no'); END
             """)
         XCTAssertThrowsError(try index.updatePath(from: "/a.png", to: "/b.png"))
         XCTAssertNotNil(try index.lookup(byPath: "/b.png"), "rolled back")
-        try index.save(.testRow("/c.png"))
-        var iterator = changes.makeAsyncIterator()
-        let firstChange = await iterator.next()
-        let secondChange = await iterator.next()
-        XCTAssertEqual(firstChange?.path, "/b.png")
-        XCTAssertEqual(secondChange?.path, "/c.png", "nothing from the failed updatePath")
+        let c = try index.save(.testRow("/c.png"))
+        index = nil
+        let received = await collect(changes)
+        XCTAssertEqual(received, [IndexChange(.inserted, id: b, path: "/b.png"), IndexChange(.inserted, id: c, path: "/c.png")],
+                       "nothing from the failed updatePath")
+    }
+
+    func testADroppedStreamUnsubscribes() throws {
+        let index = try ScreenshotIndex.inMemory()
+        let kept = index.changes()
+        _ = index.changes()
+        XCTAssertEqual(index.subscriberCount, 1, "the dropped stream unsubscribed, the kept one did not")
+        withExtendedLifetime(kept) {}
+    }
+
+    func testCancellingTheIteratingTaskUnsubscribes() async throws {
+        let index = try ScreenshotIndex.inMemory()
+        let changes = index.changes()
+        let received = Locked(0)
+        let iterating = Task { for await _ in changes { received.mutate { $0 += 1 } } }
+        try index.save(.testRow("/a.png"))
+        for _ in 0..<2_000 where received.get == 0 { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertEqual(received.get, 1, "the task is iterating")
+        XCTAssertEqual(index.subscriberCount, 1)
+
+        iterating.cancel()
+        _ = await awaitResult("the cancelled iteration to end") { await iterating.value }
+        XCTAssertEqual(index.subscriberCount, 0, "cancelling the iteration unsubscribed (the stream itself is still held)")
+        try index.save(.testRow("/b.png"))
+        XCTAssertEqual(received.get, 1)
+        withExtendedLifetime(changes) {}
     }
 
     func testGenericMigrationsApplyOnlyNewSteps() throws {
