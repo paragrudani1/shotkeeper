@@ -50,6 +50,8 @@ usage() {
 }
 
 # codesign's signing call; `-f -s <identity>` as in [S5], with `--keychain` after it when given.
+# codesign's own errors (e.g. no identity found) may name the identity in the log. That is fine: "Shotkeeper Release"
+# is public (it is in this script); the certificate and the keychain password are the secrets.
 sign() {
   if [ -n "$KEYCHAIN" ]; then
     codesign -f -s "$IDENTITY" --keychain "$KEYCHAIN" "$@"

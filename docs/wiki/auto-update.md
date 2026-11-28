@@ -124,3 +124,10 @@ Recorded in [workflow](workflow.md) ("Auto-update spec", 2026-11-28); copied her
   `cdhash H"…"`, "DR shape check skipped". The downloaded `Shotkeeper-unsigned` (CFBundleVersion 1) was
   "valid on disk" after `ditto -x -k`. Note: the Release app arrives already linker-signed (codesign prints
   "replacing existing signature"), as it did before this ticket.
+
+## Ticket 09: notes from earlier tickets (not started)
+
+- 2026-11-28 (PR #19 review): before the first release, the release job must run `scripts/sign-app.sh --keychain
+  "$KEYCHAIN" "Shotkeeper Release" <app>` once with a throwaway self-signed "Shotkeeper Release" identity in a
+  temporary keychain, so the `--keychain` path and the DR-shape check meet the real `codesign` before Parag's
+  certificate does (CI signs only ad-hoc so far, and the self-test fakes codesign for the real identity).
