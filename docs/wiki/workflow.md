@@ -299,3 +299,9 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   The chief of staff merged the base, combined the wiki page, and tightened the backfill to match the note only as
   the whole note or its last `; ` part, so a quoted error can't match. Tests were added and 437 Linux tests pass
   (`93a3dbb`). Recorded for ticket 06: check `restored_by_undo` before `title_source`.
+- 2026-11-28: **PR #19 merged into `t3/auto-update`** (`219a902`, head `5ecddaa`; auto-update 06, signing scripts).
+  The review found no blockers. Signing order and flags match Sparkle's live sandboxing page. Hardened Runtime is on
+  for Sparkle's parts and off for the app, as the spec says. The downloaded artifact's SHA matched the upload. The
+  review also found that the "Lint on macOS" step actually runs in the Linux job (from PR #10's fixes), so the bash
+  3.2 claim was never true. Follow-ups: PR A (lint on macOS, against main) and PR B (`OTHER_CODE_SIGN_FLAGS --deep`
+  check, `select-xcode.sh` message, a ticket 09 note to dry-run the real-identity path with a throwaway certificate).
