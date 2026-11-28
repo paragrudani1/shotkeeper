@@ -32,6 +32,7 @@ Lives at `docs/wiki/`, following the convention the user agreed for team-pulse o
 - [../research/icon-composer.md](../research/icon-composer.md): Icon Composer `.icon` layout, `icon.json` keys (from Apple's Landmarks sample), which icon wins, actool facts (2026-11-22).
 - [../research/openai-compatible-chat.md](../research/openai-compatible-chat.md): local server request shape (llama-server, mlx_lm.server, structured outputs).
 - [../research/spotlight-shortcuts-ocr.md](../research/spotlight-shortcuts-ocr.md): App Intents by OS version, Core Spotlight and signing, Live Text in plain Spotlight, Vision OCR (2026-11-28).
+- [../research/capture-types.md](../research/capture-types.md): screen recordings (naming, finishing, frames, cost) and clipboard screenshots (pasteboard, privacy alert from macOS 27.2) (2026-11-28).
 - [../research/openrouter.md](../research/openrouter.md): OpenRouter + Inkling 2 Mini: parameters per provider, reasoning switch, logprobs, headers, usage/cost, privacy routing, errors (2026-11-22).
 
 ## Code map

@@ -84,3 +84,11 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
     conventions. It does not invent a new palette or typeface. Its "spend boldness in one place" and writing rules
     (sentence case, plain verbs, an action keeps its name through the flow, errors say how to fix them) apply in full.
   - The HTML mockup is for review only. CI snapshot PNGs of the real SwiftUI views stay the acceptance check.
+- 2026-11-28: **Capture research** ([../research/capture-types.md](../research/capture-types.md)). No backend accepts
+  video, so recordings become still frames on the Mac (AVFoundation, app side, behind a seam). Four frames cost about
+  3.5× a screenshot on Clairic; one tiled image costs the same as a screenshot. Clipboard: Apple documents no way to
+  tell a screenshot from any other copied image, and from macOS 27.2 reading a copied image in the background
+  probably shows a privacy alert until the user chooses "Always Allow". That conflicts with Parag's "on by default"
+  decision (above), so it went back to Parag.
+  - Side finding: OpenRouter's endpoint list for Inkling 2 Mini changed after 2026-11-22: six endpoints and $0.06/M
+    input. `../research/openrouter.md`, the `provider.only` pin and the ZDR checks need re-checking.
