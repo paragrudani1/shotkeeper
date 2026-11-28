@@ -186,7 +186,7 @@ final class SearchKeyTranslationTests: XCTestCase {
         XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command], characters: "c"), .copyImage)
         XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command, .capsLock], characters: "C"), .copyImage)
         XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command], characters: "с"), .copyImage, "Russian layout")
-        XCTAssertNil(SearchKeyMap.command(keyCode: 8, flags: [.command, .shift], characters: "c"))
+        XCTAssertEqual(SearchKeyMap.command(keyCode: 8, flags: [.command, .shift], characters: "c"), .copyText, "⇧⌘C copies the text (wave 1 ticket 06)")
         XCTAssertNil(SearchKeyMap.command(keyCode: 8, flags: [], characters: "c"))
     }
 
@@ -224,6 +224,18 @@ final class WorkspaceCopyTests: XCTestCase {
         XCTAssertEqual(item.data(forType: .png), png, "the file's own bytes")
         XCTAssertEqual(item.string(forType: .fileURL), file.absoluteString)
         XCTAssertFalse(WorkspaceActions.copyImage(directory.appendingPathComponent("gone.png"), to: pasteboard))
+    }
+
+    /// Copy Text: one item with only plain text, so TextEdit (rich mode) and Slack paste no styling.
+    @MainActor
+    func testCopyTextWritesOneItemWithOnlyAString() throws {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("shotkeeper-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        XCTAssertTrue(WorkspaceActions.copyText("Order #A-20417\nTotal $248.12", to: pasteboard))
+        XCTAssertEqual(pasteboard.pasteboardItems?.count, 1)
+        let item = try XCTUnwrap(pasteboard.pasteboardItems?.first)
+        XCTAssertEqual(item.types, [.string])
+        XCTAssertEqual(item.string(forType: .string), "Order #A-20417\nTotal $248.12", "line breaks kept")
     }
 }
 

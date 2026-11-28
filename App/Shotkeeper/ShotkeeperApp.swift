@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.perform(row, reveal: reveal)
         }
         searchPanel.onProcessExisting = { Task { _ = await coordinator.capture.processExistingScreenshots() } }
+        if let index = coordinator.index { searchPanel.indexChanges = { index.changes() } }
         settingsOpener.prepare()
         // Closing Settings commits tokens being typed (the field's onDisappear may not run before the window goes).
         _ = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
