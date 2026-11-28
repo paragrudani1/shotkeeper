@@ -224,3 +224,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: **PR #14 merged into `t3/wave1-search`** (`e25049c`; wave 1 ticket 05, the Vision measurement tool).
   `macos-app` type-checked it and ran it on two generated images, both green. Handed to Parag to run (instructions:
   `docs/research/vision-ocr-settings.md` "How to run (Parag)"). Ticket 04 waits for the results.
+- 2026-11-28: **PR #13 merged into `t3/wave1-search`** (`be7e4ad`, head `49aef72`; wave 1 ticket 01). Tickets 04 and 06
+  are now unblocked (04 still needs Parag's Vision numbers before it merges).
+- 2026-11-28: **PR #15 review: fix first** (one should-fix). Release-notes escaping went per `Character`, so `<`+ZWJ and
+  `]]>`+ZWJ slipped through and could break the appcast's CDATA. The chief of staff fixed it (`089ef62`: per-scalar
+  escaping and a duplicate-section error, two tests, 439 Linux tests pass). Merge into `t3/auto-update` once CI is green.
