@@ -309,3 +309,12 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   was merged into the three integration branches again.
 - 2026-11-28: **PR #20 merged into `t3/wave2`** (`b12dc4d`, head `93a3dbb`; wave 2 02, migration 4 `title_source`).
   Wave 2 ticket 06 (`reanalyze` in core) is unblocked and waits for a free slot.
+- 2026-11-28: **PR #23 review (source filter): fix first.** `macos-app` didn't compile (an escaping closure in
+  `SearchView`), so CI produced no snapshots. Should-fix before wave 2 relies on `SourceKey`: width folding and
+  whitespace collapsing ("ＧｉｔＨｕｂ" ≠ "GitHub"), and documentation that `rawValue` is a matching key, never a folder or
+  display name (use `SourceFacet.displayName`). The SQL, keyboard, strings and the author's four decisions were
+  approved. A fix agent started.
+  - **Pattern:** two implementers (PR #23 here, and PR #9 earlier) handed back with `macos-app` "pending" and it
+    then failed. Fix briefs now say waiting for CI is part of the task.
+- 2026-11-28: PRs **#24** (lint on macOS, against main), **#25** (wave 2 03, queue job kinds; under review) and
+  **#26** (auto-update 06 follow-ups) opened.
