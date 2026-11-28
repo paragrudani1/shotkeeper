@@ -137,7 +137,7 @@ public struct SearchMessage: Equatable, Sendable {
 }
 
 /// A button in the no-match state (design §5).
-public enum SearchNoMatchButton: Equatable, Sendable {
+public enum SearchNoMatchButton: Hashable, Sendable {
     /// Resets the chip and the date, keeps the words (`clearFilters()`).
     case clearFilters
     /// Resets the words and every filter (`clearSearch()`).

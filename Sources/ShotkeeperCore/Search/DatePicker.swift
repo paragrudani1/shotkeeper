@@ -1,7 +1,7 @@
 import Foundation
 
 /// A row of the in-panel date picker (design §4, "Date picker"), top to bottom.
-public enum DatePickerOption: CaseIterable, Equatable, Sendable {
+public enum DatePickerOption: CaseIterable, Hashable, Sendable {
     case anyTime, today, yesterday, last7Days, last30Days, customRange
 
     public var title: String {

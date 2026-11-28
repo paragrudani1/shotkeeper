@@ -18,6 +18,8 @@ final class SearchViewModel {
     /// Number of searches whose answer was applied (debounce check in tests).
     private(set) var searchesRun = 0
 
+    /// Posts a VoiceOver announcement from the panel ("Date cleared", "Search cleared"). Set by the controller.
+    @ObservationIgnored var announce: @MainActor (String) -> Void = { _ in }
     @ObservationIgnored let debounce: Duration
     @ObservationIgnored let now: () -> Date
     @ObservationIgnored let time: TimeLabel
@@ -28,6 +30,9 @@ final class SearchViewModel {
     init(debounce: Duration = .milliseconds(150), state: SearchWindowState = SearchWindowState(),
          now: @escaping () -> Date = Date.init, time: TimeLabel = TimeLabel(), search: @escaping SearchFunction) {
         self.debounce = debounce
+        var state = state
+        state.now = now()  // date wording (the Date pill, no-match sentences) uses the same clock and calendar
+        state.time = time
         self.state = state
         self.now = now
         self.time = time
@@ -53,17 +58,74 @@ final class SearchViewModel {
 
     func clearSearch() {
         if state.clearSearch() { schedule(after: .zero) }
+        announce(SearchWindowState.Announcement.searchCleared)
     }
 
-    /// Esc. Returns true when the window should close (nothing was left to clear).
+    /// "Clear filters" in the no-match state: resets the chip and the date, keeps the words.
+    func clearFilters() {
+        if state.clearFilters() { schedule(after: .zero) }
+        announce(SearchWindowState.Announcement.filtersCleared)
+    }
+
+    /// Esc: closes an open picker, else clears the search, else asks to close. Returns true when the window should
+    /// close (nothing was left to clear).
     func escape() -> Bool {
         switch state.escape() {
+        case .closedPicker:
+            return false
         case .clearedSearch:
             schedule(after: .zero)
+            announce(SearchWindowState.Announcement.searchCleared)
             return false
         case .close:
             return true
         }
+    }
+
+    // MARK: Date filter (the Date pill and its in-panel picker)
+
+    /// The Date pill's ✕.
+    func clearDate() {
+        if state.setDateFilter(nil) { schedule(after: .zero) }
+        announce(SearchWindowState.Announcement.dateCleared)
+    }
+
+    /// ⌘D or a click on the Date pill.
+    func toggleDatePicker() {
+        state.now = now()  // the custom range starts at the last 7 days of today
+        state.toggleDatePicker()
+    }
+
+    func closeDatePicker() {
+        state.closeDatePicker()
+    }
+
+    func moveDateHighlight(by delta: Int) {
+        state.moveDateHighlight(by: delta)
+    }
+
+    func chooseDate(_ option: DatePickerOption) {
+        if state.chooseDate(option) { schedule(after: .zero) }
+    }
+
+    /// ↩ in the picker: the highlighted row, or Apply while the custom range is shown.
+    func chooseHighlightedDate() {
+        if state.chooseHighlightedDate() { schedule(after: .zero) }
+    }
+
+    func setCustomRange(from: CalendarDay, through: CalendarDay) {
+        state.setCustomRange(from: from, through: through)
+    }
+
+    func applyCustomRange() {
+        if state.applyCustomRange() { schedule(after: .zero) }
+    }
+
+    /// ⌫ in the date list.
+    func clearDateFromPicker() {
+        let hadDate = state.date != nil
+        if state.clearDateFromPicker() { schedule(after: .zero) }
+        if hadDate { announce(SearchWindowState.Announcement.dateCleared) }
     }
 
     /// "View in Search" on a batch toast.
@@ -127,6 +189,7 @@ final class SearchViewModel {
 
     private func schedule(after delay: Duration) {
         pending?.cancel()
+        state.now = now()  // the index resolves "today" when the search runs; the wording follows the same day
         let query = state.query
         let limit = state.resultLimit
         let search = searchFunction

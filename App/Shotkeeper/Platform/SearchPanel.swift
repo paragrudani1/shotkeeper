@@ -204,6 +204,7 @@ final class SearchPanelController {
         self.resultActions = SearchResultActions(model: model)
         resultActions.hidePanel = { [weak self] in self?.hide() }
         resultActions.announce = { [weak self] text in self?.announce(text) }
+        model.announce = { [weak self] text in self?.announce(text) }
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -243,6 +244,7 @@ final class SearchPanelController {
 
     /// Returns true when the key was handled.
     func handle(_ key: SearchKey) -> Bool {
+        if let picker = model.state.datePicker { return handleInDatePicker(key, picker) }
         switch key {
         case .up, .down:
             model.moveSelection(by: key == .up ? -1 : 1)
@@ -277,6 +279,36 @@ final class SearchPanelController {
             toggleQuickLook()
         case .chip(let chip):
             model.selectChip(chip)
+        case .dateFilter:
+            model.toggleDatePicker()
+        case .deleteBackward:
+            return false  // deletes in the field
+        }
+        return true
+    }
+
+    /// Keys while the date picker is open (design §6). The list takes ↑/↓/↩/⌫; while the custom range is shown, ↑/↓,
+    /// ⌫ and Space belong to the focused date field and ↩ is Apply. Esc closes the picker (core's Esc order).
+    private func handleInDatePicker(_ key: SearchKey, _ picker: DatePickerState) -> Bool {
+        switch key {
+        case .up, .down:
+            guard picker.takesArrowKeys else { return false }
+            model.moveDateHighlight(by: key == .up ? -1 : 1)
+        case .open:
+            model.chooseHighlightedDate()
+        case .close:
+            _ = model.escape()
+        case .deleteBackward:
+            guard picker.takesArrowKeys else { return false }
+            model.clearDateFromPicker()
+        case .dateFilter:
+            model.toggleDatePicker()
+        case .space:
+            return picker.takesArrowKeys  // nothing to type into in the list
+        case .copyImage:
+            return false  // ⌘C copies a date field's selected text, never the image behind the picker
+        case .reveal, .quickLook, .chip:
+            break  // ignored while a picker is open
         }
         return true
     }
@@ -363,6 +395,8 @@ final class SearchPanelController {
             return true
         case .reveal, .chip:
             return handle(key)
+        case .dateFilter, .deleteBackward:
+            return false
         }
     }
 
