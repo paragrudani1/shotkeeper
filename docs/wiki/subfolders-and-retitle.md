@@ -29,3 +29,31 @@ not created twice.
   `request(for:madeIn:)` refuse a target that is not allowed at the click, so the "asks first" branch cannot be
   forgotten. Open for Parag: CODING_STANDARDS #2 could add "…and the destination has not changed since", which the
   code already enforces.
+- 2026-11-28 (`1312ab1`, ticket 02): **index migration 4: `title_source`.** Claimed version 4 (wave 1 took 3; no
+  other migration on `t3/wave2` or `t3/wave1-search` when pushed). `title_source TEXT`: NULL or `model` = the model's
+  title (or the original name), `user` = typed by the user (`TitleSource`, `IndexedScreenshot.titleSource`). The
+  same migration runs `UPDATE screenshots SET title_source = 'user' WHERE note = 'renamed by the user' OR note GLOB '*; renamed by the user'`
+  (the note `rename(_:to:)` has appended at the end since `02e6420`; GLOB is case-sensitive; tightened in review), so names fixed in the
+  toast before this feature count as the user's (spec decision 8). Every other row stays NULL. Not an FTS column, so
+  FTS is untouched. No other column (no rule, folder, count, history or previous analysis). Test:
+  `testVersionThreeDatabaseBackfillsTitleSourceFromTheRenamedByTheUserNote`.
+- 2026-11-28 (`1312ab1`): **who writes it.** `process` builds every row with `.model`, so a path whose content
+  changed starts again as the model's (failed rows too; nil and `model` mean the same). `rename(_:to:)` writes
+  `.user` (toast and search window). A restored-by-Undo row renamed by hand keeps its flag. Confirming the unchanged
+  name writes nothing, so the mark stays as it was.
+- 2026-11-28 (`1312ab1`): **"Use This Name" is `rename(_:to:asSuggestedTitle: true)`** (default false), as the ticket
+  recommends, not a string comparison. It writes `.model`, and the row's title is the suggestion as given (the
+  model's title, as `process` stores it), not the sanitized file stem that a typed rename stores, because the spec
+  says it "sets the title back to the model's". It adds no "renamed by the user" note. When the file already has
+  that name, nothing moves and no undo record is written, but the mark is still cleared (the spec: a rename that
+  matches the suggestion clears it). Test: `testRenamingToTheSuggestedTitleClearsTheUsersMark`. Checked by hand: dropping
+  the unchanged-name branch fails it.
+- 2026-11-28 (review of PR #20): the backfill matches the phrase only as the whole note or its last `; ` part,
+  because `process` notes can quote an error that contains the model's title ("kept name: rename failed (…)").
+  Undo after a hand rename leaves `title_source = user` with the typed title while the file is back at the model's
+  name; this is harmless only because ticket 06 checks `restored_by_undo` **before** `title_source` (spec step 7),
+  and ticket 06 must keep that order.
+
+## Verification
+- 2026-11-28 (`1312ab1`, ticket 02): `SCRATCH=.build/linux-w2-02 scripts/test-linux.sh` green, 433 tests;
+  `scripts/lint.sh` ok.

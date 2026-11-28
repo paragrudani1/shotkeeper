@@ -66,8 +66,9 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
 - **Index/**
   - `ScreenshotIndex`: `save(_:) -> id` (upsert by path), `updatePath(from:to:)`, `lookup(byPath:)`, `lookup(byHash:)`,
     `recent(limit:)`, `recentProcessed(limit:)` (`done` only), `entries(withStatus:limit:)`, `search(_:limit:)` (empty → recent),
-    `stats()`, `markRestoredByUndo(path:)`. Thread-safe. Schema version 3 (2 added `restored_by_undo`; 3 adds the
-    recognized-text columns, rebuilds FTS with `recognized_text`, and adds the filter and pending-text indexes).
+    `stats()`, `markRestoredByUndo(path:)`. Thread-safe. Schema version 4 (2 added `restored_by_undo`; 3 adds the
+    recognized-text columns, rebuilds FTS with `recognized_text`, and adds the filter and pending-text indexes; 4 adds
+    `title_source` and sets it to `user` where `note` contains "renamed by the user", other rows NULL).
   - `changes() -> AsyncStream<IndexChange>`: every committed row change from the call on, in commit order (unbounded
     buffer, also for a stream held but not iterated; one subscription per call, ended by dropping the stream or
     cancelling its iteration; finishes when the index is freed). `IndexChange`: `kind` (`.inserted` / `.updated`
@@ -93,6 +94,8 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
     Text fields: `recognizedText`, `textStatus: TextStatus?` (nil = never requested; `.pending` / `.done` /
     `.noText` (stored `none`) / `.failed`), `textRecognizedBy`, `textError`. `save` writes them like every column, so a
     fresh entry without them clears old text.
+    `titleSource: TitleSource?` (wave 2): `.user` = a name the user typed (Analyze Again keeps it), `.model` or nil =
+    the model's title or the original name.
   - `ContentFingerprint.compute(for:)`: size + mtime + first 64 KiB (not a security hash).
 - **Queue/**
   - `ProcessingQueue` (actor): `enqueue`, `pause(until:)`, `resume()`, `setRequestsPerMinute(_:)`, `statusUpdates()`, `status`, `waitUntilIdle()`,
@@ -104,8 +107,13 @@ Change the rate with `queue.setRequestsPerMinute(_:)` (in place; queued jobs and
   - `ScreenshotProcessor(snapshot:…)`: `process(_:userRequest:) -> ProcessingOutcome` (`.processed(finalURL:renamed:moved:)` or `.skipped(SkipReason)`; `.awaitingConsent` = `UploadConsent.decide` refused),
     `undoLast()`, `undo(id:)`. Throws analyzer/preparer errors after recording `failed` in the index; the file is untouched.
     - `processWithReport(_:) -> ProcessingReport` (`originalURL`, `outcome`, `undoRecordID`): what the toast needs.
-    - `rename(_:to:) -> ManualRenameResult` (toast "Edit name"): `FilenameSanitizer` + original extension + `FileOrganizer`
-      collisions ("Name 2.png"), undo record, index path and title. Throws `ManualRenameError.unusableName`, `FileOrganizerError`.
+    - `rename(_:to:asSuggestedTitle:) -> ManualRenameResult` (toast and search window "Edit name"): `FilenameSanitizer` +
+      original extension + `FileOrganizer` collisions ("Name 2.png"), undo record, index path and title, marked
+      `titleSource = .user`. `asSuggestedTitle: true` (default false) is "Use This Name": the title becomes the given
+      model title, marked `.model` (the only path that clears the user's mark), also when the name is unchanged.
+      Throws `ManualRenameError.unusableName`, `FileOrganizerError`.
+    - `process` writes `titleSource = .model` on every row it builds, so a path whose content changed starts again as
+      the model's.
     - `undo(ids:) -> UndoBatchResult` (Undo / Undo All; newest first, keeps going), `lastUndoable()` (menu "Undo: <title>").
     - Undo flags the file in the index (`restoredByUndo`); `process` then returns `.skipped(.restoredByUndo)` for it forever,
       also after a restart and after the file changed.

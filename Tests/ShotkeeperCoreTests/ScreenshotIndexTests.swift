@@ -241,6 +241,51 @@ final class ScreenshotIndexTests: XCTestCase {
         XCTAssertEqual(try index.search("renamed quarterly").map(\.path), ["/a.png"])
     }
 
+    /// Migration 4 (wave 2, spec "Index schema"): a name the user typed in the toast before this feature is marked as
+    /// theirs, found by the note `rename(_:to:)` has written since `02e6420`; every other row keeps NULL (= the model's).
+    func testVersionThreeDatabaseBackfillsTitleSourceFromTheRenamedByTheUserNote() throws {
+        let dir = try TempDir()
+        let path = dir.url.appendingPathComponent("index.sqlite").path
+        do {
+            let db = try SQLiteDatabase(path: path)
+            try db.migrate(Array(ScreenshotIndex.migrations.prefix(3)))
+            XCTAssertEqual(try db.userVersion, 3)
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, title, note, status, text_status)
+                VALUES ('/typed.png', 'Screenshot.png', 'h1', 'Acme - March invoice',
+                        'kept name: title confidence 0.31 < 0.50; renamed by the user', 'done', 'done')
+                """)
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, title, note, status)
+                VALUES ('/model.png', 'Screenshot 2.png', 'h2', 'Invoice From Acme', 'Finder metadata not written', 'done')
+                """)
+            try db.run("INSERT INTO screenshots (path, original_filename, content_hash) VALUES ('/bare.png', 'b.png', 'h3')")
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, title, note, status)
+                VALUES ('/only.png', 'o.png', 'h4', 'Typed', 'renamed by the user', 'done')
+                """)
+            // A model title quoted in an error note must not count as the user's.
+            try db.run("""
+                INSERT INTO screenshots (path, original_filename, content_hash, title, note, status)
+                VALUES ('/quoted.png', 'q.png', 'h5', 'File renamed by the user',
+                        'kept name: rename failed (File renamed by the user.png exists)', 'done')
+                """)
+        }
+        let index = try ScreenshotIndex(fileURL: URL(fileURLWithPath: path))
+        XCTAssertEqual(index.schemaVersion, ScreenshotIndex.migrations.last?.version)
+        let typed = try XCTUnwrap(index.lookup(byPath: "/typed.png"))
+        XCTAssertEqual(typed.titleSource, .user)
+        XCTAssertEqual(typed.title, "Acme - March invoice")
+        XCTAssertEqual(typed.note, "kept name: title confidence 0.31 < 0.50; renamed by the user")
+        XCTAssertEqual(typed.textStatus, .done, "the other values stay")
+        XCTAssertNil(try index.lookup(byPath: "/model.png")?.titleSource)
+        XCTAssertNil(try index.lookup(byPath: "/bare.png")?.titleSource)
+        XCTAssertEqual(try index.lookup(byPath: "/only.png")?.titleSource, .user, "the phrase as the whole note")
+        XCTAssertNil(try index.lookup(byPath: "/quoted.png")?.titleSource, "the phrase inside a quoted error")
+        XCTAssertEqual(try index.stats().count, 5)
+        XCTAssertEqual(try index.search("march").map(\.path), ["/typed.png"])
+    }
+
     /// Story 23: date and source filters and the text runner's queue have indexes (checked by name, not SQL text).
     func testFilterAndPendingTextIndexesExist() throws {
         let db = try SQLiteDatabase(path: ":memory:")
@@ -306,6 +351,7 @@ final class ScreenshotIndexTests: XCTestCase {
              "billed_input_tokens", "status", "last_error", "note"]),
         (2, ["restored_by_undo"]),
         (3, ["recognized_text", "text_status", "text_recognized_by", "text_error"]),
+        (4, ["title_source"]),
     ]
 
     /// The migrated table has exactly the declared columns, in order: a column without its migration (or the other
@@ -342,6 +388,7 @@ final class ScreenshotIndexTests: XCTestCase {
             $0.textStatus = .failed
             $0.textRecognizedBy = "vision-r3-accurate-h1/96-lc0"
             $0.textError = "file missing"
+            $0.titleSource = .user
         }
         var expected = row
         expected.id = try index.save(row)

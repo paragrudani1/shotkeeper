@@ -547,6 +547,72 @@ final class ScreenshotProcessorTests: XCTestCase {
         XCTAssertEqual(read(current), "png bytes")
     }
 
+    /// Spec "Rename by hand": the name the user typed (toast or search window, both `rename(_:to:)`) is marked as
+    /// theirs, also on a row restored by Undo, which stays flagged.
+    func testManualRenameMarksTheTitleAsTheUsers() async throws {
+        let source = try screenshot()
+        let p = processor(StubAnalyzer(analysis(title: "Invoice From Acme")))
+        guard case .processed(let current, _, _) = try await p.process(source) else { return XCTFail() }
+        let typed = try p.rename(current, to: "Acme March").finalURL
+        let row = try XCTUnwrap(index.lookup(byPath: typed.path))
+        XCTAssertEqual(row.title, "Acme March")
+        XCTAssertEqual(row.titleSource, .user)
+
+        let undone = try p.undoLast()  // back to the model's name, and flagged as restored
+        XCTAssertEqual(undone.from, current.path)
+        let renamed = try p.rename(current, to: "Restored then typed").finalURL
+        let restoredRow = try XCTUnwrap(index.lookup(byPath: renamed.path))
+        XCTAssertEqual(restoredRow.titleSource, .user)
+        XCTAssertTrue(restoredRow.restoredByUndo)
+    }
+
+    /// Spec "Use suggested name" (story 58, ticket 08's "Use This Name"): renaming to the model's suggested title is
+    /// the one rename that clears the user's mark. The title is the model's as given (as `process` stores it), the
+    /// file gets the sanitized name, with the same undo record. The caller says so; equal strings alone do not.
+    func testRenamingToTheSuggestedTitleClearsTheUsersMark() async throws {
+        let source = try screenshot()
+        let p = processor(StubAnalyzer(analysis(title: "Invoice From Acme")))
+        guard case .processed(let current, _, _) = try await p.process(source) else { return XCTFail() }
+        let typed = try p.rename(current, to: "Acme March").finalURL
+
+        let used = try p.rename(typed, to: "Acme/March invoice", asSuggestedTitle: true)
+        let expected = dir.url.appendingPathComponent("Desktop/Acme - March invoice.png").standardizedFileURL
+        XCTAssertEqual(used.finalURL, expected)
+        XCTAssertEqual(try undoLog.records().last?.id, used.undoRecordID)
+        let row = try XCTUnwrap(index.lookup(byPath: expected.path))
+        XCTAssertEqual(row.title, "Acme/March invoice")
+        XCTAssertEqual(row.titleSource, .model)
+
+        // Typing the same text by hand marks it as the user's again.
+        let retyped = try p.rename(expected, to: "Acme March invoice").finalURL
+        XCTAssertEqual(try index.lookup(byPath: retyped.path)?.titleSource, .user)
+        // The user's name already equals the suggestion: nothing moves, and the mark is still cleared.
+        let same = try p.rename(retyped, to: "Acme March invoice", asSuggestedTitle: true)
+        XCTAssertEqual(same, ManualRenameResult(finalURL: retyped, undoRecordID: nil))
+        XCTAssertEqual(try index.lookup(byPath: retyped.path)?.titleSource, .model)
+        // Without the parameter, confirming the unchanged name writes nothing, so the model's mark stays.
+        _ = try p.rename(retyped, to: "Acme March invoice")
+        XCTAssertEqual(try index.lookup(byPath: retyped.path)?.titleSource, .model)
+    }
+
+    /// Spec "Index schema": a new row's title is the model's; a path whose content changed starts again as the
+    /// model's, because the user's name described the old content.
+    func testProcessMarksTheTitleAsTheModelsAlsoWhenTheContentChangedAfterAUserRename() async throws {
+        let source = try screenshot()
+        let p = processor(StubAnalyzer(analysis(title: "Invoice From Acme")))
+        guard case .processed(let first, _, _) = try await p.process(source) else { return XCTFail() }
+        XCTAssertEqual(try index.lookup(byPath: first.path)?.titleSource, .model)
+
+        let typed = try p.rename(first, to: "Acme March").finalURL
+        XCTAssertEqual(try index.lookup(byPath: typed.path)?.titleSource, .user)
+        try Data("new png bytes".utf8).write(to: typed)
+        guard case .processed(let second, _, _) = try await p.process(typed) else { return XCTFail() }
+        let row = try XCTUnwrap(index.lookup(byPath: second.path))
+        XCTAssertEqual(row.title, "Invoice From Acme")
+        XCTAssertEqual(row.titleSource, .model)
+        XCTAssertEqual(try index.stats().count, 1)
+    }
+
     func testRenameOntoPathOfDeletedIndexedFileIndexesNewFile() async throws {
         // The user deleted an already processed "Invoice From Acme.png"; its row stays in the index. The next
         // screenshot with the same title gets that (now free) name and must be indexed there, not fail half-way.
