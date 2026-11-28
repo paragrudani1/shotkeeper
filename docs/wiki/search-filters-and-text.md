@@ -160,6 +160,12 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   own letter. The top-level-domain step skips a first label containing `:` or `/`, so "https://github.com" stays a URL
   instead of becoming `https://github`. Tests: `testFullWidthLettersAreFolded`, `testRunsOfWhitespaceCollapseToOneSpace`,
   `testUnicodeEdgeCasesKeepTheirMeaning`, `testAURLKeepsItsDomain`. `reloadSources()` cancels the previous load first.
+- 2026-11-28 (wave 2 PR #30 review fix): `SourceKey.fold` also drops invisible format characters (general category
+  Cf: U+200E, U+200F, U+061C, U+FEFF, U+00AD, U+2060, …), so "\u{200E}Slack" = "Slack" and the list shows no look-alike
+  duplicates. U+200C/U+200D are kept so emoji ZWJ sequences survive. They are removed per word after the whitespace
+  split, so a lone mark between spaces leaves one space. Tests: `testInvisibleFormatCharactersAreFoldedAway`,
+  `testEmojiZWJSequencesAreKept`. U+200C has no test: swift-foundation's diacritic folding on Linux already drops it
+  before this step (macOS not checked). The display name is still the most common trimmed raw spelling, marks included.
 - 2026-11-28: the display name is the most common **trimmed** spelling ("Slack " and "Slack" count as one spelling).
   "Alphabetical" for the tie-break and the list's name order ignores case and diacritics, then falls back to Unicode
   order, so it never depends on the locale.
