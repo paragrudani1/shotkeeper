@@ -1,8 +1,14 @@
 name: CI
 
+# Triggers (2026-11-28): every PR push used to run the whole workflow twice (push + pull_request), and docs-only
+# commits queued the slow macOS job. PR branches now run once, via pull_request; pushes run only on main and the
+# integration branches (merges land there). Changes that touch only docs/ or Markdown skip CI.
 on:
   push:
+    branches: [main, 't3/wave*', 't3/auto-update', 't3/clean-up']
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
 
 permissions:
   contents: read
