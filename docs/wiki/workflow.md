@@ -362,3 +362,7 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   The chief of staff updated the stale ⇧⌘C test (`98b2e4c`). Snapshots still need checking before the merge.
 - 2026-11-28: Wave 1 is blocked on Parag's Vision numbers (04 → 07, 08). The Shortcuts and Spotlight spec (wave 3)
   was started so its four open questions can go to Parag early.
+- 2026-11-28: **PR #27** (wave 2 06, `reanalyze(rowID:request:)`) opened, with both CI jobs green at handback. It
+  refactors `process` into a shared `consentedJob` → `send` path, and the consent time is now the earliest of the file
+  dates, the original-name time and `capturedAt`. This touches the privacy choke point, so a full review started
+  before the merge. New `TitleKeptReason.renameFailed` needs wording in ticket 08.
