@@ -214,3 +214,10 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
 - 2026-11-28: Draft PRs **#15** (auto-update 01: `ReleasePlan` + `release-plan` CLI + CHANGELOG, into
   `t3/auto-update`; Sparkle's release-notes naming confirmed at `generate_appcast/ArchiveItem.swift:419-446`) and
   **#16** (wave 1 02: date filter, into `t3/wave1-search`) opened; both wait on `macos-app`.
+- 2026-11-28: Parag **accepted all 12 clean-up recommendations**: exact copies only (byte-compared before each
+  move); a group needs at least one indexed screenshot; extra copies are pre-ticked, never-opened ones are not;
+  "opened" = any Shotkeeper action on it or macOS's last-used date; opened once means never listed; with no macOS
+  record it is listed with a note; "old" defaults to 3 months (1/3/6/12, counted from when taken); restored-by-undo
+  files are never listed and are the copy kept; a trashed row stays marked trashed until the Trash is emptied;
+  menu Undo takes back the whole last batch (also wave 2's Sort Existing); the Trash call follows the research;
+  a separate Clean Up window from the menu bar.
