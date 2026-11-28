@@ -74,6 +74,12 @@ it, so a part never reaches into coordinator internals.
   - Per-line markers rather than per-file: a new delete in the same file still fails.
 - Tests are not linted (they delete their temp folders).
 
+## Verification (2026-11-28)
+- Linux: `SCRATCH=.build/linux-pfb scripts/test-linux.sh`, 410 tests, 0 failures. `scripts/lint.sh` and `--self-test` pass.
+- CI runs 46127111976 (`3e34e7f`) and 46127989839 (`0f02d9f`): `linux-core` and `macos-app` green.
+- Snapshots: 170 PNGs, same names as main's run 45052894155. Run 46127989839 is byte-identical to main for all 170.
+  Run 46127111976 differed only in `search-results-light.png` (scroller gutter), a timing flake (see [macos-ci](macos-ci.md)).
+
 ## Open
 - 2026-11-28: the push used `gh-shotkeeper auth git-credential`. The clone's own credential helper and the token file
   that `gh-shotkeeper` reads both point at a missing secrets file. `gh-shotkeeper` printed the `cat` error and still

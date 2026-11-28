@@ -64,6 +64,11 @@ No agent has a Mac, so CI renders SwiftUI views to PNGs and uploads them as the 
 - 2026-11-21: `gh run view` lists ARTIFACTS a few seconds after the run completes; check the job log
   ("Artifact Shotkeeper-unsigned has been successfully uploaded") before concluding the upload failed.
 
+- 2026-11-28 (prefactor-app runs 46127111976 and 46127989839, same app code): `search-results-light.png` drew the results
+  list with a legacy-scroller gutter in one run and without it in the other; the other 169 PNGs were byte-identical to
+  main (run 45052894155). The gutter is render timing, not a code change: when comparing snapshot runs, a width
+  change of the list rows in `search-results-*` alone is this flake.
+
 ## Outages
 - 2026-11-21 ~20:07 UTC: from run 44944596470 on, every job of every run failed in about 2 s with no runner and
   zero steps, including re-runs (PR #6, heads `80113d7` and `b9a7009`). The PAT gets 403 on billing and check
