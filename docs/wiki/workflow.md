@@ -285,3 +285,7 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   - **Guard added:** `/root/local-dev/shotkeeper-llm/bin/merge-if-green <pr> <sha>` refuses unless the head matches
     and every `gh pr checks` line is `pass`, marks a draft ready, then merges with `--match-head-commit`. All merges
     go through it from now on.
+- 2026-11-28: **PR #21 merged** (`117e2b2`): CI runs once per PR push, and docs-only changes are skipped. The PR
+  itself showed one run per job instead of two. `main` was merged into `t3/wave1-search` (`d63be6a`), `t3/wave2`
+  (`fce1069`) and `t3/auto-update` (`cf37f0d`) so their PRs get the new triggers. All were clean merges, done with
+  `merge-if-green` for the PR.
