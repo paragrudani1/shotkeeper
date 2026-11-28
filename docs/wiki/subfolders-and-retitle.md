@@ -134,6 +134,6 @@ not created twice.
   (`testAnAttemptThatFailsAfterAPauseShowsAsHeldNotRunning`). `waitUntil` in the queue tests now fails loudly on
   timeout. For ticket 08: always pass `atFront: true` (a job already waiting at the back is not promoted), and look
   up `.process` jobs by standardized URL.
-- 2026-11-28 (ticket 04): `SCRATCH=.build/linux-w2-04 scripts/test-linux.sh` green after merging `t3/wave2` (ticket 03), 562 tests; `scripts/lint.sh` ok
-  (no new `lint-allow`). Real-Mac checks (Finder shows the folders; "slack" reused for "Slack" on APFS; Undo from the
+- 2026-11-28 (ticket 04): `SCRATCH=.build/linux-w2-04 scripts/test-linux.sh` green after merging `t3/wave2`
+  (ticket 03), 562 tests; `scripts/lint.sh` ok (no new `lint-allow`). Real-Mac checks (Finder shows the folders; "slack" reused for "Slack" on APFS; Undo from the
   toast and the menu leaves the empty folder; Settings does not jump) are open for ticket 10.
