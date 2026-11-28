@@ -244,3 +244,84 @@ Shotkeeper's mapping (`OpenRouterBackend.refineError`, `HTTPErrorMapping`), as r
 - Whether `effort: "none"` is honoured by both providers in practice (documented, model lists `none`).
 - A paid-model request-per-minute limit.
 - The exact filter `data_collection: "deny"` applies (the per-endpoint `dataPolicy` is the published basis).
+
+## Re-check 2026-11-28
+
+Read on **2026-11-28, 08:30–08:45 UTC**, without an API key. No new snapshot files were saved (this re-check edits
+only this note); the values below are from these responses:
+- `GET https://openrouter.ai/api/v1/models/thinkingmachines/inkling-2-mini/endpoints` (endpoints)
+- `GET https://openrouter.ai/api/v1/endpoints/zdr` (ZDR list, filtered to `model_id == thinkingmachines/inkling-2-mini`)
+- `GET https://openrouter.ai/api/v1/models` (model entry), `GET https://openrouter.ai/api/v1/providers` (slugs)
+- the `dataPolicy` objects embedded in https://openrouter.ai/thinkingmachines/inkling-2-mini
+- https://openrouter.ai/docs/guides/routing/provider-selection.md ("Base Slug Matching") and
+  https://openrouter.ai/docs/guides/features/service-tiers.md ("How Routing Works", "Finding Tier Endpoints")
+
+### Endpoints now (six, was two)
+
+Prices are USD per million tokens (`pricing.*` × 10⁶). All `status: 0`.
+
+| Provider (`provider_name`) | `tag` | Tier (ZDR list `service_tier`) | Quant. | Input | Output | Cache read | Context | In ZDR list | `dataPolicy.retainsPrompts` |
+|---|---|---|---|---|---|---|---|---|---|
+| Darkbloom | `darkbloom/nvfp4` | (not listed) | nvfp4 | 0.02625 | 0.105 | 0.013125 | 1,048,576 | **no** | **true** |
+| PrimeIntellect | `primeintellect/flex` | `flex` | fp4 | 0.0375 | 0.15 | 0.0075 | 1,048,576 | yes, `safety_retention: false` | false |
+| PrimeIntellect | `primeintellect/fp4` | `null` (standard) | fp4 | **0.06** (was 0.075) | **0.24** (was 0.30) | 0.012 (was 0.015) | 1,048,576 | yes, `safety_retention: false` | false |
+| DeepInfra | `deepinfra/fp4` | `null` | fp4 | 0.075 | 0.30 | 0.015 | 1,048,576 | yes, `safety_retention: false` | false |
+| Io Net | `io-net/nvfp4` | `null` | nvfp4 | 0.08 (unchanged) | 0.35 (unchanged) | 0.016 | 262,144 | yes, `safety_retention: false` | false |
+| PrimeIntellect | `primeintellect/fast` | `priority` | fp4 | 0.15 | 0.60 | 0.03 | 1,048,576 | yes, `safety_retention: false` | false |
+
+The model-level `pricing` in `/api/v1/models` is now $0.06 input / $0.24 output / $0.012 cache read, i.e. the
+standard `primeintellect/fp4` endpoint (not the cheapest listed one). All `dataPolicy` objects say `training: false`;
+only Darkbloom's says `retainsPrompts: true`. Still no image or per-request price on any endpoint. The model's
+`reasoning` block is unchanged (`mandatory: false`, `none` in `supported_efforts`). `/api/v1/providers` slugs:
+`primeintellect`, `io-net`, `deepinfra`, `darkbloom`.
+
+### 1. Do the pinned slugs still match, and which endpoints do they cover?
+
+- The provider segment of the tags is still `primeintellect` and `io-net`, equal to the `/api/v1/providers` slugs, so
+  `provider.only: ["primeintellect", "io-net"]` still names valid base slugs.
+- PrimeIntellect now sells three tiers. Slug shape: `provider[/variant][/region][/tier]`, tier always last
+  (provider-selection, "Base Slug Matching"). That section: "A base slug does not by itself opt into a service tier
+  endpoint … Tier endpoints already in the routing pool, such as priority endpoints of open-weight models, do match
+  their base slug." Service tiers, "Finding Tier Endpoints": "Flex endpoints, ultrafast endpoints, and every tier
+  endpoint of a closed-weight model are opt-in … Priority endpoints of open-weight models take part in default
+  routing like any other endpoint, so you may be served by one without asking." The model entry calls Inkling 2 Mini
+  "an open-weight multimodal looped transformer" (`hugging_face_id: thinkingmachines/Inkling-2-Mini`).
+- So, for Shotkeeper's request (no `service_tier`, no `:floor`/`:nitro`), `primeintellect` covers
+  **`primeintellect/fp4` and `primeintellect/fast`** (priority, $0.15/$0.60), but **not `primeintellect/flex`**.
+  `io-net` covers `io-net/nvfp4` only. Darkbloom and DeepInfra are excluded by `only`.
+- Consequence for cost, not for consent: a request may be served (and billed) at the PrimeIntellect fast rate, 2.5×
+  the standard one. Service tiers, "Using Service Tiers": `service_tier: "default"` "keeps priority endpoints of
+  open-weight models out of the pool, so a … `provider.only` request is served at the standard rate." The response's
+  top-level `service_tier` reports the tier used (same page, "API Response Differences").
+
+### 2. ZDR, `data_collection: deny`, `require_parameters`
+
+Shotkeeper's body (`OpenRouterBackend.profile`, `OpenAICompatibleAnalyzer`): `model`, `messages`, `temperature`,
+`max_tokens`, `stream`, `response_format` (json_schema), `reasoning`, `logprobs`, `provider`.
+
+| Endpoint | ZDR list | `dataPolicy` (training / retainsPrompts / safetyRetention) | Lists `temperature`, `max_tokens`, `response_format` + `structured_outputs`, `reasoning`, `logprobs` |
+|---|---|---|---|
+| `primeintellect/fp4` | yes | false / false / false | yes, all |
+| `primeintellect/fast` | yes | false / false / false | yes, all |
+| `primeintellect/flex` (not reached) | yes | false / false / false | yes, all |
+| `io-net/nvfp4` | yes | false / false / false | yes, all (still no `max_completion_tokens`) |
+| `deepinfra/fp4` (not pinned) | yes | false / false / false | **no `logprobs`** |
+| `darkbloom/nvfp4` (not pinned) | **no** | false / **true** / false | **no `logprobs`** |
+
+Every endpoint `only` lets through is still ZDR with `safety_retention: false`, publishes no training and no prompt
+retention, and lists every parameter sent. `zdr`, `data_collection` and `require_parameters` would each exclude
+Darkbloom on their own; `require_parameters` (via `logprobs`) would exclude DeepInfra.
+
+### 3. Is "Prime Intellect or io.net" still accurate?
+
+Yes, for the default model. Every endpoint the pinned request can reach is operated by PrimeIntellect or Io Net (the
+`fast` tier is the same provider, same privacy policy URL https://www.primeintellect.ai/privacy-policy, same
+`dataPolicy`). The new providers, Darkbloom and DeepInfra, cannot be reached. Accurate but now dated: the code comment
+"both Inkling 2 Mini endpoints stay eligible" (`OpenRouterBackend.swift`, `providerRouting`), and README's
+2026-11-22 prices; neither changes behaviour.
+
+### Where the docs are silent (2026-11-28)
+- Whether "pin the provider" in "Finding Tier Endpoints" means a base slug in `only` admits flex: the
+  provider-selection page says a base slug does not opt into a tier, and the service-tiers table limits
+  `provider.only` to the endpoints the slugs name with "tier slugs opt in that tier". Read together: base slug, no
+  flex. Only a live call's `service_tier` field would show it.
