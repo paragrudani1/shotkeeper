@@ -294,3 +294,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   it resolved the paths from `App/`, giving `App/App/Shotkeeper/AppIcon.icon`. Calls taking 0.03–0.2 s show the
   server was reused in the failing runs; 2–3 s calls show a new server in the passing one. Fix: absolute
   `$GITHUB_WORKSPACE/...` paths, no retries (PR #22, `7e839a2`). Evidence is in `macos-ci.md` on that branch.
+- 2026-11-28: **PR #20 review: code ready**, blocked only by base conflicts (wiki add/add with #17). The reviewer
+  proved migration 4 on a 20,000-row v3 database, with an injected failure and a mid-transaction crash snapshot.
+  The chief of staff merged the base, combined the wiki page, and tightened the backfill to match the note only as
+  the whole note or its last `; ` part, so a quoted error can't match. Tests were added and 437 Linux tests pass
+  (`93a3dbb`). Recorded for ticket 06: check `restored_by_undo` before `title_source`.
