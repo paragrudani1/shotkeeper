@@ -357,3 +357,8 @@ How feature work and wiki upkeep are organised. Related: [index](index.md), [env
   `AppLogicTests.swift:189`) still asserted that ⇧⌘C maps to nothing; it now maps to `.copyText`. The fix is a
   one-line change to the expectation. It gets applied after the running #28 fix agent pushes, to avoid a push race on
   the branch.
+- 2026-11-28: PR #28 fixes pushed (`4e133b6`: debounced feed refresh, hide and unlisted-row tests, scroll follow,
+  badge tooltip via `addToolTip`, white symbol, `HuggingMaxWidth` for pills plus a new `search-source-long` snapshot).
+  The chief of staff updated the stale ⇧⌘C test (`98b2e4c`). Snapshots still need checking before the merge.
+- 2026-11-28: Wave 1 is blocked on Parag's Vision numbers (04 → 07, 08). The Shortcuts and Spotlight spec (wave 3)
+  was started so its four open questions can go to Parag early.
