@@ -108,6 +108,36 @@ not created twice.
   Ticket 08 needs wording for it (design §5.3 has none; "The name stays: it could not be renamed" fits the
   "Moved, name kept by rule" pattern). Test: `testARenameFailureKeepsTheNameAndTheOldTitle`.
 
+- 2026-11-28 (`d885459`, review of PR #27): **reanalyze reads the row again after `analyze`.** The row read before
+  `send` was saved with its old path, and `save` upserts by path, so a hand rename or an Undo during the analysis left
+  two rows: one at the file, one at a path with no file. Now `reanalyze` looks the row up by id after `send` and runs
+  the name rules on that fresh row: a name typed meanwhile is kept and the model's title is the suggestion
+  (`.yourName`); a row restored meanwhile is index only (`.restoredByUndo`). If the row is gone, or its file is gone
+  (moved outside Shotkeeper, the index could not follow), it returns `.refused(.missing)` and writes nothing.
+  Remaining window: the steps after the second read are synchronous (no `await`), so a rename can only race them from
+  another thread. Tests: `testARenameByHandDuringTheAnalysisKeepsTheTypedName`,
+  `testAnUndoDuringTheAnalysisLeavesTheFileWhereUndoPutIt`, `testAFileMovedAwayDuringTheAnalysisIsNotWritten` (all
+  three failed before the fix; saving the old row again fails the first two).
+- 2026-11-28 (`d885459`): **status: refused in core.** New `ReanalysisRefusal.notDone(ProcessingStatus)`, checked
+  before the send and again after it. Search shows only `done` rows, so the panel should never offer a pending or
+  failed row. But a `process` run can take the path while the job waits or runs (it saves `pending`, then `done` or
+  `failed`), and writing over its row would race it. Ticket 08 needs wording for `.notDone` (nothing was written).
+  It may also disable Analyze Again for such a row, but core is what enforces the rule. Test:
+  `testARowThatIsNotDoneIsRefusedBeforeOrAfterTheAnalysis`.
+- 2026-11-28 (`d885459`): **a content change keeps `title_source = user` in reanalyze**, unlike `process`, which
+  resets it to `model` (spec "Index schema"). `process` sees a path whose bytes were replaced, which is usually a new
+  screenshot. Analyze Again is the user asking about *this* file, whose name they typed, and spec step 7 keeps a
+  user's name and offers the model's title as `suggestedTitle`. Resetting it would rename their file unasked; "Use
+  This Name" is one click away. Test: `testAUserNamedFileWhoseContentChangedKeepsTheUsersName`.
+- 2026-11-28 (`d885459`): **notes are replaced, not piled up.** `ScreenshotProcessor.note(after:adding:touchedFile:)`
+  drops earlier "kept name: …" parts (from `process` and from `place`'s "kept name: rename failed (…)") and, when this
+  run wrote Finder metadata again (not restored rows), "Finder metadata not written (…)". Then come this run's notes
+  and one "analyzed again". "renamed by the user" and "undo record not written" still hold, so they stay. The kept
+  reason itself is in the outcome (`titleKept`); reanalyze does not write `process`'s "kept name: title confidence…"
+  notes. Test: `testStaleNotePartsAreReplacedNotAppended`.
+- 2026-11-28 (`d885459`): `UserUploadAuthorization.target` is `public let`, so an issued authorization cannot be
+  pointed at another target. Nothing assigned it.
+
 ## Verification
 - 2026-11-28 (`1312ab1`, ticket 02): `SCRATCH=.build/linux-w2-02 scripts/test-linux.sh` green, 433 tests;
   `scripts/lint.sh` ok.
@@ -125,3 +155,10 @@ not created twice.
   `QueueJob.reanalyze(rowID: Int64)` matches `reanalyze(rowID:request:)` as is. New
   `ReanalyzeTests.testAReanalyzeJobKeepsItsRequestAcrossRetries` runs a `.reanalyze` job with a user request through
   the real queue (429, then success). This is the handler shape ticket 08 puts in `AppCoordinator`.
+- 2026-11-28 (`d885459`, review of PR #27): `SCRATCH=.build/linux-w2-06f scripts/test-linux.sh` green, 555 tests;
+  `scripts/lint.sh` ok. Mutation checks, each restored afterwards: removing the second date read after prepare fails
+  `testAFileReplacedWhilePreparingIsJudgedByItsOwnDates` (reanalyze's copy of the `process` test). Saving the
+  pre-send row fails the rename and Undo tests. Dropping the post-send status check fails
+  `testARowThatIsNotDoneIsRefusedBeforeOrAfterTheAnalysis`. Appending notes again fails
+  `testStaleNotePartsAreReplacedNotAppended`. Resetting `title_source` on a hash change fails
+  `testAUserNamedFileWhoseContentChangedKeepsTheUsersName`. The `macos-app` CI job is still pending.
