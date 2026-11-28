@@ -11,6 +11,8 @@ final class SearchViewModel {
     /// Query, limit, and the clock and calendar the index resolves the date filter against (the model's `now()` and
     /// `time.calendar`, so the rows and the date wording agree on what "today" is).
     typealias SearchFunction = @Sendable (ScreenshotQuery, Int, Date, Calendar) throws -> ScreenshotSearchResult
+    /// The source list for the Source pill and picker (`ScreenshotIndex.sources()`), loaded each time the panel opens.
+    typealias SourcesFunction = @Sendable () throws -> [SourceFacet]
 
     private(set) var state: SearchWindowState
     /// A short message on the preview image: "✓ Copied" after ⌘C / Copy Image, or a problem (file gone).
@@ -26,12 +28,14 @@ final class SearchViewModel {
     @ObservationIgnored let now: () -> Date
     @ObservationIgnored let time: TimeLabel
     @ObservationIgnored private var searchFunction: SearchFunction
+    @ObservationIgnored private let sourcesFunction: SourcesFunction
     @ObservationIgnored private var pending: Task<Void, Never>?
+    @ObservationIgnored private var sourceLoad: Task<Void, Never>?
     @ObservationIgnored private var pillTask: Task<Void, Never>?
 
     init(debounce: Duration = .milliseconds(150), state: SearchWindowState = SearchWindowState(),
          now: @escaping () -> Date = Date.init, time: TimeLabel = TimeLabel(calendar: .autoupdatingCurrent),
-         search: @escaping SearchFunction) {
+         search: @escaping SearchFunction, sources: @escaping SourcesFunction = { [] }) {
         self.debounce = debounce
         var state = state
         state.now = now()  // date wording (the Date pill, no-match sentences) uses the same clock and calendar
@@ -40,6 +44,7 @@ final class SearchViewModel {
         self.now = now
         self.time = time
         self.searchFunction = search
+        self.sourcesFunction = sources
     }
 
     var selected: SearchResultItem? { state.selected }
@@ -64,7 +69,7 @@ final class SearchViewModel {
         announce(SearchWindowState.Announcement.searchCleared)
     }
 
-    /// "Clear filters" in the no-match state: resets the chip and the date, keeps the words.
+    /// "Clear filters" in the no-match state: resets the chip, the date and the source, keeps the words.
     func clearFilters() {
         if state.clearFilters() { schedule(after: .zero) }
         announce(SearchWindowState.Announcement.filtersCleared)
@@ -99,10 +104,6 @@ final class SearchViewModel {
         state.toggleDatePicker()
     }
 
-    func closeDatePicker() {
-        state.closeDatePicker()
-    }
-
     func moveDateHighlight(by delta: Int) {
         state.moveDateHighlight(by: delta)
     }
@@ -129,6 +130,64 @@ final class SearchViewModel {
         let hadDate = state.date != nil
         if state.clearDateFromPicker() { schedule(after: .zero) }
         if hadDate { announce(SearchWindowState.Announcement.dateCleared) }
+    }
+
+    // MARK: Source filter (the Source pill and its in-panel picker)
+
+    /// Loads the source list off the main actor (the panel opened). A failure keeps the previous list: the search
+    /// shows the index error itself.
+    func reloadSources() {
+        let load = sourcesFunction
+        sourceLoad = Task { [weak self] in
+            let list = await Task.detached { try? load() }.value
+            guard let self, let list else { return }
+            self.state.setSources(list)
+        }
+    }
+
+    /// Awaits the in-flight source list load (tests).
+    func waitForSourceLoad() async {
+        await sourceLoad?.value
+    }
+
+    /// ⌘S or a click on the Source pill. Returns false when the pill is disabled (the panel beeps).
+    func toggleSourcePicker() -> Bool {
+        state.toggleSourcePicker()
+    }
+
+    /// A click outside an open picker, or the panel hiding.
+    func closePickers() {
+        state.closePickers()
+    }
+
+    func setSourceNarrowText(_ text: String) {
+        state.setSourceNarrowText(text)
+    }
+
+    func moveSourceHighlight(by delta: Int) {
+        state.moveSourceHighlight(by: delta)
+    }
+
+    func chooseSource(_ row: SourcePickerRow) {
+        if state.chooseSource(row) { schedule(after: .zero) }
+    }
+
+    /// ↩ in the source picker.
+    func chooseHighlightedSource() {
+        if state.chooseHighlightedSource() { schedule(after: .zero) }
+    }
+
+    /// The Source pill's ✕.
+    func clearSource() {
+        if state.setSource(nil) { schedule(after: .zero) }
+        announce(SearchWindowState.Announcement.sourceCleared)
+    }
+
+    /// ⌫ in the source picker with an empty narrow field.
+    func clearSourceFromPicker() {
+        let hadSource = state.source != nil
+        if state.clearSourceFromPicker() { schedule(after: .zero) }
+        if hadSource { announce(SearchWindowState.Announcement.sourceCleared) }
     }
 
     /// "View in Search" on a batch toast.

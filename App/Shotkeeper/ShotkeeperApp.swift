@@ -161,10 +161,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let index = coordinator.index
         // The index opens once at launch; when it failed, search shows the error state, never the empty state.
         let problem = coordinator.indexProblem ?? UserFacingProblem(message: "the index is not open")
-        return SearchViewModel { query, limit, now, calendar in
+        return SearchViewModel(search: { query, limit, now, calendar in
             guard let index else { throw IndexUnavailableError(problem: problem) }
             return try index.search(query, limit: limit, now: now, calendar: calendar)
-        }
+        }, sources: {
+            guard let index else { throw IndexUnavailableError(problem: problem) }
+            return try index.sources()
+        })
     }
 }
 
