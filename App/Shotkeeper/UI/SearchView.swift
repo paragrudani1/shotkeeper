@@ -304,13 +304,21 @@ struct SearchResultList: View {
                 }
                 .padding(8)
             }
-            .onChange(of: model.state.selected?.id) { _, id in
-                guard let id else { return }
+            // The id and the index: a refresh that re-sorts the list keeps the selected row (followed by path) but
+            // moves it, and the row must stay in view then too.
+            .onChange(of: SelectionPosition(id: model.state.selected?.id, index: model.state.selectedIndex)) { _, position in
+                guard let id = position.id else { return }
                 proxy.scrollTo(id)  // no anchor: scrolls only as far as needed
             }
         }
         .accessibilityLabel("Results")
     }
+}
+
+/// What the result list scrolls to follow: the selected row and where it is in the list.
+private struct SelectionPosition: Equatable {
+    let id: Int64?
+    let index: Int?
 }
 
 struct SearchResultRow: View {
@@ -513,7 +521,7 @@ struct PreviewImageView: View {
             // Topmost, so every click on the image reaches the drag view; it hands a press on the badge to the badge.
             GeometryReader { proxy in
                 FileDragArea(path: path, dragImage: { loadedImage }, onMouseDown: { if $0 >= 2 { onDoubleClick() } },
-                             badgeFrame: badgeAnchor.map { proxy[$0] }, onBadgeClick: onCopyText)
+                             badgeFrame: badgeAnchor.map { proxy[$0] }, badgeHelp: badge?.help, onBadgeClick: onCopyText)
             }
         }
         .task(id: path) {
@@ -552,6 +560,8 @@ struct FileDragArea: NSViewRepresentable {
     var onMouseDown: (Int) -> Void
     /// The Copy Text badge's frame in this view (SwiftUI coordinates, origin top-left); nil when there is none.
     var badgeFrame: CGRect?
+    /// The badge's tooltip. The drag view lies over the badge, so the badge's own `.help` never gets the hover.
+    var badgeHelp: String?
     var onBadgeClick: () -> Void = {}
 
     func makeNSView(context: Context) -> FileDragView {
@@ -565,18 +575,27 @@ struct FileDragArea: NSViewRepresentable {
         view.dragImage = dragImage
         view.onMouseDown = onMouseDown
         view.badgeFrame = badgeFrame
+        view.badgeHelp = badgeHelp
         view.onBadgeClick = onBadgeClick
     }
 }
 
-final class FileDragView: NSView, NSDraggingSource {
+final class FileDragView: NSView, NSDraggingSource, NSViewToolTipOwner {
     var path = ""
     var dragImage: () -> NSImage? = { nil }
     var onMouseDown: (Int) -> Void = { _ in }
     /// The Copy Text badge's frame (SwiftUI coordinates, origin top-left). A press there belongs to the badge: it
     /// never starts a drag, never reports a click, and the next press elsewhere is not its double-click.
-    var badgeFrame: CGRect?
+    var badgeFrame: CGRect? {
+        didSet { if badgeFrame != oldValue { updateBadgeToolTip() } }
+    }
+    /// Shown on hover over `badgeFrame`. This view lies over the badge, so AppKit asks it, not the SwiftUI button.
+    var badgeHelp: String? {
+        didSet { if badgeHelp != oldValue { updateBadgeToolTip() } }
+    }
     var onBadgeClick: () -> Void = {}
+    /// The tooltip rectangle now registered (view coordinates); nil when there is none.
+    private(set) var badgeToolTipRect: NSRect?
     private var mouseDownLocation: NSPoint?
     private var pressIsOnBadge = false
     private var lastPressWasOnBadge = false
@@ -601,6 +620,34 @@ final class FileDragView: NSView, NSDraggingSource {
         mouseDownLocation = nil
         if pressIsOnBadge, isOnBadge(event) { onBadgeClick() }  // like a button: released on it
         pressIsOnBadge = false
+    }
+
+    // MARK: The badge's tooltip
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateBadgeToolTip()  // the rectangle is measured from the top, which moves with the height
+    }
+
+    /// The badge's frame in view coordinates (the badge frame's origin is top-left).
+    private var badgeRectInView: NSRect? {
+        guard let badgeFrame else { return nil }
+        return NSRect(x: badgeFrame.minX, y: isFlipped ? badgeFrame.minY : bounds.height - badgeFrame.maxY,
+                      width: badgeFrame.width, height: badgeFrame.height)
+    }
+
+    private func updateBadgeToolTip() {
+        removeAllToolTips()
+        badgeToolTipRect = nil
+        guard badgeHelp?.isEmpty == false, let rect = badgeRectInView, !rect.isEmpty else { return }
+        addToolTip(rect, owner: self, userData: nil)
+        badgeToolTipRect = rect
+    }
+
+    /// AppKit asks on the main thread (as for the dragging source above, the protocol is not main-actor annotated).
+    nonisolated func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
+                          userData data: UnsafeMutableRawPointer?) -> String {
+        MainActor.assumeIsolated { badgeHelp ?? "" }
     }
 
     private func isOnBadge(_ event: NSEvent) -> Bool {

@@ -6,14 +6,12 @@ import SwiftUI
 /// symbol, and on Copy Text the "⇧⌘C" keycap in white 60% at 11 pt. In dark mode a 0.5 pt white 18% edge keeps it
 /// visible over dark screenshots (design §8). States and wording are core's `CopyTextBadge`.
 ///
-/// Mouse clicks reach the action through `FileDragView`, which lies over the image and is told the badge's frame
-/// (`CopyTextBadgeFrameKey`): a press on the badge never starts a drag or counts toward a double-click. The SwiftUI
-/// button gives VoiceOver and Full Keyboard Access the same action.
+/// Mouse clicks and the hover tooltip reach the badge through `FileDragView`, which lies over the image and is told the
+/// badge's frame (`CopyTextBadgeFrameKey`) and help: a press on the badge never starts a drag or counts toward a
+/// double-click. The SwiftUI button gives VoiceOver and Full Keyboard Access the same action.
 struct CopyTextBadgeView: View {
     static let inset: CGFloat = 10
     static let height: CGFloat = 26
-    /// The failed state's warning symbol: system orange as drawn on dark (#FFB340), on the always-dark capsule.
-    private static let warning = Color(red: 1, green: 179 / 255, blue: 64 / 255)
 
     let badge: CopyTextBadge
     let action: () -> Void
@@ -56,7 +54,8 @@ struct CopyTextBadgeView: View {
             // The native spinner at 12 pt (design §7), drawn light on the dark capsule.
             ProgressView().controlSize(.mini).frame(width: 12, height: 12).environment(\.colorScheme, .dark)
         case .readAgain:
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Self.warning)
+            // White, like the problem pill's symbol: the overlay pill and badge are black 72% with white content (design §3).
+            Image(systemName: "exclamationmark.triangle.fill")
         }
     }
 }

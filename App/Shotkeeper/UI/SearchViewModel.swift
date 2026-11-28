@@ -34,6 +34,9 @@ final class SearchViewModel {
     @ObservationIgnored private var searchFunction: SearchFunction
     @ObservationIgnored private let sourcesFunction: SourcesFunction
     @ObservationIgnored private var pending: Task<Void, Never>?
+    /// True from `schedule` until the pending task has finished waiting and is about to search. A search that has not
+    /// started yet reads the index after every change that arrives now, so an index change needs no search of its own.
+    @ObservationIgnored private var pendingHasNotStarted = false
     @ObservationIgnored private var sourceLoad: Task<Void, Never>?
     @ObservationIgnored private var pillTask: Task<Void, Never>?
 
@@ -207,6 +210,15 @@ final class SearchViewModel {
         schedule(after: .zero)
     }
 
+    /// A listed row changed in the index (the panel's change feed). Searches again after the debounce, so a burst of
+    /// changes (ticket 07 marks many rows pending at once) runs one search. When a search is already waiting (typing,
+    /// a chip, an earlier change), that search reads the index after this change, so nothing is scheduled: the typing
+    /// debounce is neither cancelled nor pushed back, and the typed words are searched as they would have been.
+    func refreshAfterIndexChange() {
+        guard !pendingHasNotStarted else { return }
+        schedule(after: debounce)
+    }
+
     func windowHidden() {
         // Leaving a batch view: search again now, so its rows are not what the next open shows first.
         if state.windowHidden() { schedule(after: .zero) }
@@ -282,11 +294,14 @@ final class SearchViewModel {
         let limit = state.resultLimit
         let (searchNow, calendar) = (state.now, time.calendar)
         let search = searchFunction
+        pendingHasNotStarted = true
         pending = Task { [weak self] in
             if delay > .zero {
                 try? await Task.sleep(for: delay)
             }
+            // Main actor: not cancelled here means no newer `schedule` replaced this task, so the flag is this task's.
             guard !Task.isCancelled else { return }
+            self?.pendingHasNotStarted = false
             let outcome = await Task.detached { () -> SearchOutcome in
                 do { return .found(try search(query, limit, searchNow, calendar)) } catch { return .failed(error) }
             }.value

@@ -17,12 +17,12 @@ final class SearchCopyTextAppTests: XCTestCase {
         var announced: [String] = []
         var beeps = 0
 
-        init() throws {
+        init(debounce: Duration = .zero) throws {
             let index = try ScreenshotIndex.inMemory()
             self.index = index
-            controller = SearchPanelController(model: SearchViewModel(debounce: .zero) { query, limit, now, calendar in
+            controller = SearchPanelController(model: SearchViewModel(debounce: debounce, search: { query, limit, now, calendar in
                 try index.search(query, limit: limit, now: now, calendar: calendar)
-            })
+            }, sources: { try index.sources() }))
             controller.indexChanges = { index.changes() }
             controller.resultActions.pasteboard = pasteboard
             controller.resultActions.announce = { [unowned self] in self.announced.append($0) }
@@ -43,8 +43,8 @@ final class SearchCopyTextAppTests: XCTestCase {
     private var beeps: Int { harness.beeps }
 
     /// A fresh harness for the test; the test closes it (`defer { close() }`).
-    private func start() throws {
-        harness = try Harness()
+    private func start(debounce: Duration = .zero) throws {
+        harness = try Harness(debounce: debounce)
     }
 
     private func close() {
@@ -53,8 +53,9 @@ final class SearchCopyTextAppTests: XCTestCase {
 
     /// Saves one row with the given text columns and shows the panel with it selected.
     @discardableResult
-    private func show(status: TextStatus?, text: String? = nil, error: String? = nil) async throws -> IndexedScreenshot {
-        var row = ScreenshotRow.make("Terminal error", processedAt: Date(), type: .code)
+    private func show(status: TextStatus?, text: String? = nil, error: String? = nil,
+                      source: String? = nil) async throws -> IndexedScreenshot {
+        var row = ScreenshotRow.make("Terminal error", processedAt: Date(), source: source, type: .code)
         row.textStatus = status
         row.recognizedText = text
         row.textError = error
@@ -161,6 +162,20 @@ final class SearchCopyTextAppTests: XCTestCase {
         XCTAssertEqual(pasteboard.changeCount, before)
     }
 
+    func testTheSourcePickerIgnoresShiftCommandC() async throws {
+        try start()
+        defer { close() }
+        try await show(status: .done, text: "text", source: "Slack")
+        await controller.model.waitForSourceLoad()
+        XCTAssertTrue(controller.handle(.sourceFilter))
+        XCTAssertNotNil(controller.model.state.sourcePicker, "the picker opened")
+        let before = pasteboard.changeCount
+        XCTAssertTrue(controller.handle(.copyText), "consumed while the picker is open")
+        XCTAssertEqual(pasteboard.changeCount, before)
+        XCTAssertNil(controller.model.pill)
+        XCTAssertEqual(announced, [])
+    }
+
     // MARK: Waiting (`pending`) and the late-copy rule
 
     func testAWaitingCopyHappensWhenTheRowIsRead() async throws {
@@ -208,6 +223,104 @@ final class SearchCopyTextAppTests: XCTestCase {
         XCTAssertEqual(pasteboard.changeCount, before)
     }
 
+    // MARK: The change feed (refreshes while the panel is shown)
+
+    /// Saves `count` pending rows and shows the panel with all of them listed.
+    private func showPendingRows(_ count: Int) async throws -> [IndexedScreenshot] {
+        var rows: [IndexedScreenshot] = []
+        for number in 1...count {
+            var row = ScreenshotRow.make("Receipt \(number)", processedAt: Date(timeIntervalSinceNow: Double(-number)),
+                                         type: .receipt)
+            row.textStatus = .pending
+            row.id = try index.save(row)
+            rows.append(row)
+        }
+        controller.show()
+        await controller.model.waitForPendingSearch()
+        XCTAssertEqual(Set(controller.model.state.items.map(\.id)), Set(rows.map(\.id)), "every row is listed")
+        return rows
+    }
+
+    /// Ticket 07 marks many rows at once: a burst of `.updated` changes for listed rows runs one search after the
+    /// debounce, not one per change.
+    func testABurstOfChangesRunsOneSearch() async throws {
+        try start(debounce: .milliseconds(150))
+        defer { close() }
+        let rows = try await showPendingRows(8)
+        let before = controller.model.searchesRun
+        for row in rows {
+            try index.setRecognizedText(.text("Total \(row.id)"), recognizedBy: "test", id: row.id,
+                                        ifContentHash: row.contentHash)
+        }
+        let refreshed = await waitUntil { self.controller.model.searchesRun > before }
+        XCTAssertTrue(refreshed, "the changes refreshed the panel")
+        try await Task.sleep(for: .milliseconds(400))  // longer than the debounce: a second search would have run
+        await controller.model.waitForPendingSearch()
+        XCTAssertEqual(controller.model.searchesRun, before + 1)
+        XCTAssertEqual(controller.model.state.copyTextBadge, .copyText, "the one search saw every change")
+    }
+
+    /// A change while a typed search waits for its debounce neither cancels nor delays it: one search, of the words.
+    func testAChangeWhileTypingKeepsTheTypedSearch() async throws {
+        try start(debounce: .milliseconds(150))
+        defer { close() }
+        let rows = try await showPendingRows(3)
+        let before = controller.model.searchesRun
+        controller.model.setText("Receipt 2")
+        try index.setRecognizedText(.text("Total"), recognizedBy: "test", id: rows[0].id, ifContentHash: rows[0].contentHash)
+        let searched = await waitUntil { self.controller.model.searchesRun > before }
+        XCTAssertTrue(searched)
+        try await Task.sleep(for: .milliseconds(400))
+        await controller.model.waitForPendingSearch()
+        XCTAssertEqual(controller.model.searchesRun, before + 1)
+        XCTAssertEqual(controller.model.state.query.text, "Receipt 2")
+        XCTAssertEqual(controller.model.selected?.title, "Receipt 2", "the typed words were searched")
+    }
+
+    /// Hiding the panel ends the subscription: a later write to a listed row runs no search.
+    func testAfterHideAnIndexWriteRunsNoSearch() async throws {
+        try start()
+        defer { close() }
+        let row = try await show(status: .pending)
+        controller.hide()
+        await controller.model.waitForPendingSearch()
+        let before = controller.model.searchesRun
+        let feed = index.changes()  // a subscriber of our own, to know the change was published
+        try index.setRecognizedText(.text("Order #A-20417"), recognizedBy: "test", id: row.id, ifContentHash: row.contentHash)
+        let change = await firstChange(of: feed)
+        XCTAssertEqual(change?.id, row.id, "the change was published")
+        try await Task.sleep(for: .milliseconds(200))
+        await controller.model.waitForPendingSearch()
+        XCTAssertEqual(controller.model.searchesRun, before)
+    }
+
+    /// The first change on `feed` (`for await` keeps the iteration on the main actor).
+    private func firstChange(of feed: AsyncStream<IndexChange>) async -> IndexChange? {
+        for await change in feed { return change }
+        return nil
+    }
+
+    /// A write to a row that is not in the list doesn't refresh the panel.
+    func testAWriteToAnUnlistedRowRunsNoSearch() async throws {
+        try start()
+        defer { close() }
+        var other = ScreenshotRow.make("Invoice", processedAt: Date(timeIntervalSinceNow: -60), type: .receipt)
+        other.textStatus = .pending
+        other.id = try index.save(other)
+        try await show(status: .pending)
+        controller.model.setText("Terminal")
+        await controller.model.waitForPendingSearch()
+        XCTAssertFalse(controller.model.state.items.contains { $0.id == other.id }, "the other row is not listed")
+        let before = controller.model.searchesRun
+        let feed = index.changes()
+        try index.setRecognizedText(.text("Total"), recognizedBy: "test", id: other.id, ifContentHash: other.contentHash)
+        let change = await firstChange(of: feed)
+        XCTAssertEqual(change?.id, other.id, "the change was published")
+        try await Task.sleep(for: .milliseconds(200))
+        await controller.model.waitForPendingSearch()
+        XCTAssertEqual(controller.model.searchesRun, before)
+    }
+
     // MARK: The badge's mouse handling
 
     /// A press on the badge is the badge's: no click reported to the image (so no double-click opens the file), and a
@@ -247,5 +360,23 @@ final class SearchCopyTextAppTests: XCTestCase {
         view.badgeFrame = nil
         view.mouseDown(with: try event(.leftMouseDown, x: 300, y: 196, clickCount: 1))
         XCTAssertEqual(clicks, [1, 2, 1], "no badge: the corner is image")
+    }
+
+    /// The drag view lies over the badge, so it carries the badge's tooltip: a rectangle over the badge's frame
+    /// (converted to AppKit's bottom-left origin) that asks for the badge's help text.
+    func testTheDragViewShowsTheBadgeTooltip() {
+        let view = FileDragView(frame: NSRect(x: 0, y: 0, width: 400, height: 220))
+        view.badgeHelp = CopyTextBadge.copyText.help
+        XCTAssertNil(view.badgeToolTipRect, "no badge frame yet: no tooltip")
+        view.badgeFrame = CGRect(x: 270, y: 184, width: 120, height: 26)  // top-left origin
+        XCTAssertEqual(view.badgeToolTipRect, NSRect(x: 270, y: 10, width: 120, height: 26))
+        XCTAssertEqual(view.view(view, stringForToolTip: 0, point: NSPoint(x: 300, y: 20), userData: nil),
+                       "Copy the text in this screenshot (⇧⌘C)")
+        view.setFrameSize(NSSize(width: 400, height: 300))
+        XCTAssertEqual(view.badgeToolTipRect, NSRect(x: 270, y: 90, width: 120, height: 26), "follows the height")
+        view.badgeHelp = CopyTextBadge.readAgain.help
+        XCTAssertEqual(view.view(view, stringForToolTip: 0, point: .zero, userData: nil), CopyTextBadge.readAgain.help)
+        view.badgeFrame = nil
+        XCTAssertNil(view.badgeToolTipRect, "no badge: no tooltip")
     }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import ShotkeeperCore
+import SwiftUI
 import XCTest
 @testable import Shotkeeper
 
@@ -22,6 +23,25 @@ final class SearchSourceFilterAppTests: XCTestCase {
             return sources
         })
         return (SearchPanelController(model: model), queries, loads)
+    }
+
+    /// The width the pill takes when its parent offers 600 pt (row 2 offers more than the pill needs).
+    private func pillWidth(_ title: String, isOn: Bool = true) -> CGFloat {
+        let pill = FilterPill(symbol: "macwindow", title: title, isOn: isOn, isOpen: false, accessibilityName: "Source",
+                              accessibilityValue: title, help: title, clearName: "Clear source",
+                              clearHelp: "Clear the source", toggle: {}, clear: {}, maxWidth: SourceFilterPill.maxWidth)
+        return NSHostingController(rootView: pill).sizeThatFits(in: CGSize(width: 600, height: 100)).width
+    }
+
+    /// Design §4: the Source pill is at most 180 pt and fits its content; a long name truncates at the tail.
+    func testTheSourcePillHugsItsValueUpTo180Points() {
+        let short = pillWidth("Mail")
+        XCTAssertLessThan(short, 100, "a short name doesn't fill 180 pt")
+        XCTAssertGreaterThan(short, 40)
+        XCTAssertLessThan(pillWidth("Source", isOn: false), 100, "off: name and chevron only")
+        XCTAssertGreaterThan(pillWidth("GitHub Desktop"), short, "a longer name is wider")
+        XCTAssertEqual(pillWidth("Microsoft Remote Desktop Connection Client for Mac"), SourceFilterPill.maxWidth,
+                       accuracy: 0.5, "a long name stops at 180 pt")
     }
 
     func testTheListLoadsEachTimeThePanelOpens() async {

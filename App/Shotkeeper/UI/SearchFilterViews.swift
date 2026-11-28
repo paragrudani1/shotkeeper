@@ -21,7 +21,8 @@ enum SearchFilterKind: Hashable {
 
 /// A filter pill: off, the chip style with the filter's name and a chevron; on, the selected-chip indigo with the
 /// value and an ✕ that clears only this filter; open, a 2 pt focus ring; disabled, 40% opacity and no chevron, the
-/// tooltip saying why (design §4 "Row 2"). A long value truncates at the tail within `maxWidth`.
+/// tooltip saying why (design §4 "Row 2"). The pill fits its content; a value wider than `maxWidth` truncates at the
+/// tail (`HuggingMaxWidth`).
 struct FilterPill: View {
     let symbol: String
     let title: String
@@ -38,6 +39,23 @@ struct FilterPill: View {
     var isDisabled = false
 
     var body: some View {
+        HuggingMaxWidth(maxWidth: maxWidth ?? .infinity) {
+            content
+        }
+        .background(Capsule().fill(isOn ? AnyShapeStyle(Brand.indigo) : AnyShapeStyle(Color.primary.opacity(0.07))))
+        .opacity(isDisabled ? 0.4 : 1)
+        // A disabled button shows no tooltip of its own; the pill's shape keeps the reason on hover.
+        .contentShape(Capsule())
+        .help(ifSet: isDisabled ? help : nil)
+        .overlay {
+            if isOpen {
+                Capsule().strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2).padding(-2)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var content: some View {
         HStack(spacing: 0) {
             Button(action: toggle) {
                 HStack(spacing: 5) {
@@ -79,18 +97,29 @@ struct FilterPill: View {
                 .help(clearHelp)
             }
         }
-        .frame(maxWidth: maxWidth)
-        .background(Capsule().fill(isOn ? AnyShapeStyle(Brand.indigo) : AnyShapeStyle(Color.primary.opacity(0.07))))
-        .opacity(isDisabled ? 0.4 : 1)
-        // A disabled button shows no tooltip of its own; the pill's shape keeps the reason on hover.
-        .contentShape(Capsule())
-        .help(ifSet: isDisabled ? help : nil)
-        .overlay {
-            if isOpen {
-                Capsule().strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2).padding(-2)
-            }
-        }
-        .accessibilityElement(children: .contain)
+    }
+}
+
+/// Sizes its one child to the child's ideal width, but at most `maxWidth` (and at most what the parent offers), so a
+/// pill hugs a short value and a long one truncates at the tail. `.frame(maxWidth:)` instead takes the whole
+/// `maxWidth` whenever the parent offers more, and `.fixedSize()` never truncates.
+struct HuggingMaxWidth: Layout {
+    let maxWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        return child.sizeThatFits(childProposal(proposal, child))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        child.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+    }
+
+    private func childProposal(_ proposal: ProposedViewSize, _ child: LayoutSubview) -> ProposedViewSize {
+        let ideal = child.sizeThatFits(.unspecified).width
+        let width = min(ideal, maxWidth, proposal.width ?? .infinity)
+        return ProposedViewSize(width: width, height: proposal.height)
     }
 }
 

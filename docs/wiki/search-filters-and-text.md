@@ -256,8 +256,31 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   double-click that opens the file. A release on the badge runs Copy Text. The SwiftUI `Button` underneath gives
   VoiceOver and Full Keyboard Access the same action. This works whichever of the two SwiftUI's hit testing picks
   (`testAClickOnTheBadgeIsNotAClickOnTheImage`).
-- 2026-11-28: ⇧⌘C is ignored while the date picker is open (design §6). In Quick Look's panel it does what it does in
-  the search panel.
+- 2026-11-28 (corrected in the review fixes): ⇧⌘C is ignored while either picker, date or source, is open (design §6;
+  `testTheDatePickerIgnoresShiftCommandC`, `testTheSourcePickerIgnoresShiftCommandC`). In Quick Look's panel it does
+  what it does in the search panel.
+- 2026-11-28 (review fix): **index-change refreshes are coalesced.** A listed row's `.updated` change calls
+  `SearchViewModel.refreshAfterIndexChange()`, which searches after the typing debounce (150 ms), so a burst of changes
+  (ticket 07 marking many rows) runs one search. When a search is already scheduled and has not started (typing, a
+  chip, an earlier change), the change schedules nothing: that search reads the index afterwards anyway, and the typing
+  debounce is neither cancelled nor pushed back. A change that arrives while a search runs schedules the next one; the
+  running one's answer is dropped (a detached SQLite query can't be stopped, but at most one runs per 150 ms). Tests:
+  `testABurstOfChangesRunsOneSearch`, `testAChangeWhileTypingKeepsTheTypedSearch`,
+  `testAfterHideAnIndexWriteRunsNoSearch`, `testAWriteToAnUnlistedRowRunsNoSearch`.
+- 2026-11-28 (review fix): **the list follows the selected row when a refresh moves it.** It scrolls on a change of the
+  selected id or of its index, so a re-sort that keeps the row (followed by path) but moves it keeps it in view.
+- 2026-11-28 (review fix): **the badge's tooltip is set by `FileDragView`.** The drag view lies over the badge, so the
+  badge's SwiftUI `.help` never gets the hover. `FileDragView` registers a tooltip rectangle (`addToolTip`) over the
+  badge's frame, re-measured when its height changes, and answers with the badge's help (`badgeHelp`). Test:
+  `testTheDragViewShowsTheBadgeTooltip`. Real-Mac check below.
+- 2026-11-28 (review fix): **the "Read text again" symbol is white**, like the problem pill's
+  `exclamationmark.triangle.fill`: design §3 gives the overlay pill and badge black 72% with white content. The
+  literal orange (#FFB340) is gone.
+- 2026-11-28 (review fix, PR #23 snapshot check): **filter pills hug their content.** `.frame(maxWidth: 180)` made
+  the Source pill 180 pt whenever row 2 offered more. `FilterPill` now sits in `HuggingMaxWidth`, a one-child
+  `Layout` that proposes the child's ideal width capped at `maxWidth` (and at the parent's offer), so a short name fits
+  its text and a long one truncates at the tail at 180 pt (design §4). The Date pill (no `maxWidth`) hugs as before.
+  Test: `testTheSourcePillHugsItsValueUpTo180Points` (measured in a 600 pt offer). New snapshot `search-source-long`.
 - 2026-11-28: **privacy.** The recognized text reaches only the pasteboard, through the user's ⇧⌘C or badge click.
   `SearchResultActions` logs nothing. The announcement is "Text copied" and the pills never contain the text.
 
@@ -268,6 +291,9 @@ Tickets in `../specs/search-filters-and-text-2026-11/tickets/`. Integration bran
   clipboard keeps the other copy, and the badge turns to "Copy Text".
 - The badge over a light and over a dark screenshot. A click on it doesn't start a drag; a click on it and then on the
   image doesn't open the file.
+- The badge's tooltip shows on hover ("Copy the text in this screenshot (⇧⌘C)", the reading and failed wording), and
+  hovering the image outside the badge shows none.
+- With the panel open while ticket 07 reads many rows, the list doesn't flicker or jump, and typing stays responsive.
 - VoiceOver reads the badge as "Copy Text" / "Reading text" / "Read text again" (with its hint), and announces "Text
   copied", "No text found in this screenshot." and "The text could not be read.".
 - Quick Look (Space): does macOS Live Text let the user select part of the text? Record the result here (spec

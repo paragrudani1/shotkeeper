@@ -245,14 +245,15 @@ final class SearchPanelController {
         watchIndexChanges()
     }
 
-    /// Subscribes while the panel is shown (cancelled on dismiss, which ends the subscription).
+    /// Subscribes while the panel is shown (cancelled on dismiss, which ends the subscription). Changes of listed rows
+    /// are coalesced by the model (`refreshAfterIndexChange`): a burst runs one search after the debounce.
     private func watchIndexChanges() {
         guard changesTask == nil, let changes = indexChanges?() else { return }
         changesTask = Task { [weak self] in
             for await change in changes {
                 guard let self else { return }
                 if change.kind == .updated, self.model.state.items.contains(where: { $0.id == change.id }) {
-                    self.model.refresh()
+                    self.model.refreshAfterIndexChange()
                 }
             }
         }

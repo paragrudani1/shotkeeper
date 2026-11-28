@@ -23,6 +23,7 @@ enum SearchSnapshots {
             UISnapshot("search-no-match-filters") { Fixtures.search(text: "stripe", chip: .receipt, rows: [], date: .last30Days) },
             UISnapshot("search-filters-on") { Fixtures.search(chip: .receipt, date: .last30Days, source: "Mail") },
             UISnapshot("search-source-picker") { Fixtures.search(sourcePicker: true) },
+            UISnapshot("search-source-long") { Fixtures.search(rows: [], source: "Microsoft Remote Desktop Connection Client for Mac") },
             UISnapshot("search-text-copied") { Fixtures.searchText(.done, pill: .textCopied) },
             UISnapshot("search-text-reading") { Fixtures.searchText(.pending) },
             UISnapshot("search-text-failed") { Fixtures.searchText(.failed, pill: .problem(SearchWindowState.textFailedMessage)) },
